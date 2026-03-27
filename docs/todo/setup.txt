@@ -1,0 +1,389 @@
+ALEXANDRIA-NEXUS SETUP PLAN
+=============================
+
+Rebuild philosophie-bib from scratch using the improved hexforge SDK.
+Same data model, same endpoints, dramatically less boilerplate.
+
+
+CONTEXT
+-------
+philosophie-bib: 15K lines across 99 files, 3 workspace crates.
+Most of that is boilerplate hexforge now eliminates:
+  - 8 manual DataSource impls (~1200 lines) → PgQuery trait (~240 lines)
+  - 8 manual PgEntity impls (~400 lines) → #[derive(Entity)] (~80 lines)
+  - Manual error mapping → hexforge::map_sqlx_error
+  - Manual pool setup → hexforge::DatabaseConfig
+  - Manual server startup → hexforge::serve()
+  - No OpenAPI → serve_openapi() + #[derive(ToSchema)]
+  - Wide open CORS → CorsConfig::from_env()
+  - N+1 queries → find_by_ids()
+  - 46-column SELECT * everywhere → #[derive(Projection)] views
+
+Target: same functionality, ~60% less code, fully typed OpenAPI spec.
+
+
+PHASE 1: PROJECT STRUCTURE
+---------------------------
+
+Single crate (not workspace). philosophie-bib's 3-crate workspace
+was over-engineered for the project size. Modules replace crates:
+
+  alexandria-nexus/
+  ├── Cargo.toml
+  ├── Dockerfile
+  ├── docker-compose.yml
+  ├── .env.example
+  ├── migrations/
+  │   ├── 001_initial_schema.sql          (from philosophie-bib)
+  │   ├── 002_add_trgm_indexes.sql        (from philosophie-bib)
+  │   └── 003_search_documents.sql         (new: pgvector + search index)
+  ├── docs/
+  │   ├── ARCHITECTURE.md
+  │   ├── API.md
+  │   └── todo/
+  │       ├── hybrid-search.md             (from philosophie-bib)
+  │       ├── alexandria-web.md            (from philosophie-bib)
+  │       └── bib-renderer.md             (from philosophie-bib)
+  └── src/
+      ├── main.rs                          startup + config
+      ├── lib.rs                           build_app() composition
+      ├── state.rs                         AppState
+      ├── domain/                          pure types (mod.rs + files)
+      │   ├── mod.rs
+      │   ├── bibitem.rs
+      │   ├── author.rs
+      │   ├── journal.rs
+      │   ├── publisher.rs
+      │   ├── institution.rs
+      │   ├── school.rs
+      │   ├── series.rs
+      │   ├── keyword.rs
+      │   ├── enums.rs                     EntryType, PubState, LangId, Epoch, etc.
+      │   ├── bib_string.rs               BibStringAttr (latex/unicode/simplified)
+      │   └── validated/                   BibKey, BibItemDate, PageRange
+      ├── entities/                        #[derive(Entity)] structs
+      │   ├── mod.rs
+      │   └── *.rs                         one per entity (replaces db/entities + db/data_sources)
+      ├── queries/                         PgQuery impls
+      │   ├── mod.rs
+      │   └── *.rs                         one per filterable entity
+      ├── projections/                     #[derive(Projection)] views
+      │   ├── mod.rs
+      │   └── *.rs                         BibItemSummary, BibItemSearchResult, etc.
+      ├── dto/                             Create/Update DTOs + responses
+      │   ├── mod.rs
+      │   └── *.rs                         one per entity
+      ├── validation/                      pure validation functions
+      │   ├── mod.rs
+      │   └── *.rs                         one per entity
+      ├── transform/                       DTO → domain transforms
+      │   ├── mod.rs
+      │   └── *.rs                         one per entity
+      ├── handlers/                        custom handlers (non-CRUD)
+      │   ├── mod.rs
+      │   ├── search.rs                    pg_trgm search (fix: single query with COUNT OVER)
+      │   ├── export.rs                    streaming CSV/BibTeX export
+      │   ├── import.rs                    JSON + file import
+      │   ├── junction.rs                  bibitem-authors, bibitem-keywords
+      │   ├── expand.rs                    ?expand= handler
+      │   ├── by_key.rs                    lookup by entity key
+      │   └── keyword_tree.rs             hierarchical keyword tree
+      └── auth.rs                          ApiKeyValidator
+
+
+PHASE 2: DEPENDENCIES (Cargo.toml)
+------------------------------------
+
+hexforge = { git = "...", features = ["axum", "postgres"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "chrono", "migrate"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tokio = { version = "1", features = ["full"] }
+utoipa = { version = "5", features = ["axum_extras"] }
+csv = "1.3"
+calamine = "0.32"
+sha2 = "0.10"
+hex = "0.4"
+
+[dev-dependencies]
+reqwest = { version = "0.12", features = ["json", "multipart"] }
+uuid = { version = "1", features = ["v4"] }
+testcontainers = "0.26"
+testcontainers-modules = { version = "0.14", features = ["postgres"] }
+
+Lints: same as hexforge (clippy all = warn, cast checks, warnings = deny).
+
+
+PHASE 3: ENTITIES WITH #[derive(Entity)]
+-------------------------------------------
+
+Replace all manual PgEntity impls + RawEntity types with:
+
+  #[derive(Entity, FromRow, Clone, Debug, Serialize, Deserialize, ToSchema)]
+  #[entity(table = "organizations")]
+  struct Author {
+      #[entity(id)]
+      id: i64,
+      author_key: String,
+      given_name_latex: Option<String>,
+      given_name_unicode: Option<String>,
+      given_name_simplified: Option<String>,
+      family_name_latex: Option<String>,
+      family_name_unicode: Option<String>,
+      family_name_simplified: Option<String>,
+      // ... etc
+  }
+
+No manual SQL. No RawAuthor intermediate type. No From<RawAuthor>
+conversion. The Entity + FromRow derives handle everything.
+
+Do this for all 8 entity types:
+  Author, BibItem, Journal, Keyword, Publisher, Institution, School, Series
+
+Plus api_keys (for auth).
+
+
+PHASE 4: QUERIES WITH PgQuery
+-------------------------------
+
+Replace manual DataSource impls with PgQuery:
+
+  #[derive(Default, Deserialize)]
+  struct AuthorQuery {
+      family_name: Option<String>,
+      search_term: Option<String>,
+  }
+
+  impl PgQuery for AuthorQuery {
+      fn build_conditions(&self, mut idx: usize) -> (Vec<String>, usize) {
+          let mut conds = vec![];
+          if self.family_name.is_some() {
+              conds.push(format!("family_name_simplified ILIKE '%' || ${idx} || '%'"));
+              idx += 1;
+          }
+          (conds, idx)
+      }
+      fn bind(&self, binder: &mut ParamBinder) {
+          if let Some(ref name) = self.family_name {
+              binder.add(name.clone());
+          }
+      }
+  }
+
+No manual find_all, count, stream, insert, update, delete.
+PostgresDataSource<Author, AuthorQuery> handles all of it.
+
+Custom lookups use find_one_where:
+  ds.find_one_where("author_key = $1", |q| q.bind(key)).await
+
+
+PHASE 5: PROJECTIONS
+---------------------
+
+Define projections for list/search views:
+
+  #[derive(Projection, FromRow, Clone, Serialize, Deserialize, ToSchema)]
+  #[projection(entity = "BibItem")]
+  struct BibItemSummary {
+      id: i64,
+      bibkey: String,
+      title_simplified: String,
+      date_year: Option<i32>,
+      entry_type: String,
+      pubstate: String,
+  }
+
+  #[derive(Projection, FromRow, Clone, Serialize, Deserialize, ToSchema)]
+  #[projection(entity = "BibItem")]
+  struct BibItemSearchResult {
+      id: i64,
+      bibkey: String,
+      title_simplified: String,
+      date_year: Option<i32>,
+  }
+
+Register as views:
+  .view("summary", build_projection_view::<_, _, BibItemSummary>(ds.clone()))
+  .view("search", build_projection_view::<_, _, BibItemSearchResult>(ds.clone()))
+
+
+PHASE 6: API COMPOSITION
+--------------------------
+
+  pub fn build_app(pool: DatabasePool) -> axum::Router {
+      let state = AppState::new(pool.clone());
+      let validator = ApiKeyValidator::new(pool);
+
+      Api::new()
+          .with_auth(validator)
+
+          // 8 CRUD resources
+          .crud_with_meta(
+              CrudResourceConfig::new("/api/v1/authors", state.author_ds.clone())
+                  .create_validator(validate_create_author)
+                  .update_validator(validate_update_author)
+                  .create_transform(create_author_transform)
+                  .update_transform(update_author_transform)
+                  .read_permission(Permission::Read)
+                  .create_permission(Permission::Write)
+                  .update_permission(Permission::Write)
+                  .delete_permission(Permission::Admin)
+                  .view("summary", build_projection_view::<_, _, AuthorSummary>(..)),
+              CrudOpenApiMeta::new("/api/v1/authors", "Authors")
+                  .with_schemas::<Author, CreateAuthor, UpdateAuthor>()
+                  .description("Author management"),
+          )
+          // ... repeat for all 8 entities
+
+          // Junction tables
+          .resource(Resource::<AppState>::new("/api/v1/bibitems")
+              .get("/{id}/authors", get_bibitem_authors)
+              .post("/{id}/authors", add_author_to_bibitem)
+              .delete("/{id}/authors/{author_id}", remove_author_from_bibitem)
+              .put("/{id}/authors", replace_bibitem_authors)
+              .with_state(state.clone()))
+
+          // Search (use .search_handler on bibitems CRUD)
+          // Or keep as separate resource for flexibility
+
+          // Admin
+          .resource(Resource::<AppState>::new("/api/v1/admin")
+              .require_permission(Permission::Admin)
+              .post("/import", import_bibitems)
+              .post("/import/file", import_file)
+              .get("/export", export_bibitems)
+              .with_state(state.clone()))
+
+          // OpenAPI
+          .serve_openapi("/docs/openapi.json",
+              OpenApiConfig::new("Alexandria Nexus", "0.1.0")
+                  .description("Bibliography and knowledge engine for Philosophie.ch"))
+
+          // CORS
+          .with_cors(CorsConfig::from_env("ALLOWED_ORIGINS", "http://localhost:3000"))
+
+          .build()
+  }
+
+
+PHASE 7: MAIN.RS
+------------------
+
+  #[tokio::main]
+  async fn main() -> Result<(), Box<dyn std::error::Error>> {
+      tracing_subscriber::registry()
+          .with(EnvFilter::try_from_default_env()
+              .unwrap_or_else(|_| "alexandria_nexus=debug,hexforge=debug".into()))
+          .with(tracing_subscriber::fmt::layer())
+          .init();
+
+      let database_url = std::env::var("DATABASE_URL")
+          .unwrap_or_else(|_| "postgres://bib:password@localhost:5432/bibliography".into());
+
+      let pool = DatabaseConfig::new(&database_url)
+          .max_connections(50)
+          .min_connections(5)
+          .acquire_timeout(Duration::from_secs(10))
+          .max_lifetime(Duration::from_secs(1800))
+          .idle_timeout(Duration::from_secs(600))
+          .stream_timeout(Duration::from_secs(300))
+          .transaction_timeout(Duration::from_secs(30))
+          .connect()
+          .await?;
+
+      sqlx::migrate!("./migrations").run(pool.pool()).await?;
+
+      // Seed API key
+      if let Ok(seed_key) = std::env::var("SEED_API_KEY") {
+          // ... hash + insert
+      }
+
+      let app = build_app(pool);
+      let addr = format!("{}:{}",
+          std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".into()),
+          std::env::var("PORT").unwrap_or_else(|_| "8080".into()));
+
+      hexforge::serve(app, &addr).await?;
+      Ok(())
+  }
+
+
+PHASE 8: DOCKER + DEV ENVIRONMENT
+------------------------------------
+
+docker-compose.yml:
+  - db: postgres:16-alpine (port 5432)
+  - adminer: adminer:5 (port 8081)
+  - nexus: builds from Dockerfile (port 8080)
+
+.env.example:
+  POSTGRES_USER=bib
+  POSTGRES_PASSWORD=password
+  POSTGRES_DB=bibliography
+  DATABASE_URL=postgres://bib:password@db:5432/bibliography
+  API_PORT=8080
+  DB_PORT=5432
+  ADMINER_PORT=8081
+  SEED_API_KEY=dev-admin-key
+  SEED_API_KEY_NAME=Development Admin Key
+  ALLOWED_ORIGINS=http://localhost:3000
+  RUST_LOG=alexandria_nexus=debug,hexforge=debug
+
+Dockerfile: same multi-stage pattern as philosophie-bib.
+
+Goal: `docker compose up` → dev environment running with seeded admin key.
+
+
+PHASE 9: FIXES FROM AUDIT.TXT
+-------------------------------
+
+Fix these during the rebuild (not after):
+
+1. CORS → CorsConfig::from_env() (done in composition)
+2. Pool config → DatabaseConfig with all timeouts (done in main.rs)
+3. Search double-query → single query with COUNT(*) OVER()
+4. N+1 exports → find_by_ids() for batch, streaming for full
+5. No OpenAPI → serve_openapi() + ToSchema on all types
+6. 46-col SELECT * → Projections for list endpoints
+
+
+PHASE 10: MIGRATION VALIDATION
+---------------------------------
+
+After build, verify parity with philosophie-bib:
+
+  [ ] All 8 CRUD resources work (list, get, create, update, delete)
+  [ ] All by-key lookups work (/by-key/:key, /by-bibkey/:bibkey)
+  [ ] Junction endpoints work (bibitem-authors, bibitem-keywords)
+  [ ] Search returns results with pg_trgm
+  [ ] Import JSON works (batch create with error reporting)
+  [ ] Import file works (CSV, ODS, XLSX)
+  [ ] Export CSV/BibTeX works (streaming for full, batch for IDs)
+  [ ] Auth works (Public/Read/Write/Admin)
+  [ ] Keyword tree endpoint works
+  [ ] OpenAPI spec is served and valid
+  [ ] Docker compose runs clean
+  [ ] Can load existing philosophie-bib data into alexandria-nexus
+
+
+EXECUTION ORDER
+================
+
+1. Cargo.toml + docker-compose.yml + .env.example + Dockerfile
+2. migrations/ (copy from philosophie-bib)
+3. src/domain/ (copy + adapt from philosophie-bib)
+4. src/entities/ (rewrite with #[derive(Entity)])
+5. src/queries/ (rewrite with PgQuery)
+6. src/projections/ (new)
+7. src/dto/ + src/validation/ + src/transform/ (copy + adapt)
+8. src/auth.rs (copy + adapt)
+9. src/state.rs (simplify — use DatabasePool)
+10. src/handlers/ (copy + adapt, fix search N+1)
+11. src/lib.rs (API composition with hexforge)
+12. src/main.rs (startup with DatabaseConfig + serve)
+13. Tests
+14. Docker validation
