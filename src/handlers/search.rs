@@ -8,6 +8,7 @@ use hexforge::axum_exports::{Json, State};
 use hexforge::db_exports::{FromRow, PgArguments};
 use serde::{Deserialize, Serialize};
 
+use crate::domain::{EntryType, Epoch, LangId, PubState};
 use crate::entities::BibItem;
 use crate::state::AppState;
 
@@ -63,17 +64,16 @@ pub struct SearchResponse {
 /// Row type for the search query that includes the total count window function.
 #[derive(Debug, FromRow)]
 struct SearchRow {
-    // BibItem columns
     id: i64,
     bibkey: String,
-    entry_type: String,
+    entry_type: EntryType,
     date_year: Option<i16>,
     date_year_2_hyphen: Option<i16>,
     date_year_2_slash: Option<i16>,
     date_month: Option<i16>,
     date_day: Option<i16>,
     date_is_no_date: bool,
-    pubstate: Option<String>,
+    pubstate: Option<PubState>,
     title_latex: String,
     title_unicode: String,
     title_simplified: String,
@@ -103,9 +103,9 @@ struct SearchRow {
     note_unicode: Option<String>,
     extra_note_latex: Option<String>,
     extra_note_unicode: Option<String>,
-    langid: Option<String>,
+    langid: Option<LangId>,
     is_translation: bool,
-    epoch: Option<String>,
+    epoch: Option<Epoch>,
     options: Option<String>,
     shorthand: Option<String>,
     person_id: Option<i64>,
@@ -113,7 +113,6 @@ struct SearchRow {
     fulltext_path: Option<String>,
     created_at: chrono::DateTime<chrono::Utc>,
     updated_at: chrono::DateTime<chrono::Utc>,
-    // Window function column
     total_count: i64,
 }
 
@@ -262,26 +261,18 @@ pub async fn search_bibitems(
     }))
 }
 
-/// Convert a SearchRow to a BibItem.
 fn search_row_to_bibitem(row: SearchRow) -> BibItem {
-    use std::str::FromStr;
-
     BibItem {
         id: row.id,
         bibkey: row.bibkey,
-        entry_type: row
-            .entry_type
-            .parse()
-            .unwrap_or(crate::domain::EntryType::Unknown),
+        entry_type: row.entry_type,
         date_year: row.date_year,
         date_year_2_hyphen: row.date_year_2_hyphen,
         date_year_2_slash: row.date_year_2_slash,
         date_month: row.date_month,
         date_day: row.date_day,
         date_is_no_date: row.date_is_no_date,
-        pubstate: row
-            .pubstate
-            .and_then(|s| crate::domain::PubState::from_str(&s).ok()),
+        pubstate: row.pubstate,
         title_latex: row.title_latex,
         title_unicode: row.title_unicode,
         title_simplified: row.title_simplified,
@@ -311,13 +302,9 @@ fn search_row_to_bibitem(row: SearchRow) -> BibItem {
         note_unicode: row.note_unicode,
         extra_note_latex: row.extra_note_latex,
         extra_note_unicode: row.extra_note_unicode,
-        langid: row
-            .langid
-            .and_then(|s| crate::domain::LangId::from_str(&s).ok()),
+        langid: row.langid,
         is_translation: row.is_translation,
-        epoch: row
-            .epoch
-            .and_then(|s| crate::domain::Epoch::from_str(&s).ok()),
+        epoch: row.epoch,
         options: row.options,
         shorthand: row.shorthand,
         person_id: row.person_id,
