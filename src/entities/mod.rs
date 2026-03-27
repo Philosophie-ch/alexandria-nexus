@@ -1,10 +1,11 @@
-//! Database entities — structs that map directly to PostgreSQL tables.
+//! Database entities — structs that map directly to database tables.
 //!
-//! Each entity uses `#[derive(Entity)]` to generate `PgEntity` implementations
+//! Each entity uses `#[derive(Entity)]` to generate database implementations
 //! with zero manual SQL. Field names match database column names exactly.
 
 mod author;
 mod bibitem;
+mod db_mappings;
 mod institution;
 mod journal;
 mod keyword;

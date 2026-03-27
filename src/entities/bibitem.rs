@@ -5,14 +5,13 @@
 
 use chrono::{DateTime, Utc};
 use hexforge::Entity;
-use hexforge::sqlx_exports::FromRow;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::domain::{EntryType, Epoch, LangId, PubState};
 
 /// A bibliography item — the core entity of the system.
-#[derive(Entity, FromRow, Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Entity, Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[entity(table = "bibitems")]
 pub struct BibItem {
     #[entity(id)]

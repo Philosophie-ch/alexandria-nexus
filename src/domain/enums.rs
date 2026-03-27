@@ -1,7 +1,7 @@
-//! Domain enums mapping to PostgreSQL enum types.
+//! Domain enums for the bibliography system.
 //!
-//! Each enum derives `sqlx::Type` for direct database mapping,
-//! `Serialize`/`Deserialize` for JSON, and `ToSchema` for OpenAPI.
+//! Pure domain enums. Derives Serialize/Deserialize for data interchange and ToSchema for API schema generation.
+//! Derives only `Serialize`/`Deserialize` for JSON
 
 use std::fmt;
 use std::str::FromStr;
@@ -13,12 +13,9 @@ use utoipa::ToSchema;
 // EntryType
 // =============================================================================
 
-/// BibTeX entry type — matches the `entry_type` PostgreSQL enum.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, sqlx::Type, ToSchema,
-)]
+/// BibTeX entry type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
-#[sqlx(type_name = "entry_type", rename_all = "lowercase")]
 pub enum EntryType {
     Article,
     Book,
@@ -32,7 +29,6 @@ pub enum EntryType {
     Unpublished,
     #[default]
     #[serde(rename = "UNKNOWN")]
-    #[sqlx(rename = "UNKNOWN")]
     Unknown,
 }
 
@@ -79,10 +75,9 @@ impl FromStr for EntryType {
 // PubState
 // =============================================================================
 
-/// Publication state — matches the `pubstate` PostgreSQL enum.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, ToSchema)]
+/// Publication state
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
-#[sqlx(type_name = "pubstate", rename_all = "lowercase")]
 pub enum PubState {
     Unpub,
     Forthcoming,
@@ -122,10 +117,9 @@ impl FromStr for PubState {
 // LangId
 // =============================================================================
 
-/// Language identifier — matches the `langid` PostgreSQL enum.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, ToSchema)]
+/// Language identifier
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
-#[sqlx(type_name = "langid", rename_all = "lowercase")]
 pub enum LangId {
     Catalan,
     Czech,
@@ -207,10 +201,9 @@ impl FromStr for LangId {
 // Epoch
 // =============================================================================
 
-/// Historical epoch — matches the `epoch` PostgreSQL enum.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, ToSchema)]
+/// Historical epoch
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "kebab-case")]
-#[sqlx(type_name = "epoch", rename_all = "kebab-case")]
 pub enum Epoch {
     AncientPhilosophy,
     AncientScientists,
@@ -337,12 +330,9 @@ impl FromStr for Epoch {
 // AuthorRole
 // =============================================================================
 
-/// Author role in a bibliography item — matches the `author_role` PostgreSQL enum.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, sqlx::Type, ToSchema,
-)]
+/// Author role in a bibliography item
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
-#[sqlx(type_name = "author_role", rename_all = "lowercase")]
 pub enum AuthorRole {
     #[default]
     Author,
@@ -377,10 +367,9 @@ impl FromStr for AuthorRole {
 // RefType
 // =============================================================================
 
-/// Reference type between bibliography items — matches the `ref_type` PostgreSQL enum.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, ToSchema)]
+/// Reference type between bibliography items
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
-#[sqlx(type_name = "ref_type", rename_all = "snake_case")]
 pub enum RefType {
     FurtherRef,
     DependsOn,
@@ -411,12 +400,9 @@ impl FromStr for RefType {
 // PermissionLevel
 // =============================================================================
 
-/// API key permission level — matches the `permission_level` PostgreSQL enum.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, sqlx::Type, ToSchema,
-)]
+/// API key permission level
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
-#[sqlx(type_name = "permission_level", rename_all = "lowercase")]
 pub enum PermissionLevel {
     Public,
     #[default]

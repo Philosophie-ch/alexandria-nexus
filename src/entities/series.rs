@@ -2,12 +2,11 @@
 
 use chrono::{DateTime, Utc};
 use hexforge::Entity;
-use hexforge::sqlx_exports::FromRow;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 /// A publication series in the bibliography system.
-#[derive(Entity, FromRow, Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Entity, Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[entity(table = "series")]
 pub struct Series {
     #[entity(id)]

@@ -6,8 +6,8 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 /// Required environment configuration.
 ///
 /// All fields are mandatory — the app won't start with missing config.
-/// DATABASE_URL is the connection string; Postgres-specific vars
-/// (POSTGRES_USER, etc.) are for docker-compose, not for the app.
+/// DATABASE_URL is the connection string for the app.
+/// DB-specific vars (POSTGRES_USER, etc.) are for docker-compose only.
 struct Config {
     database_url: String,
     host: String,
@@ -106,14 +106,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Migrations
     tracing::info!("Running database migrations...");
-    sqlx::migrate!("./migrations").run(pool.pool()).await?;
+    hexforge::migrate!("./migrations").run(pool.pool()).await?;
     tracing::info!("Migrations complete");
 
     // Seed API key (optional)
     if let Some(ref seed_key) = config.seed_api_key {
         let seed_name = config.seed_api_key_name.as_ref().unwrap();
         let key_hash = hash_api_key(seed_key);
-        sqlx::query(
+        hexforge::db_exports::query(
             r#"
             INSERT INTO api_keys (key_hash, name, permission)
             VALUES ($1, $2, 'admin'::permission_level)

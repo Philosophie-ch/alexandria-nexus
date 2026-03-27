@@ -1,7 +1,6 @@
 //! BibItem projections for list and search views.
 
-use hexforge::sqlx_exports::FromRow;
-use hexforge::{PgEntity, Projection};
+use hexforge::Projection;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -12,7 +11,7 @@ use crate::entities::BibItem;
 ///
 /// Selects only the essential columns needed for list views,
 /// avoiding the full 46-column SELECT on every list request.
-#[derive(Projection, FromRow, Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Projection, Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[projection(entity = "BibItem")]
 pub struct BibItemSummary {
     pub id: i64,

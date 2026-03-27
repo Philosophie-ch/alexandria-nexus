@@ -8,6 +8,7 @@ use hexforge::{
 pub mod domain;
 pub mod entities;
 pub mod projections;
+pub mod queries;
 mod state;
 
 pub use state::AppState;

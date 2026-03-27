@@ -2,7 +2,6 @@
 
 use chrono::{DateTime, Utc};
 use hexforge::Entity;
-use hexforge::sqlx_exports::FromRow;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -10,7 +9,7 @@ use utoipa::ToSchema;
 ///
 /// Authors may have a given + family name, a mononym (e.g., Plato),
 /// or both. Each name component has LaTeX, Unicode, and simplified variants.
-#[derive(Entity, FromRow, Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Entity, Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[entity(table = "authors")]
 pub struct Author {
     #[entity(id)]
