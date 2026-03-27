@@ -1,7 +1,7 @@
 //! Alexandria Nexus — Bibliography and knowledge engine for Philosophie.ch
 
 use hexforge::{
-    Api, CorsConfig, CrudOpenApiMeta, CrudResourceConfig, OpenApiConfig, Permission,
+    Api, CorsConfig, CrudOpenApiMeta, CrudResourceConfig, OpenApiConfig, Permission, Resource,
     axum_exports::{Router, get},
 };
 
@@ -9,6 +9,7 @@ pub mod auth;
 pub mod domain;
 pub mod dto;
 pub mod entities;
+pub mod handlers;
 pub mod projections;
 pub mod queries;
 mod state;
@@ -24,6 +25,13 @@ use dto::{
     UpdateKeyword, UpdatePublisher, UpdateSchool, UpdateSeries,
 };
 use entities::{Author, BibItem, Institution, Journal, Keyword, Publisher, School, Series};
+use handlers::{
+    add_author_to_bibitem, export_bibitems, get_author_by_key, get_bibitem_authors,
+    get_bibitem_keywords, get_by_bibkey, get_institution_by_key, get_journal_by_key,
+    get_keyword_tree, get_publisher_by_key, get_school_by_key, get_series_by_key, import_bibitems,
+    import_file, remove_author_from_bibitem, replace_bibitem_authors, search_bibitems,
+    set_bibitem_keywords,
+};
 use queries::{
     AuthorQuery, BibItemQuery, InstitutionQuery, JournalQuery, KeywordQuery, PublisherQuery,
     SchoolQuery, SeriesQuery,
@@ -239,7 +247,7 @@ pub fn build_app(pool: hexforge::DatabasePool, cors: CorsConfig) -> Router {
         .crud_with_meta(
             CrudResourceConfig::<BibItem, _, CreateBibItem, UpdateBibItem, BibItemQuery>::new(
                 "/api/v1/bibitems",
-                state.bibitem_ds,
+                state.bibitem_ds.clone(),
             )
             .create_validator(validate_create_bibitem)
             .update_validator(validate_update_bibitem)
@@ -259,6 +267,78 @@ pub fn build_app(pool: hexforge::DatabasePool, cors: CorsConfig) -> Router {
                     Permission::Admin,
                 )
                 .description("Bibliography item management"),
+        )
+        // =====================================================================
+        // Custom handlers (non-CRUD)
+        // =====================================================================
+        // By-key lookups
+        .resource(
+            Resource::<AppState>::new("/api/v1/authors")
+                .get("/by-key/{key}", get_author_by_key)
+                .with_state(state.clone()),
+        )
+        .resource(
+            Resource::<AppState>::new("/api/v1/journals")
+                .get("/by-key/{key}", get_journal_by_key)
+                .with_state(state.clone()),
+        )
+        .resource(
+            Resource::<AppState>::new("/api/v1/publishers")
+                .get("/by-key/{key}", get_publisher_by_key)
+                .with_state(state.clone()),
+        )
+        .resource(
+            Resource::<AppState>::new("/api/v1/institutions")
+                .get("/by-key/{key}", get_institution_by_key)
+                .with_state(state.clone()),
+        )
+        .resource(
+            Resource::<AppState>::new("/api/v1/schools")
+                .get("/by-key/{key}", get_school_by_key)
+                .with_state(state.clone()),
+        )
+        .resource(
+            Resource::<AppState>::new("/api/v1/series")
+                .get("/by-key/{key}", get_series_by_key)
+                .with_state(state.clone()),
+        )
+        // Bibkey lookup
+        .resource(
+            Resource::<AppState>::new("/api/v1/bibitems")
+                .get("/by-bibkey/{bibkey}", get_by_bibkey)
+                .with_state(state.clone()),
+        )
+        // Junction tables
+        .resource(
+            Resource::<AppState>::new("/api/v1/bibitems")
+                .get("/{id}/authors", get_bibitem_authors)
+                .post("/{id}/authors", add_author_to_bibitem)
+                .delete("/{id}/authors/{author_id}", remove_author_from_bibitem)
+                .put("/{id}/authors", replace_bibitem_authors)
+                .get("/{id}/keywords", get_bibitem_keywords)
+                .post("/{id}/keywords", set_bibitem_keywords)
+                .with_state(state.clone()),
+        )
+        // Keyword tree
+        .resource(
+            Resource::<AppState>::new("/api/v1/keywords")
+                .get("/tree", get_keyword_tree)
+                .with_state(state.clone()),
+        )
+        // Search
+        .resource(
+            Resource::<AppState>::new("/api/v1")
+                .post("/search", search_bibitems)
+                .with_state(state.clone()),
+        )
+        // Admin endpoints
+        .resource(
+            Resource::<AppState>::new("/api/v1/admin")
+                .require_permission(Permission::Admin)
+                .post("/import", import_bibitems)
+                .post("/import/file", import_file)
+                .get("/export", export_bibitems)
+                .with_state(state),
         )
         // OpenAPI spec
         .serve_openapi(
