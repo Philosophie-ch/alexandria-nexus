@@ -112,7 +112,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Seed API key (optional)
     if let Some(ref seed_key) = config.seed_api_key {
         let seed_name = config.seed_api_key_name.as_ref().unwrap();
-        let key_hash = hash_api_key(seed_key);
+        let key_hash = alexandria_nexus::auth::hash_api_key(seed_key);
         hexforge::db_exports::query(
             r#"
             INSERT INTO api_keys (key_hash, name, permission)
@@ -133,12 +133,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     hexforge::serve(app, &config.addr()).await?;
 
     Ok(())
-}
-
-/// Hash an API key with SHA-256.
-fn hash_api_key(key: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(key.as_bytes());
-    hex::encode(hasher.finalize())
 }
