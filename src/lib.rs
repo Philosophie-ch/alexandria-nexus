@@ -340,12 +340,13 @@ pub fn build_app(pool: hexforge::DatabasePool, cors: CorsConfig) -> Router {
                 .get("/export", export_bibitems)
                 .with_state(state),
         )
-        // OpenAPI spec
+        // OpenAPI
         .serve_openapi(
             "/docs/openapi.json",
             OpenApiConfig::new("Alexandria Nexus", "0.1.0")
                 .description("Bibliography and knowledge engine for Philosophie.ch"),
         )
+        .serve_swagger_ui("/docs", "/docs/openapi.json")
         .with_cors(cors)
         .build();
 
