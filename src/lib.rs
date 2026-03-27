@@ -5,6 +5,9 @@ use hexforge::{
     axum_exports::{Router, get},
 };
 
+pub mod domain;
+pub mod entities;
+pub mod projections;
 mod state;
 
 pub use state::AppState;
