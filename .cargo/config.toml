@@ -1,0 +1,14 @@
+[alias]
+lint = "clippy --all-targets --all-features"
+test-all = "test --all-targets --all-features --no-fail-fast"
+
+# Strict type safety audit - use periodically to catch unsafe patterns
+# Checks: numeric casts, arithmetic overflow potential, array indexing, unwrap usage
+audit = """clippy --all-targets --all-features -- \
+    -W clippy::cast_possible_truncation \
+    -W clippy::cast_sign_loss \
+    -W clippy::cast_possible_wrap \
+    -W clippy::cast_lossless \
+    -W clippy::checked_conversions \
+    -W clippy::redundant_clone \
+    -W clippy::fallible_impl_from"""
