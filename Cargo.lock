@@ -1015,6 +1015,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 [[package]]
 name = "hexforge"
 version = "0.2.0"
+source = "git+ssh://git@gitlab.com/alebg/hexforge.git?tag=v0.2.0#0cd3f7e944d3f2be3c18c1106ec21e455e682137"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -1038,6 +1039,7 @@ dependencies = [
 [[package]]
 name = "hexforge-macros"
 version = "0.2.0"
+source = "git+ssh://git@gitlab.com/alebg/hexforge.git?tag=v0.2.0#0cd3f7e944d3f2be3c18c1106ec21e455e682137"
 dependencies = [
  "proc-macro2",
  "quote",
