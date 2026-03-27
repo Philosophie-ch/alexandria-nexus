@@ -37,8 +37,7 @@ test-integration:
 test:
 	cargo test --lib && cargo test --test '*' -- --test-threads=1
 
-# Clean up leaked test containers (if Ctrl+C interrupted tests)
-clean-containers:
-	@echo "Removing leaked testcontainers..."
-	@docker rm -f $$(docker ps -aq --filter label=org.testcontainers=true) 2>/dev/null || true
-	@echo "Done"
+# List leaked test containers (if Ctrl+C interrupted tests)
+# Review the list, then remove manually: docker rm -f <id>
+list-leaked:
+	@docker ps --filter label=org.testcontainers=true --format "table {{.ID}}\t{{.Image}}\t{{.CreatedAt}}\t{{.Names}}"
