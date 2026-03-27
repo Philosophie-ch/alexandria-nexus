@@ -2,5 +2,11 @@
 name = "alexandria-nexus"
 version = "0.1.0"
 edition = "2024"
+authors = ["Luis Alejandro Bordo García <alebg@protonmail.com>"]
+description = "Bibliography and knowledge engine for Philosophie.ch"
+license = "PolyForm-Noncommercial-1.0.0"
+keywords = ["bibliography", "philosophy", "catalog", "api"]
+categories = ["web-programming::http-server", "database"]
+rust-version = "1.94"
 
 [dependencies]
