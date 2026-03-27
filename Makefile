@@ -1,5 +1,5 @@
 SHELL := /bin/bash
-.PHONY: dev stop db lint test
+.PHONY: dev stop db lint test test-unit test-integration
 
 # Start DB + Adminer and run the app
 dev-start:
@@ -25,6 +25,20 @@ dev-db:
 check:
 	cargo fmt --all && cargo lint && cargo audit && cargo build
 
-# Tests
+# Unit tests only (fast, no Docker)
+test-unit:
+	cargo test --lib
+
+# Integration tests (uses Docker — one test at a time to save resources)
+test-integration:
+	cargo test --test '*' -- --test-threads=1
+
+# All tests
 test:
-	cargo test-all
+	cargo test --lib && cargo test --test '*' -- --test-threads=1
+
+# Clean up leaked test containers (if Ctrl+C interrupted tests)
+clean-containers:
+	@echo "Removing leaked testcontainers..."
+	@docker rm -f $$(docker ps -aq --filter label=org.testcontainers=true) 2>/dev/null || true
+	@echo "Done"
