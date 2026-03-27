@@ -6,10 +6,13 @@ use hexforge::{
 };
 
 pub mod domain;
+pub mod dto;
 pub mod entities;
 pub mod projections;
 pub mod queries;
 mod state;
+pub mod transform;
+pub mod validation;
 
 pub use state::AppState;
 
