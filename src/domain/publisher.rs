@@ -1,4 +1,4 @@
-//! Publisher entity — maps to the `publishers` table.
+//! Publisher entity.
 
 use chrono::{DateTime, Utc};
 use hexforge::{Crud, Entity};

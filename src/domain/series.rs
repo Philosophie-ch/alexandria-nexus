@@ -1,4 +1,4 @@
-//! Series entity — maps to the `series` table.
+//! Series entity.
 
 use chrono::{DateTime, Utc};
 use hexforge::{Crud, Entity};

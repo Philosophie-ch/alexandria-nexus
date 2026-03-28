@@ -1,4 +1,4 @@
-//! Institution entity — maps to the `institutions` table.
+//! Institution entity.
 
 use chrono::{DateTime, Utc};
 use hexforge::{Crud, Entity};

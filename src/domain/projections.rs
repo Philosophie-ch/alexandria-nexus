@@ -1,4 +1,4 @@
-//! Projections — typed column subsets for list and search views.
+//! Projections — typed field subsets for list and search views.
 
 use hexforge::Projection;
 use serde::{Deserialize, Serialize};
@@ -8,8 +8,8 @@ use super::{BibItem, EntryType, PubState};
 
 /// Summary projection for bibliography list endpoints.
 ///
-/// Selects only the essential columns needed for list views,
-/// avoiding the full 46-column SELECT on every list request.
+/// Selects only the essential fields needed for list views,
+/// avoiding the full entity on every list request.
 #[derive(Projection, Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[projection(entity = "BibItem")]
 pub struct BibItemSummary {

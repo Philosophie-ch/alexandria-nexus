@@ -1,4 +1,4 @@
-//! Author entity — maps to the `authors` table.
+//! Author entity.
 
 use chrono::{DateTime, Utc};
 use hexforge::{Crud, Entity};

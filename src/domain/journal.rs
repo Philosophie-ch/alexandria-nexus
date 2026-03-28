@@ -1,4 +1,4 @@
-//! Journal entity — maps to the `journals` table.
+//! Journal entity.
 
 use chrono::{DateTime, Utc};
 use hexforge::{Crud, Entity};

@@ -1,4 +1,4 @@
-//! School entity — maps to the `schools` table.
+//! School entity.
 
 use chrono::{DateTime, Utc};
 use hexforge::{Crud, Entity};

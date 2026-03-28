@@ -1,7 +1,6 @@
 //! BibStringAttr — a triple of LaTeX, Unicode, and simplified (ASCII) representations.
 //!
 //! Used for titles, names, and other text that may contain special characters.
-//! This is a pure domain type with no database annotations.
 
 use serde::{Deserialize, Serialize};
 

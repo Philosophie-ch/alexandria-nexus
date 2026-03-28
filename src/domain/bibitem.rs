@@ -1,6 +1,6 @@
-//! BibItem entity — maps to the `bibitems` table.
+//! BibItem entity — the main bibliography entry.
 //!
-//! This is the main bibliography entry with 46+ columns covering identity,
+//! Covers identity, dates, titles, publication info, identifiers, and metadata.
 //! dates, title, publication info, identifiers, references, and metadata.
 
 use chrono::{DateTime, Utc};

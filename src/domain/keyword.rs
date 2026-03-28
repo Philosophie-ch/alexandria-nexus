@@ -1,4 +1,4 @@
-//! Keyword entity — maps to the `keywords` table.
+//! Keyword entity.
 
 use chrono::{DateTime, Utc};
 use hexforge::{Crud, Entity};
