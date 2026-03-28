@@ -1,11 +1,10 @@
-//! BibItem projections for list and search views.
+//! Projections — typed column subsets for list and search views.
 
 use hexforge::Projection;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::domain::{EntryType, PubState};
-use crate::domain::BibItem;
+use super::{BibItem, EntryType, PubState};
 
 /// Summary projection for bibliography list endpoints.
 ///

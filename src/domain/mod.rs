@@ -6,6 +6,7 @@
 
 pub mod enums;
 pub mod bib_string;
+pub mod projections;
 
 mod author;
 mod bibitem;
