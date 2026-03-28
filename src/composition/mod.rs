@@ -15,9 +15,12 @@ use crate::adapters::db::queries::{
     SchoolQuery, SeriesQuery,
 };
 use crate::adapters::handlers::{
-    add_author_to_bibitem, export_bibitems, get_bibitem_authors, get_bibitem_keywords,
-    get_by_bibkey, get_keyword_tree, import_bibitems, import_file, remove_author_from_bibitem,
-    replace_bibitem_authors, search_bibitems, set_bibitem_keywords,
+    add_author_to_bibitem, export_authors, export_bibitems, export_institutions, export_journals,
+    export_keywords, export_publishers, export_schools, export_series, get_bibitem_authors,
+    get_bibitem_keywords, get_by_bibkey, get_keyword_tree, import_authors, import_bibitems,
+    import_institutions, import_journals, import_keywords, import_publishers, import_schools,
+    import_series, remove_author_from_bibitem, replace_bibitem_authors, search_bibitems,
+    set_bibitem_keywords,
 };
 use crate::domain::{
     Author, BibItem, CreateAuthor, CreateBibItem, CreateInstitution, CreateJournal, CreateKeyword,
@@ -204,13 +207,32 @@ pub fn build_app(pool: hexforge::DatabasePool, cors: CorsConfig) -> Router {
                 .post("/search", search_bibitems)
                 .with_state(state.clone()),
         )
-        // Admin endpoints
+        // Admin: Export endpoints
         .resource(
-            Resource::<AppState>::new("/api/v1/admin")
+            Resource::<AppState>::new("/api/v1/admin/export")
                 .require_permission(Permission::Admin)
-                .post("/import", import_bibitems)
-                .post("/import/file", import_file)
-                .get("/export", export_bibitems)
+                .post("/bibitems", export_bibitems)
+                .post("/authors", export_authors)
+                .post("/journals", export_journals)
+                .post("/publishers", export_publishers)
+                .post("/institutions", export_institutions)
+                .post("/schools", export_schools)
+                .post("/series", export_series)
+                .post("/keywords", export_keywords)
+                .with_state(state.clone()),
+        )
+        // Admin: Import endpoints
+        .resource(
+            Resource::<AppState>::new("/api/v1/admin/import")
+                .require_permission(Permission::Admin)
+                .post("/bibitems", import_bibitems)
+                .post("/authors", import_authors)
+                .post("/journals", import_journals)
+                .post("/publishers", import_publishers)
+                .post("/institutions", import_institutions)
+                .post("/schools", import_schools)
+                .post("/series", import_series)
+                .post("/keywords", import_keywords)
                 .with_state(state),
         )
         // OpenAPI
