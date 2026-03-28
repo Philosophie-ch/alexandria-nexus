@@ -4,7 +4,7 @@
 
 use hexforge::ValidationError;
 
-use crate::dto::{CreateSeries, UpdateSeries};
+use crate::entities::{CreateSeries, UpdateSeries};
 
 /// Validate a CreateSeries request.
 /// Pure function — NO I/O.

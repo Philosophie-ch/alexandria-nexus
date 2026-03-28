@@ -4,21 +4,23 @@
 //! dates, title, publication info, identifiers, references, and metadata.
 
 use chrono::{DateTime, Utc};
-use hexforge::Entity;
+use hexforge::{Crud, Entity};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::domain::{EntryType, Epoch, LangId, PubState};
 
 /// A bibliography item — the core entity of the system.
-#[derive(Entity, Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Entity, Crud, Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[entity(table = "bibitems")]
 pub struct BibItem {
     #[entity(id)]
     pub id: i64,
 
     // Identity
+    #[crud(required)]
     pub bibkey: String,
+    #[crud(required)]
     pub entry_type: EntryType,
 
     // Dates
@@ -31,8 +33,11 @@ pub struct BibItem {
     pub pubstate: Option<PubState>,
 
     // Title (BibStringAttr: latex, unicode, simplified)
+    #[crud(required)]
     pub title_latex: String,
+    #[crud(required)]
     pub title_unicode: String,
+    #[crud(required)]
     pub title_simplified: String,
 
     // Booktitle (for @incollection)
@@ -85,6 +90,8 @@ pub struct BibItem {
     pub has_fulltext: bool,
     pub fulltext_path: Option<String>,
 
+    #[crud(skip)]
     pub created_at: DateTime<Utc>,
+    #[crud(skip)]
     pub updated_at: DateTime<Utc>,
 }

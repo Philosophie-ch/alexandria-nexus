@@ -1,16 +1,17 @@
 //! Journal entity — maps to the `journals` table.
 
 use chrono::{DateTime, Utc};
-use hexforge::Entity;
+use hexforge::{Crud, Entity};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 /// A journal in the bibliography system.
-#[derive(Entity, Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Entity, Crud, Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[entity(table = "journals")]
 pub struct Journal {
     #[entity(id)]
     pub id: i64,
+    #[crud(required)]
     pub journal_key: String,
     pub name_latex: String,
     pub name_unicode: String,
@@ -18,6 +19,8 @@ pub struct Journal {
     pub issn_print: Option<String>,
     pub issn_electronic: Option<String>,
 
+    #[crud(skip)]
     pub created_at: DateTime<Utc>,
+    #[crud(skip)]
     pub updated_at: DateTime<Utc>,
 }

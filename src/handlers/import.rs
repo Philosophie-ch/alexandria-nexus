@@ -9,10 +9,8 @@ use hexforge::axum_exports::{Json, State};
 use hexforge::{DataSource, HexforgeError};
 use serde::{Deserialize, Serialize};
 
-use crate::dto::CreateBibItem;
-use crate::entities::BibItem;
+use crate::entities::{BibItem, CreateBibItem, create_bib_item_transform};
 use crate::state::AppState;
-use crate::transform::create_bibitem_transform;
 use crate::validation::validate_create_bibitem;
 
 /// Import request containing bibitems to create.
@@ -76,7 +74,7 @@ pub async fn import_bibitems(
     for (index, dto) in request.bibitems.iter().enumerate() {
         match validate_create_bibitem(dto) {
             Ok(()) => {
-                let bibitem = create_bibitem_transform(dto.clone());
+                let bibitem = create_bib_item_transform(dto.clone());
                 valid_items.push((index, dto.bibkey.clone(), bibitem));
             }
             Err(e) => {

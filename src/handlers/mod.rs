@@ -1,7 +1,6 @@
 //! Custom HTTP handlers for endpoints beyond basic CRUD.
 
 mod bibkey;
-mod by_key;
 mod expand;
 mod export;
 mod import;
@@ -11,10 +10,6 @@ mod keyword_tree;
 mod search;
 
 pub use bibkey::get_by_bibkey;
-pub use by_key::{
-    get_author_by_key, get_institution_by_key, get_journal_by_key, get_publisher_by_key,
-    get_school_by_key, get_series_by_key,
-};
 pub use expand::{EXPANDABLE_FIELDS, expand_bibitem};
 pub use export::export_bibitems;
 pub use import::import_bibitems;

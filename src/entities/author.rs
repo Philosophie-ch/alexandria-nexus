@@ -1,7 +1,7 @@
 //! Author entity — maps to the `authors` table.
 
 use chrono::{DateTime, Utc};
-use hexforge::Entity;
+use hexforge::{Crud, Entity};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -9,11 +9,12 @@ use utoipa::ToSchema;
 ///
 /// Authors may have a given + family name, a mononym (e.g., Plato),
 /// or both. Each name component has LaTeX, Unicode, and simplified variants.
-#[derive(Entity, Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Entity, Crud, Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[entity(table = "authors")]
 pub struct Author {
     #[entity(id)]
     pub id: i64,
+    #[crud(required)]
     pub author_key: String,
 
     // Given name (BibStringAttr: latex, unicode, simplified)
@@ -41,6 +42,8 @@ pub struct Author {
     pub famous_name_unicode: Option<String>,
     pub famous_name_simplified: Option<String>,
 
+    #[crud(skip)]
     pub created_at: DateTime<Utc>,
+    #[crud(skip)]
     pub updated_at: DateTime<Utc>,
 }

@@ -12,10 +12,8 @@ use hexforge::{DataSource, HexforgeError, ValidationError};
 use serde::Serialize;
 
 use crate::domain::EntryType;
-use crate::dto::CreateBibItem;
-use crate::entities::BibItem;
+use crate::entities::{BibItem, CreateBibItem, create_bib_item_transform};
 use crate::state::AppState;
-use crate::transform::create_bibitem_transform;
 use crate::validation::validate_create_bibitem;
 
 /// Response for file import.
@@ -167,7 +165,7 @@ pub async fn import_file(
             continue;
         }
 
-        let bibitem = create_bibitem_transform(dto.clone());
+        let bibitem = create_bib_item_transform(dto.clone());
         valid_items.push((row_num, dto.bibkey.clone(), bibitem));
     }
 

@@ -4,7 +4,7 @@
 
 use hexforge::ValidationError;
 
-use crate::dto::{CreateJournal, UpdateJournal};
+use crate::entities::{CreateJournal, UpdateJournal};
 
 /// Validate a CreateJournal request.
 /// Pure function — NO I/O.
