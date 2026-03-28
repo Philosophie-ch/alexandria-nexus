@@ -1,0 +1,10 @@
+target/
+.git/
+.github/
+.env
+.env.*
+docs/
+tests/
+*.md
+Makefile
+docker-compose.yml
