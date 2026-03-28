@@ -194,12 +194,29 @@ pub fn build_app(pool: hexforge::DatabasePool, cors: CorsConfig) -> Router {
             .expand_fk("school", "school_id", state.school_ds.clone())
             .expand_fk("series", "series_id", state.series_ds.clone())
             .expand_fk("crossref", "crossref_id", state.bibitem_ds.clone())
-            // Declarative junction expansions
-            .expand_junction(
+            // Junction expansions with role filtering
+            .expand_junction_where(
                 "authors",
                 "bibitem_authors",
                 "bibitem_id",
                 "author_id",
+                Some("role = 'author'"),
+                state.author_ds.clone(),
+            )
+            .expand_junction_where(
+                "editors",
+                "bibitem_authors",
+                "bibitem_id",
+                "author_id",
+                Some("role = 'editor'"),
+                state.author_ds.clone(),
+            )
+            .expand_junction_where(
+                "guesteditors",
+                "bibitem_authors",
+                "bibitem_id",
+                "author_id",
+                Some("role = 'guesteditor'"),
                 state.author_ds.clone(),
             )
             .expand_junction(
