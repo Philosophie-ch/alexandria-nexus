@@ -8,8 +8,8 @@ use hexforge::axum_exports::{Json, State};
 use hexforge::db_exports::{FromRow, PgArguments};
 use serde::{Deserialize, Serialize};
 
-use crate::domain::{EntryType, Epoch, LangId, PubState};
 use crate::domain::BibItem;
+use crate::domain::{EntryType, Epoch, LangId, PubState};
 use crate::state::AppState;
 
 /// Minimum similarity threshold for search results (0.0 to 1.0).

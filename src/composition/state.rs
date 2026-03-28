@@ -2,13 +2,11 @@
 
 use hexforge::{DataStore, DatabasePool};
 
-use crate::domain::{
-    Author, BibItem, Institution, Journal, Keyword, Publisher, School, Series,
-};
 use crate::adapters::db::queries::{
     AuthorQuery, BibItemQuery, InstitutionQuery, JournalQuery, KeywordQuery, PublisherQuery,
     SchoolQuery, SeriesQuery,
 };
+use crate::domain::{Author, BibItem, Institution, Journal, Keyword, Publisher, School, Series};
 
 /// Shared application state.
 ///

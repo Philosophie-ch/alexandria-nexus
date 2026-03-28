@@ -4,8 +4,8 @@
 //! Entity annotations (#[derive(Entity)], #[derive(Crud)]) are metadata —
 //! they don't introduce I/O or framework coupling.
 
-pub mod enums;
 pub mod bib_string;
+pub mod enums;
 pub mod projections;
 
 mod author;
@@ -17,8 +17,8 @@ mod publisher;
 mod school;
 mod series;
 
-pub use enums::*;
 pub use bib_string::*;
+pub use enums::*;
 
 pub use author::{
     Author, CreateAuthor, UpdateAuthor, create_author_transform, update_author_transform,
