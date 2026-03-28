@@ -7,6 +7,7 @@ mod import;
 mod import_file;
 mod junction;
 mod keyword_tree;
+mod render;
 mod search;
 
 pub use bibkey::get_by_bibkey;
@@ -24,4 +25,5 @@ pub use junction::{
     replace_bibitem_authors, set_bibitem_keywords,
 };
 pub use keyword_tree::get_keyword_tree;
+pub use render::render_bibitems;
 pub use search::search_bibitems;

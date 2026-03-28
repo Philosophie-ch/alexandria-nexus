@@ -19,8 +19,8 @@ use crate::adapters::handlers::{
     export_keywords, export_publishers, export_schools, export_series, get_bibitem_authors,
     get_bibitem_keywords, get_by_bibkey, get_keyword_tree, import_authors, import_bibitems,
     import_institutions, import_journals, import_keywords, import_publishers, import_schools,
-    import_series, remove_author_from_bibitem, replace_bibitem_authors, search_bibitems,
-    set_bibitem_keywords,
+    import_series, remove_author_from_bibitem, render_bibitems, replace_bibitem_authors,
+    search_bibitems, set_bibitem_keywords,
 };
 use crate::domain::{
     Author, BibItem, CreateAuthor, CreateBibItem, CreateInstitution, CreateJournal, CreateKeyword,
@@ -205,6 +205,12 @@ pub fn build_app(pool: hexforge::DatabasePool, cors: CorsConfig) -> Router {
         .resource(
             Resource::<AppState>::new("/api/v1")
                 .post("/search", search_bibitems)
+                .with_state(state.clone()),
+        )
+        // Render (HTML bibliography)
+        .resource(
+            Resource::<AppState>::new("/api/v1")
+                .post("/render", render_bibitems)
                 .with_state(state.clone()),
         )
         // Admin: Export endpoints
