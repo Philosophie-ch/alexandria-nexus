@@ -21,6 +21,10 @@ use crate::adapters::handlers::{
     import_bibitems, import_institutions, import_journals, import_keywords, import_publishers,
     import_schools, import_series, render_bibitems, search_bibitems,
 };
+use crate::domain::projections::{
+    AuthorExpanded, BibItemCrossref, BibItemSummary, InstitutionExpanded, JournalExpanded,
+    KeywordExpanded, PublisherExpanded, SchoolExpanded, SeriesExpanded,
+};
 use crate::domain::{
     Author, BibItem, CreateAuthor, CreateBibItem, CreateInstitution, CreateJournal, CreateKeyword,
     CreatePublisher, CreateSchool, CreateSeries, Institution, Journal, Keyword, Publisher, School,
@@ -174,6 +178,8 @@ pub fn build_app(pool: hexforge::DatabasePool, cors: CorsConfig) -> Router {
             .create_transform(create_bib_item_transform)
             .update_transform(update_bib_item_transform)
             .by_key("bibkey")
+            // Projection view for list endpoint: ?view=summary
+            .view("summary", hexforge::build_projection_view::<_, _, BibItemSummary>(state.bibitem_ds.clone()))
             // Junction tables (many-to-many)
             .junction(
                 JunctionConfig::new("authors", "bibitem_authors", state.pool.pool().clone())
@@ -187,15 +193,15 @@ pub fn build_app(pool: hexforge::DatabasePool, cors: CorsConfig) -> Router {
                     .foreign_fk("keyword_id")
                     .extra_columns(&["keyword_level"]),
             )
-            // Declarative FK expansions
-            .expand_fk("journal", "journal_id", state.journal_ds.clone())
-            .expand_fk("publisher", "publisher_id", state.publisher_ds.clone())
-            .expand_fk("institution", "institution_id", state.institution_ds.clone())
-            .expand_fk("school", "school_id", state.school_ds.clone())
-            .expand_fk("series", "series_id", state.series_ds.clone())
-            .expand_fk("crossref", "crossref_id", state.bibitem_ds.clone())
-            // Junction expansions with role filtering
-            .expand_junction_where(
+            // FK expansions — projected (no timestamps, only what's needed)
+            .expand_fk_projected::<JournalExpanded, _, _>("journal", "journal_id", state.journal_ds.clone())
+            .expand_fk_projected::<PublisherExpanded, _, _>("publisher", "publisher_id", state.publisher_ds.clone())
+            .expand_fk_projected::<InstitutionExpanded, _, _>("institution", "institution_id", state.institution_ds.clone())
+            .expand_fk_projected::<SchoolExpanded, _, _>("school", "school_id", state.school_ds.clone())
+            .expand_fk_projected::<SeriesExpanded, _, _>("series", "series_id", state.series_ds.clone())
+            .expand_fk_projected::<BibItemCrossref, _, _>("crossref", "crossref_id", state.bibitem_ds.clone())
+            // Junction expansions — projected, with role filtering
+            .expand_junction_projected::<AuthorExpanded, _, _>(
                 "authors",
                 "bibitem_authors",
                 "bibitem_id",
@@ -203,7 +209,7 @@ pub fn build_app(pool: hexforge::DatabasePool, cors: CorsConfig) -> Router {
                 Some("role = 'author'"),
                 state.author_ds.clone(),
             )
-            .expand_junction_where(
+            .expand_junction_projected::<AuthorExpanded, _, _>(
                 "editors",
                 "bibitem_authors",
                 "bibitem_id",
@@ -211,7 +217,7 @@ pub fn build_app(pool: hexforge::DatabasePool, cors: CorsConfig) -> Router {
                 Some("role = 'editor'"),
                 state.author_ds.clone(),
             )
-            .expand_junction_where(
+            .expand_junction_projected::<AuthorExpanded, _, _>(
                 "guesteditors",
                 "bibitem_authors",
                 "bibitem_id",
@@ -219,11 +225,12 @@ pub fn build_app(pool: hexforge::DatabasePool, cors: CorsConfig) -> Router {
                 Some("role = 'guesteditor'"),
                 state.author_ds.clone(),
             )
-            .expand_junction(
+            .expand_junction_projected::<KeywordExpanded, _, _>(
                 "keywords",
                 "bibitem_keywords",
                 "bibitem_id",
                 "keyword_id",
+                None,
                 state.keyword_ds.clone(),
             ),
         )
