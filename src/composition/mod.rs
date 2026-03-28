@@ -3,7 +3,8 @@
 pub mod state;
 
 use hexforge::{
-    Api, CorsConfig, CrudPermissions, CrudResourceConfig, OpenApiConfig, Permission, Resource,
+    Api, CorsConfig, CrudPermissions, CrudResourceConfig, JunctionConfig, OpenApiConfig,
+    Permission, Resource,
     axum_exports::{Router, get},
 };
 
@@ -15,12 +16,10 @@ use crate::adapters::db::queries::{
     SchoolQuery, SeriesQuery,
 };
 use crate::adapters::handlers::{
-    add_author_to_bibitem, export_authors, export_bibitems, export_institutions, export_journals,
-    export_keywords, export_publishers, export_schools, export_series, get_bibitem_authors,
-    get_bibitem_keywords, get_keyword_tree, import_authors, import_bibitems, import_institutions,
-    import_journals, import_keywords, import_publishers, import_schools, import_series,
-    remove_author_from_bibitem, render_bibitems, replace_bibitem_authors, search_bibitems,
-    set_bibitem_keywords,
+    export_authors, export_bibitems, export_institutions, export_journals, export_keywords,
+    export_publishers, export_schools, export_series, get_keyword_tree, import_authors,
+    import_bibitems, import_institutions, import_journals, import_keywords, import_publishers,
+    import_schools, import_series, render_bibitems, search_bibitems,
 };
 use crate::domain::{
     Author, BibItem, CreateAuthor, CreateBibItem, CreateInstitution, CreateJournal, CreateKeyword,
@@ -174,22 +173,46 @@ pub fn build_app(pool: hexforge::DatabasePool, cors: CorsConfig) -> Router {
             .update_validator(validate_update_bibitem)
             .create_transform(create_bib_item_transform)
             .update_transform(update_bib_item_transform)
-            .by_key("bibkey"),
+            .by_key("bibkey")
+            // Junction tables (many-to-many)
+            .junction(
+                JunctionConfig::new("authors", "bibitem_authors", state.pool.pool().clone())
+                    .local_fk("bibitem_id")
+                    .foreign_fk("author_id")
+                    .extra_columns(&["role", "position"]),
+            )
+            .junction(
+                JunctionConfig::new("keywords", "bibitem_keywords", state.pool.pool().clone())
+                    .local_fk("bibitem_id")
+                    .foreign_fk("keyword_id")
+                    .extra_columns(&["keyword_level"]),
+            )
+            // Declarative FK expansions
+            .expand_fk("journal", "journal_id", state.journal_ds.clone())
+            .expand_fk("publisher", "publisher_id", state.publisher_ds.clone())
+            .expand_fk("institution", "institution_id", state.institution_ds.clone())
+            .expand_fk("school", "school_id", state.school_ds.clone())
+            .expand_fk("series", "series_id", state.series_ds.clone())
+            .expand_fk("crossref", "crossref_id", state.bibitem_ds.clone())
+            // Declarative junction expansions
+            .expand_junction(
+                "authors",
+                "bibitem_authors",
+                "bibitem_id",
+                "author_id",
+                state.author_ds.clone(),
+            )
+            .expand_junction(
+                "keywords",
+                "bibitem_keywords",
+                "bibitem_id",
+                "keyword_id",
+                state.keyword_ds.clone(),
+            ),
         )
         // =====================================================================
         // Custom handlers (non-CRUD)
         // =====================================================================
-        // Junction tables
-        .resource(
-            Resource::<AppState>::new("/api/v1/bibitems")
-                .get("/{id}/authors", get_bibitem_authors)
-                .post("/{id}/authors", add_author_to_bibitem)
-                .delete("/{id}/authors/{author_id}", remove_author_from_bibitem)
-                .put("/{id}/authors", replace_bibitem_authors)
-                .get("/{id}/keywords", get_bibitem_keywords)
-                .post("/{id}/keywords", set_bibitem_keywords)
-                .with_state(state.clone()),
-        )
         // Keyword tree
         .resource(
             Resource::<AppState>::new("/api/v1/keywords")
