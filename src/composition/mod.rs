@@ -17,10 +17,10 @@ use crate::adapters::db::queries::{
 use crate::adapters::handlers::{
     add_author_to_bibitem, export_authors, export_bibitems, export_institutions, export_journals,
     export_keywords, export_publishers, export_schools, export_series, get_bibitem_authors,
-    get_bibitem_keywords, get_by_bibkey, get_keyword_tree, import_authors, import_bibitems,
-    import_institutions, import_journals, import_keywords, import_publishers, import_schools,
-    import_series, remove_author_from_bibitem, render_bibitems, replace_bibitem_authors,
-    search_bibitems, set_bibitem_keywords,
+    get_bibitem_keywords, get_keyword_tree, import_authors, import_bibitems, import_institutions,
+    import_journals, import_keywords, import_publishers, import_schools, import_series,
+    remove_author_from_bibitem, render_bibitems, replace_bibitem_authors, search_bibitems,
+    set_bibitem_keywords,
 };
 use crate::domain::{
     Author, BibItem, CreateAuthor, CreateBibItem, CreateInstitution, CreateJournal, CreateKeyword,
@@ -173,17 +173,12 @@ pub fn build_app(pool: hexforge::DatabasePool, cors: CorsConfig) -> Router {
             .create_validator(validate_create_bibitem)
             .update_validator(validate_update_bibitem)
             .create_transform(create_bib_item_transform)
-            .update_transform(update_bib_item_transform),
+            .update_transform(update_bib_item_transform)
+            .by_key("bibkey"),
         )
         // =====================================================================
         // Custom handlers (non-CRUD)
         // =====================================================================
-        // Bibkey lookup
-        .resource(
-            Resource::<AppState>::new("/api/v1/bibitems")
-                .get("/by-bibkey/{bibkey}", get_by_bibkey)
-                .with_state(state.clone()),
-        )
         // Junction tables
         .resource(
             Resource::<AppState>::new("/api/v1/bibitems")
