@@ -3,7 +3,7 @@
 use hexforge::axum_exports::{Json, Path, State};
 use hexforge::{HexforgeError, WhereClause};
 
-use crate::entities::BibItem;
+use crate::domain::BibItem;
 use crate::state::AppState;
 
 /// Get a bibitem by its bibkey.

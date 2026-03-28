@@ -9,7 +9,7 @@ use hexforge::axum_exports::{Json, State};
 use hexforge::{DataSource, HexforgeError};
 use serde::{Deserialize, Serialize};
 
-use crate::entities::{BibItem, CreateBibItem, create_bib_item_transform};
+use crate::domain::{BibItem, CreateBibItem, create_bib_item_transform};
 use crate::state::AppState;
 use crate::validation::validate_create_bibitem;
 

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::domain::{EntryType, PubState};
-use crate::entities::BibItem;
+use crate::domain::BibItem;
 
 /// Summary projection for bibliography list endpoints.
 ///

@@ -4,7 +4,7 @@
 
 use hexforge::ValidationError;
 
-use crate::entities::{CreateSchool, UpdateSchool};
+use crate::domain::{CreateSchool, UpdateSchool};
 
 /// Validate a CreateSchool request.
 /// Pure function — NO I/O.

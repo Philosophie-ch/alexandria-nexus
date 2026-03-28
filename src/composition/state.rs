@@ -2,8 +2,10 @@
 
 use hexforge::{DataStore, DatabasePool};
 
-use crate::entities::{Author, BibItem, Institution, Journal, Keyword, Publisher, School, Series};
-use crate::queries::{
+use crate::domain::{
+    Author, BibItem, Institution, Journal, Keyword, Publisher, School, Series,
+};
+use crate::adapters::db::queries::{
     AuthorQuery, BibItemQuery, InstitutionQuery, JournalQuery, KeywordQuery, PublisherQuery,
     SchoolQuery, SeriesQuery,
 };

@@ -15,7 +15,7 @@ use hexforge::db_exports::{FromRow, query_as};
 use hexforge::{DataSource, ExpandRequest, HexforgeError, is_field_expanded};
 
 use crate::domain::AuthorRole;
-use crate::entities::{Author, BibItem, Journal, Keyword};
+use crate::domain::{Author, BibItem, Journal, Keyword};
 use crate::state::AppState;
 
 /// List of supported expandable fields for bibitems.

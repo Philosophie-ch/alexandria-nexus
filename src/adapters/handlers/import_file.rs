@@ -12,7 +12,7 @@ use hexforge::{DataSource, HexforgeError, ValidationError};
 use serde::Serialize;
 
 use crate::domain::EntryType;
-use crate::entities::{BibItem, CreateBibItem, create_bib_item_transform};
+use crate::domain::{BibItem, CreateBibItem, create_bib_item_transform};
 use crate::state::AppState;
 use crate::validation::validate_create_bibitem;
 

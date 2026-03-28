@@ -6,7 +6,7 @@
 
 use hexforge::ValidationError;
 
-use crate::entities::{CreateKeyword, UpdateKeyword};
+use crate::domain::{CreateKeyword, UpdateKeyword};
 
 /// Validate a CreateKeyword request.
 /// Pure function — NO I/O.

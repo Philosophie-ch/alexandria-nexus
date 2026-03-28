@@ -15,7 +15,7 @@ use hexforge::axum_exports::{Body, IntoResponse, Query, Response, State, StatusC
 use serde::Deserialize;
 use tokio_stream::wrappers::ReceiverStream;
 
-use crate::entities::BibItem;
+use crate::domain::BibItem;
 use crate::state::AppState;
 
 /// Export format options.

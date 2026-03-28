@@ -4,7 +4,7 @@ use hexforge::axum_exports::{Json, State};
 use hexforge::{HexforgeError, WhereClause};
 use serde::Serialize;
 
-use crate::entities::Keyword;
+use crate::domain::Keyword;
 use crate::state::AppState;
 
 /// Response containing keyword tree organized by level.

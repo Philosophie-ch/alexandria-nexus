@@ -4,7 +4,7 @@
 
 use hexforge::ValidationError;
 
-use crate::entities::{CreateBibItem, UpdateBibItem};
+use crate::domain::{CreateBibItem, UpdateBibItem};
 
 /// Validate a CreateBibItem request.
 /// Pure function — NO I/O.

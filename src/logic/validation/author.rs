@@ -4,7 +4,7 @@
 
 use hexforge::ValidationError;
 
-use crate::entities::{CreateAuthor, UpdateAuthor};
+use crate::domain::{CreateAuthor, UpdateAuthor};
 
 /// Validate a CreateAuthor request.
 /// Pure function — NO I/O.

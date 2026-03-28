@@ -4,7 +4,7 @@
 
 use hexforge::ValidationError;
 
-use crate::entities::{CreateInstitution, UpdateInstitution};
+use crate::domain::{CreateInstitution, UpdateInstitution};
 
 /// Validate a CreateInstitution request.
 /// Pure function — NO I/O.
