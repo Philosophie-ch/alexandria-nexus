@@ -37,6 +37,16 @@ test-integration:
 test:
 	cargo test --lib && cargo test --test '*' -- --test-threads=1
 
+# Code generation from hexforge.yml
+generate:
+	cargo run --bin generate -- generate --schema hexforge.yml --output src
+
+generate-migration:
+	cargo run --bin generate -- generate --schema hexforge.yml --output src --migration
+
+generate-dry-run:
+	cargo run --bin generate -- generate --schema hexforge.yml --dry-run
+
 # List leaked test containers (if Ctrl+C interrupted tests)
 # Review the list, then remove manually: docker rm -f <id>
 list-leaked:
