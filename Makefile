@@ -7,7 +7,7 @@ dev-start:
 	@echo "Waiting for Postgres to be ready..."
 	@until docker compose exec db pg_isready -U $${POSTGRES_USER:-bib} > /dev/null 2>&1; do sleep 0.5; done
 	@echo "Postgres ready"
-	set -a && source .env && set +a && cargo run
+	set -a && source .env && set +a && cargo run --bin alexandria-nexus
 
 # Stop all containers
 dev-stop:
