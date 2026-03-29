@@ -1,0 +1,600 @@
+# hexforge.yml — Alexandria Nexus schema
+# Bibliography and knowledge engine for Philosophie.ch
+
+project:
+  name: "alexandria-nexus"
+  description: "Bibliography and knowledge engine for Philosophie.ch"
+  api_prefix: "/api/v1"
+
+# =============================================================================
+# ENUMS
+# =============================================================================
+
+enums:
+  EntryType:
+    db_name: "entry_type"
+    rename_all: "lowercase"
+    default: "Unknown"
+    variants:
+      - Article
+      - Book
+      - Incollection
+      - Inproceedings
+      - Mastersthesis
+      - Misc
+      - Phdthesis
+      - Proceedings
+      - Techreport
+      - Unpublished
+      - { name: Unknown, rename: "UNKNOWN" }
+
+  PubState:
+    db_name: "pubstate"
+    rename_all: "lowercase"
+    variants:
+      - Unpub
+      - Forthcoming
+      - Inwork
+      - Submitted
+      - Published
+
+  LangId:
+    db_name: "langid"
+    rename_all: "lowercase"
+    variants:
+      - Catalan
+      - Czech
+      - Danish
+      - Dutch
+      - English
+      - French
+      - Greek
+      - Italian
+      - Latin
+      - Lithuanian
+      - Ngerman
+      - Polish
+      - Portuguese
+      - Romanian
+      - Russian
+      - Slovak
+      - Spanish
+      - Swedish
+      - Unknown
+
+  Epoch:
+    db_name: "epoch"
+    rename_all: "kebab-case"
+    variants:
+      - AncientPhilosophy
+      - AncientScientists
+      - AustrianPhilosophy
+      - BritishIdealism
+      - Classics
+      - Contemporaries
+      - ContemporaryScientists
+      - ContinentalPhilosophy
+      - CriticalTheory
+      - Cynics
+      - Enlightenment
+      - Existentialism
+      - ExoticPhilosophy
+      - GermanIdealism
+      - GermanRationalism
+      - GestaltPsychology
+      - Hermeneutics
+      - IslamicPhilosophy
+      - Mathematicians
+      - MedievalPhilosophy
+      - ModernPhilosophy
+      - ModernScientists
+      - NeoKantianism
+      - Neoplatonism
+      - NewRealism
+      - OrdinaryLanguagePhilosophy
+      - Phenomenology
+      - PolishLogic
+      - Pragmatism
+      - Presocratics
+      - Renaissance
+      - Stoics
+      - Theologians
+      - ViennaCircle
+
+  AuthorRole:
+    db_name: "author_role"
+    rename_all: "lowercase"
+    default: "Author"
+    variants:
+      - Author
+      - Editor
+      - Guesteditor
+
+  RefType:
+    db_name: "ref_type"
+    rename_all: "snake_case"
+    variants:
+      - FurtherRef
+      - DependsOn
+
+  PermissionLevel:
+    db_name: "permission_level"
+    rename_all: "lowercase"
+    default: "Read"
+    variants:
+      - Public
+      - Read
+      - Write
+      - Admin
+
+# =============================================================================
+# CUSTOM TYPES
+# =============================================================================
+
+custom_types:
+  bib_string:
+    expands_to:
+      - { suffix: "_latex", type: "Option<String>" }
+      - { suffix: "_unicode", type: "Option<String>" }
+      - { suffix: "_simplified", type: "Option<String>" }
+
+# =============================================================================
+# MODELS
+# =============================================================================
+
+models:
+  # ---------------------------------------------------------------------------
+  # Author
+  # ---------------------------------------------------------------------------
+  Author:
+    table: "authors"
+    key_field: "author_key"
+    fields:
+      author_key: { type: string, required: true, unique: true }
+      given_name: { type: bib_string }
+      family_name: { type: bib_string }
+      mononym: { type: bib_string }
+      shorthand: { type: bib_string }
+      famous_name: { type: bib_string }
+    constraints:
+      - either: [family_name_latex, mononym_latex]
+    filters:
+      family_name: { op: like, column: "family_name_simplified" }
+      search_term: { op: like_any, columns: "family_name_simplified,given_name_simplified" }
+    indexes:
+      - { columns: [family_name_simplified] }
+      - { columns: [family_name_simplified, given_name_simplified] }
+      - { columns: [family_name_simplified], type: gin_trgm }
+      - { columns: [given_name_simplified], type: gin_trgm }
+
+  # ---------------------------------------------------------------------------
+  # Journal
+  # ---------------------------------------------------------------------------
+  Journal:
+    table: "journals"
+    key_field: "journal_key"
+    fields:
+      journal_key: { type: string, required: true, unique: true }
+      name_latex: { type: string, required: true }
+      name_unicode: { type: string, required: true }
+      name_simplified: { type: string, required: true }
+      issn_print: { type: "string?" }
+      issn_electronic: { type: "string?" }
+    filters:
+      name: { op: like, column: "name_simplified" }
+    indexes:
+      - { columns: [name_simplified] }
+      - { columns: [name_simplified], type: gin_trgm }
+
+  # ---------------------------------------------------------------------------
+  # Publisher
+  # ---------------------------------------------------------------------------
+  Publisher:
+    table: "publishers"
+    key_field: "publisher_key"
+    fields:
+      publisher_key: { type: string, required: true, unique: true }
+      name_latex: { type: string, required: true }
+      name_unicode: { type: string, required: true }
+      name_simplified: { type: string, required: true }
+      default_address: { type: "string?" }
+    filters:
+      name: { op: like, column: "name_simplified" }
+    indexes:
+      - { columns: [name_simplified] }
+      - { columns: [name_simplified], type: gin_trgm }
+
+  # ---------------------------------------------------------------------------
+  # Institution
+  # ---------------------------------------------------------------------------
+  Institution:
+    table: "institutions"
+    key_field: "institution_key"
+    fields:
+      institution_key: { type: string, required: true, unique: true }
+      name_latex: { type: string, required: true }
+      name_unicode: { type: string, required: true }
+      name_simplified: { type: string, required: true }
+      default_address: { type: "string?" }
+    filters:
+      name: { op: like, column: "name_simplified" }
+    indexes:
+      - { columns: [name_simplified] }
+      - { columns: [name_simplified], type: gin_trgm }
+
+  # ---------------------------------------------------------------------------
+  # School
+  # ---------------------------------------------------------------------------
+  School:
+    table: "schools"
+    key_field: "school_key"
+    fields:
+      school_key: { type: string, required: true, unique: true }
+      name_latex: { type: string, required: true }
+      name_unicode: { type: string, required: true }
+      name_simplified: { type: string, required: true }
+      default_address: { type: "string?" }
+    filters:
+      name: { op: like, column: "name_simplified" }
+    indexes:
+      - { columns: [name_simplified] }
+      - { columns: [name_simplified], type: gin_trgm }
+
+  # ---------------------------------------------------------------------------
+  # Series
+  # ---------------------------------------------------------------------------
+  Series:
+    table: "series"
+    key_field: "series_key"
+    fields:
+      series_key: { type: string, required: true, unique: true }
+      name_latex: { type: string, required: true }
+      name_unicode: { type: string, required: true }
+      name_simplified: { type: string, required: true }
+    filters:
+      name: { op: like, column: "name_simplified" }
+    indexes:
+      - { columns: [name_simplified] }
+      - { columns: [name_simplified], type: gin_trgm }
+
+  # ---------------------------------------------------------------------------
+  # Keyword
+  # ---------------------------------------------------------------------------
+  Keyword:
+    table: "keywords"
+    fields:
+      name: { type: string, required: true }
+      level: { type: i16, required: true }
+    filters:
+      level: { op: eq, column: "level" }
+      name: { op: like, column: "name" }
+    indexes:
+      - { columns: [level] }
+      - { columns: [name] }
+
+  # ---------------------------------------------------------------------------
+  # BibItem
+  # ---------------------------------------------------------------------------
+  BibItem:
+    table: "bibitems"
+    key_field: "bibkey"
+    fields:
+      # Identity
+      bibkey: { type: string, required: true, unique: true }
+      entry_type: { type: EntryType, required: true }
+
+      # Dates
+      date_year: { type: "i16?" }
+      date_year_2_hyphen: { type: "i16?" }
+      date_year_2_slash: { type: "i16?" }
+      date_month: { type: "i16?" }
+      date_day: { type: "i16?" }
+      date_is_no_date: { type: bool }
+      pubstate: { type: "PubState?" }
+
+      # Title (required bib_string)
+      title: { type: bib_string, required: true }
+
+      # Booktitle (optional bib_string)
+      booktitle: { type: bib_string }
+
+      # Publication info
+      journal_id: { type: "i64?" }
+      publisher_id: { type: "i64?" }
+      address: { type: "string?" }
+      volume: { type: "string?" }
+      number: { type: "string?" }
+      pages: { type: "string?" }
+      eid: { type: "string?" }
+      series_id: { type: "i64?" }
+      edition: { type: "string?" }
+
+      # Institutional
+      institution_id: { type: "i64?" }
+      school_id: { type: "i64?" }
+      type_field: { type: "string?" }
+
+      # Identifiers
+      doi: { type: "string?" }
+      url: { type: "string?" }
+      eprint: { type: "string?" }
+      urn: { type: "string?" }
+
+      # References
+      crossref_id: { type: "i64?" }
+
+      # Issue/notes
+      issuetitle_latex: { type: "string?" }
+      issuetitle_unicode: { type: "string?" }
+      note_latex: { type: "string?" }
+      note_unicode: { type: "string?" }
+      extra_note_latex: { type: "string?" }
+      extra_note_unicode: { type: "string?" }
+
+      # Metadata
+      langid: { type: "LangId?" }
+      is_translation: { type: bool }
+      epoch: { type: "Epoch?" }
+      options: { type: "string?" }
+      shorthand: { type: "string?" }
+
+      # Internal tracking
+      person_id: { type: "i64?" }
+      has_fulltext: { type: bool }
+      fulltext_path: { type: "string?" }
+
+    relations:
+      journal:
+        type: belongs_to
+        fk: journal_id
+        target: Journal
+      publisher:
+        type: belongs_to
+        fk: publisher_id
+        target: Publisher
+      institution:
+        type: belongs_to
+        fk: institution_id
+        target: Institution
+      school:
+        type: belongs_to
+        fk: school_id
+        target: School
+      series:
+        type: belongs_to
+        fk: series_id
+        target: Series
+      crossref:
+        type: belongs_to
+        fk: crossref_id
+        target: BibItem
+      authors:
+        type: many_to_many
+        through: bibitem_authors
+        local_fk: bibitem_id
+        foreign_fk: author_id
+        target: Author
+        extra_columns:
+          - { name: role, type: "AuthorRole", default: "'author'" }
+          - { name: position, type: "i16" }
+      keywords:
+        type: many_to_many
+        through: bibitem_keywords
+        local_fk: bibitem_id
+        foreign_fk: keyword_id
+        target: Keyword
+        extra_columns:
+          - { name: keyword_level, type: "i16" }
+
+    filters:
+      entry_type: { op: eq_cast, column: "entry_type::entry_type" }
+      year_from: { op: gte, column: "date_year" }
+      year_to: { op: lte, column: "date_year" }
+      author_id: { op: raw, sql: "id IN (SELECT bibitem_id FROM bibitem_authors WHERE author_id = $)" }
+      journal_id: { op: eq, column: "journal_id" }
+      epoch: { op: eq_cast, column: "epoch::epoch" }
+      search_term: { op: like, column: "title_simplified" }
+
+    indexes:
+      - { columns: [entry_type] }
+      - { columns: [date_year] }
+      - { columns: [journal_id] }
+      - { columns: [publisher_id] }
+      - { columns: [crossref_id] }
+      - { columns: [title_simplified], type: gin_trgm }
+      - { columns: [bibkey], type: gin_trgm }
+
+    projections:
+      summary:
+        - bibkey
+        - entry_type
+        - title_simplified
+        - date_year
+        - pubstate
+
+    expand:
+      journal:
+        type: fk
+        fk: journal_id
+        target: Journal
+        projection: [journal_key, name_unicode, name_simplified]
+      publisher:
+        type: fk
+        fk: publisher_id
+        target: Publisher
+        projection: [publisher_key, name_unicode, name_simplified]
+      institution:
+        type: fk
+        fk: institution_id
+        target: Institution
+        projection: [institution_key, name_unicode, name_simplified]
+      school:
+        type: fk
+        fk: school_id
+        target: School
+        projection: [school_key, name_unicode, name_simplified]
+      series:
+        type: fk
+        fk: series_id
+        target: Series
+        projection: [series_key, name_unicode, name_simplified]
+      crossref:
+        type: fk
+        fk: crossref_id
+        target: BibItem
+        projection: [bibkey, entry_type, title_simplified, date_year]
+      authors:
+        type: junction
+        through: bibitem_authors
+        filter: "role = 'author'"
+        target: Author
+        projection: [author_key, given_name_unicode, given_name_simplified, family_name_unicode, family_name_simplified, mononym_unicode, mononym_simplified]
+      editors:
+        type: junction
+        through: bibitem_authors
+        filter: "role = 'editor'"
+        target: Author
+        projection: [author_key, given_name_unicode, given_name_simplified, family_name_unicode, family_name_simplified, mononym_unicode, mononym_simplified]
+      guesteditors:
+        type: junction
+        through: bibitem_authors
+        filter: "role = 'guesteditor'"
+        target: Author
+        projection: [author_key, given_name_unicode, given_name_simplified, family_name_unicode, family_name_simplified, mononym_unicode, mononym_simplified]
+      keywords:
+        type: junction
+        through: bibitem_keywords
+        target: Keyword
+        projection: [name, level]
+
+  # ---------------------------------------------------------------------------
+  # ApiKey (authentication table)
+  # ---------------------------------------------------------------------------
+  ApiKey:
+    table: "api_keys"
+    fields:
+      key_hash: { type: string, required: true, unique: true }
+      name: { type: string, required: true }
+      permission: { type: PermissionLevel, required: true }
+      revoked_at: { type: "string?" }
+    indexes:
+      - { columns: [key_hash] }
+
+# =============================================================================
+# OPERATIONS (custom non-CRUD endpoints)
+# =============================================================================
+
+operations:
+  search:
+    method: POST
+    path: "/search"
+    description: "Full-text search with pg_trgm similarity"
+    permission: Read
+
+  render:
+    method: POST
+    path: "/render"
+    description: "HTML bibliography renderer"
+    permission: Public
+
+  export_authors:
+    method: POST
+    path: "/admin/export/authors"
+    description: "CSV export for authors"
+    permission: Admin
+
+  export_journals:
+    method: POST
+    path: "/admin/export/journals"
+    description: "CSV export for journals"
+    permission: Admin
+
+  export_publishers:
+    method: POST
+    path: "/admin/export/publishers"
+    description: "CSV export for publishers"
+    permission: Admin
+
+  export_institutions:
+    method: POST
+    path: "/admin/export/institutions"
+    description: "CSV export for institutions"
+    permission: Admin
+
+  export_schools:
+    method: POST
+    path: "/admin/export/schools"
+    description: "CSV export for schools"
+    permission: Admin
+
+  export_series:
+    method: POST
+    path: "/admin/export/series"
+    description: "CSV export for series"
+    permission: Admin
+
+  export_keywords:
+    method: POST
+    path: "/admin/export/keywords"
+    description: "CSV export for keywords"
+    permission: Admin
+
+  export_bibitems:
+    method: POST
+    path: "/admin/export/bibitems"
+    description: "CSV export for bibitems (expanded or IDs format)"
+    permission: Admin
+
+  import_authors:
+    method: POST
+    path: "/admin/import/authors"
+    description: "CSV import for authors"
+    permission: Admin
+
+  import_journals:
+    method: POST
+    path: "/admin/import/journals"
+    description: "CSV import for journals"
+    permission: Admin
+
+  import_publishers:
+    method: POST
+    path: "/admin/import/publishers"
+    description: "CSV import for publishers"
+    permission: Admin
+
+  import_institutions:
+    method: POST
+    path: "/admin/import/institutions"
+    description: "CSV import for institutions"
+    permission: Admin
+
+  import_schools:
+    method: POST
+    path: "/admin/import/schools"
+    description: "CSV import for schools"
+    permission: Admin
+
+  import_series:
+    method: POST
+    path: "/admin/import/series"
+    description: "CSV import for series"
+    permission: Admin
+
+  import_keywords:
+    method: POST
+    path: "/admin/import/keywords"
+    description: "CSV import for keywords"
+    permission: Admin
+
+  import_bibitems:
+    method: POST
+    path: "/admin/import/bibitems"
+    description: "CSV import for bibitems with ID references"
+    permission: Admin
+
+  keyword_tree:
+    method: GET
+    path: "/keywords/tree"
+    description: "Keyword hierarchy organized by level"
+    permission: Read
