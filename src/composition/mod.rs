@@ -185,7 +185,7 @@ pub fn build_app(pool: hexforge::DatabasePool, cors: CorsConfig) -> Router {
                 JunctionConfig::new("authors", "bibitem_authors", state.pool.pool().clone())
                     .local_fk("bibitem_id")
                     .foreign_fk("author_id")
-                    .extra_columns(&["role", "position"]),
+                    .extra_columns_typed(&[("role", Some("author_role")), ("position", None)]),
             )
             .junction(
                 JunctionConfig::new("keywords", "bibitem_keywords", state.pool.pool().clone())
