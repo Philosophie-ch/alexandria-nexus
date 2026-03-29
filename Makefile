@@ -1,6 +1,10 @@
 SHELL := /bin/bash
 .PHONY: dev stop db lint test test-unit test-integration
 
+# Start app on its own
+dev-raw:
+	set -a && source .env && set +a && cargo run --bin alexandria-nexus
+
 # Start DB + Adminer and run the app
 dev-start:
 	docker compose up -d db adminer
