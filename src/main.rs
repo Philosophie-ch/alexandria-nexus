@@ -54,10 +54,10 @@ impl Config {
         }
 
         Ok(Self {
-            database_url: std::env::var("DATABASE_URL").unwrap(),
-            host: std::env::var("HOST").unwrap(),
-            port: std::env::var("PORT").unwrap(),
-            allowed_origins: std::env::var("ALLOWED_ORIGINS").unwrap(),
+            database_url: std::env::var("DATABASE_URL").expect("validated above"),
+            host: std::env::var("HOST").expect("validated above"),
+            port: std::env::var("PORT").expect("validated above"),
+            allowed_origins: std::env::var("ALLOWED_ORIGINS").expect("validated above"),
             seed_api_key: seed_key,
             seed_api_key_name: seed_name,
         })
@@ -111,7 +111,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Seed API key (optional)
     if let Some(ref seed_key) = config.seed_api_key {
-        let seed_name = config.seed_api_key_name.as_ref().unwrap();
+        let seed_name = config.seed_api_key_name.as_ref().expect("validated above");
         let key_hash = alexandria_nexus::auth::hash_api_key(seed_key);
         hexforge::db_exports::query(
             r#"

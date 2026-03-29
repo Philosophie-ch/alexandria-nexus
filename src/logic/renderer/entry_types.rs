@@ -58,8 +58,12 @@ pub fn render_article(item: &BibItem, ctx: &RenderContext) -> String {
     let journal = render_journal(ctx.journal_name.as_deref());
     let vol_num = render_volume_number(item.volume.as_deref(), item.number.as_deref());
 
-    let pages_or_eid = if item.pages.is_some() && !item.pages.as_ref().unwrap().is_empty() {
-        render_pages(item.pages.as_deref().unwrap_or(""))
+    let pages_or_eid = if let Some(pages) = item.pages.as_deref() {
+        if pages.is_empty() {
+            render_eid(item.eid.as_deref())
+        } else {
+            render_pages(pages)
+        }
     } else {
         render_eid(item.eid.as_deref())
     };
