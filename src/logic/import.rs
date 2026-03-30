@@ -10,10 +10,11 @@ use hexforge::{DataSource, HexforgeError, ValidationError};
 use serde::Serialize;
 
 use crate::domain::{
-    CreateAuthor, CreateBibItem, CreateInstitution, CreateJournal, CreateKeyword, CreatePublisher,
-    CreateSchool, CreateSeries, EntryType, create_author_transform, create_bib_item_transform,
-    create_institution_transform, create_journal_transform, create_keyword_transform,
-    create_publisher_transform, create_school_transform, create_series_transform,
+    AuthorRole, CreateAuthor, CreateBibItem, CreateInstitution, CreateJournal, CreateKeyword,
+    CreatePublisher, CreateSchool, CreateSeries, EntryType, create_author_transform,
+    create_bib_item_transform, create_institution_transform, create_journal_transform,
+    create_keyword_transform, create_publisher_transform, create_school_transform,
+    create_series_transform,
 };
 use crate::state::AppState;
 use crate::validation::{
@@ -1105,7 +1106,8 @@ pub async fn import_bibitems_from_csv(
             Ok(inserted) => {
                 // Insert junction data for authors
                 if let Err(e) =
-                    insert_bibitem_authors(state, inserted.id, &row.author_ids, "author").await
+                    insert_bibitem_authors(state, inserted.id, &row.author_ids, AuthorRole::Author)
+                        .await
                 {
                     insert_errors.push(ImportRowError {
                         row: row.row_num,
@@ -1115,7 +1117,8 @@ pub async fn import_bibitems_from_csv(
                     continue;
                 }
                 if let Err(e) =
-                    insert_bibitem_authors(state, inserted.id, &row.editor_ids, "editor").await
+                    insert_bibitem_authors(state, inserted.id, &row.editor_ids, AuthorRole::Editor)
+                        .await
                 {
                     insert_errors.push(ImportRowError {
                         row: row.row_num,
@@ -1124,9 +1127,13 @@ pub async fn import_bibitems_from_csv(
                     });
                     continue;
                 }
-                if let Err(e) =
-                    insert_bibitem_authors(state, inserted.id, &row.guesteditor_ids, "guesteditor")
-                        .await
+                if let Err(e) = insert_bibitem_authors(
+                    state,
+                    inserted.id,
+                    &row.guesteditor_ids,
+                    AuthorRole::Guesteditor,
+                )
+                .await
                 {
                     insert_errors.push(ImportRowError {
                         row: row.row_num,
@@ -1245,8 +1252,9 @@ async fn insert_bibitem_authors(
     state: &AppState,
     bibitem_id: i64,
     author_ids: &[i64],
-    role: &str,
+    role: AuthorRole,
 ) -> Result<(), HexforgeError> {
+    let role_str = role.to_string();
     for (position, &author_id) in author_ids.iter().enumerate() {
         let pos = i16::try_from(position).unwrap_or(0);
         query(
@@ -1258,7 +1266,7 @@ async fn insert_bibitem_authors(
         )
         .bind(bibitem_id)
         .bind(author_id)
-        .bind(role)
+        .bind(&role_str)
         .bind(pos)
         .execute(state.pool.pool())
         .await

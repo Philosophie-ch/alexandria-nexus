@@ -645,3 +645,24 @@ operations:
     path: "/keywords/tree"
     description: "Keyword hierarchy organized by level"
     permission: Read
+
+  validate_full_csv:
+    method: POST
+    path: "/admin/validate-full-csv"
+    description: "Validate a human-readable CSV against the database"
+    permission: Admin
+    group: full_import
+
+  import_entities_from_full_csv:
+    method: POST
+    path: "/admin/import-entities-from-full-csv"
+    description: "Create missing entities from a human-readable CSV"
+    permission: Admin
+    group: full_import
+
+  import_full_csv:
+    method: POST
+    path: "/admin/import-full-csv"
+    description: "Import bibitems from a human-readable CSV (source of truth)"
+    permission: Admin
+    group: full_import

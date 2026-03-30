@@ -13,10 +13,11 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 use crate::domain::{
-    CreateAuthor, CreateBibItem, CreateInstitution, CreateJournal, CreateKeyword, CreatePublisher,
-    CreateSchool, CreateSeries, create_author_transform, create_bib_item_transform,
-    create_institution_transform, create_journal_transform, create_keyword_transform,
-    create_publisher_transform, create_school_transform, create_series_transform,
+    AuthorRole, CreateAuthor, CreateBibItem, CreateInstitution, CreateJournal, CreateKeyword,
+    CreatePublisher, CreateSchool, CreateSeries, RefType, create_author_transform,
+    create_bib_item_transform, create_institution_transform, create_journal_transform,
+    create_keyword_transform, create_publisher_transform, create_school_transform,
+    create_series_transform,
 };
 use crate::logic::csv_parsing::types::{
     DateRangeSeparator, FieldError, ParsedAuthor, ParsedBibRow, ParsedDate, RowParseResult,
@@ -1132,7 +1133,7 @@ async fn upsert_bibitem_row(
         pool,
         bibitem_id,
         &row.authors,
-        "author",
+        AuthorRole::Author,
         &ctx.author_resolve,
     )
     .await?;
@@ -1140,7 +1141,7 @@ async fn upsert_bibitem_row(
         pool,
         bibitem_id,
         &row.editors,
-        "editor",
+        AuthorRole::Editor,
         &ctx.author_resolve,
     )
     .await?;
@@ -1148,7 +1149,7 @@ async fn upsert_bibitem_row(
         pool,
         bibitem_id,
         &row.guesteditors,
-        "guesteditor",
+        AuthorRole::Guesteditor,
         &ctx.author_resolve,
     )
     .await?;
@@ -1157,8 +1158,20 @@ async fn upsert_bibitem_row(
     insert_keyword_junctions(pool, bibitem_id, row, &ctx.keyword_map).await?;
 
     // Insert bibitem refs (further_refs, depends_on)
-    insert_bibitem_refs(pool, bibitem_id, &row.further_ref_bibkeys, "further_ref").await?;
-    insert_bibitem_refs(pool, bibitem_id, &row.depends_on_bibkeys, "depends_on").await?;
+    insert_bibitem_refs(
+        pool,
+        bibitem_id,
+        &row.further_ref_bibkeys,
+        RefType::FurtherRef,
+    )
+    .await?;
+    insert_bibitem_refs(
+        pool,
+        bibitem_id,
+        &row.depends_on_bibkeys,
+        RefType::DependsOn,
+    )
+    .await?;
 
     Ok(was_update)
 }
@@ -1272,9 +1285,10 @@ async fn insert_author_junctions(
     pool: &hexforge::db_exports::PgPool,
     bibitem_id: i64,
     authors: &[ParsedAuthor],
-    role: &str,
+    role: AuthorRole,
     resolve: &HashMap<AuthorNameKey, i64>,
 ) -> Result<(), String> {
+    let role_str = role.to_string();
     for (position, author) in authors.iter().enumerate() {
         let key = AuthorNameKey::from_parsed(author);
         let author_id = resolve
@@ -1288,7 +1302,7 @@ async fn insert_author_junctions(
         )
         .bind(bibitem_id)
         .bind(author_id)
-        .bind(role)
+        .bind(&role_str)
         .bind(pos)
         .execute(pool)
         .await
@@ -1335,10 +1349,10 @@ async fn insert_bibitem_refs(
     pool: &hexforge::db_exports::PgPool,
     source_id: i64,
     target_bibkeys: &[String],
-    ref_type: &str,
+    ref_type: RefType,
 ) -> Result<(), String> {
+    let ref_type_str = ref_type.to_string();
     for bibkey in target_bibkeys {
-        // Resolve bibkey to ID
         let target_id: Option<i64> = query_scalar("SELECT id FROM bibitems WHERE bibkey = $1")
             .bind(bibkey)
             .fetch_optional(pool)
@@ -1347,7 +1361,7 @@ async fn insert_bibitem_refs(
 
         let target_id = match target_id {
             Some(id) => id,
-            None => continue, // referenced bibitem doesn't exist yet (may be in same batch)
+            None => continue,
         };
 
         query(
@@ -1357,7 +1371,7 @@ async fn insert_bibitem_refs(
         )
         .bind(source_id)
         .bind(target_id)
-        .bind(ref_type)
+        .bind(&ref_type_str)
         .execute(pool)
         .await
         .map_err(|e| format!("failed to insert ref: {e}"))?;
