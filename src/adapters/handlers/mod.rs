@@ -12,7 +12,7 @@ pub use export::{
     export_authors, export_bibitems, export_institutions, export_journals, export_keywords,
     export_publishers, export_schools, export_series,
 };
-pub use full_import::validate_full_csv;
+pub use full_import::{import_entities_from_full_csv, import_full_csv, validate_full_csv};
 pub use import::{
     import_authors, import_bibitems, import_institutions, import_journals, import_keywords,
     import_publishers, import_schools, import_series,

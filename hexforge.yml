@@ -278,6 +278,7 @@ models:
   BibItem:
     table: "bibitems"
     key_field: "bibkey"
+    file_name: "bibitem"
     fields:
       # Identity
       bibkey: { type: string, required: true, unique: true }
@@ -379,7 +380,7 @@ models:
         foreign_fk: author_id
         target: Author
         extra_columns:
-          - { name: role, type: "AuthorRole", default: "'author'" }
+          - { name: role, type: "AuthorRole", default: "'author'", primary_key: true }
           - { name: position, type: "i16" }
       keywords:
         type: many_to_many

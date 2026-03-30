@@ -320,7 +320,7 @@ async fn test_import_bibitems_csv() {
 
     // Step 4: Verify the bibitem was created
     let bibitem_resp = app
-        .get(&format!("/api/v1/bibitems/by-bibkey/kant:1781-{suffix}"))
+        .get(&format!("/api/v1/bibitems/by-key/kant:1781-{suffix}"))
         .await;
     assert_eq!(bibitem_resp.status(), 200);
     let bibitem: serde_json::Value = bibitem_resp.json().await.unwrap();
@@ -335,10 +335,7 @@ async fn test_import_bibitems_csv() {
         .get(&format!("/api/v1/bibitems/{bibitem_id}/authors"))
         .await;
     assert_eq!(authors_resp.status(), 200);
-    let authors_body: serde_json::Value = authors_resp.json().await.unwrap();
-    let authors_list = authors_body["authors"]
-        .as_array()
-        .expect("Expected authors array");
+    let authors_list: Vec<serde_json::Value> = authors_resp.json().await.unwrap();
     assert_eq!(authors_list.len(), 1);
     assert_eq!(authors_list[0]["author_id"], author_id);
     assert_eq!(authors_list[0]["role"], "author");
@@ -389,16 +386,13 @@ async fn test_import_bibitems_with_editors() {
 
     // Verify junction: should have author and editor
     let bib_resp = app
-        .get(&format!(
-            "/api/v1/bibitems/by-bibkey/test:collection-{suffix}"
-        ))
+        .get(&format!("/api/v1/bibitems/by-key/test:collection-{suffix}"))
         .await;
     let bib: serde_json::Value = bib_resp.json().await.unwrap();
     let bib_id = bib["id"].as_i64().unwrap();
 
     let authors_resp = app.get(&format!("/api/v1/bibitems/{bib_id}/authors")).await;
-    let authors_body: serde_json::Value = authors_resp.json().await.unwrap();
-    let authors_list = authors_body["authors"].as_array().unwrap();
+    let authors_list: Vec<serde_json::Value> = authors_resp.json().await.unwrap();
     assert_eq!(
         authors_list.len(),
         2,
@@ -446,7 +440,7 @@ async fn test_import_bibitems_missing_references() {
 
     // Verify nothing was inserted
     let bib_resp = app
-        .get(&format!("/api/v1/bibitems/by-bibkey/test:missing-{suffix}"))
+        .get(&format!("/api/v1/bibitems/by-key/test:missing-{suffix}"))
         .await;
     assert_eq!(
         bib_resp.status(),
@@ -501,7 +495,7 @@ async fn test_import_bibitems_with_keywords() {
 
     // Verify keywords junction
     let bib_resp = app
-        .get(&format!("/api/v1/bibitems/by-bibkey/test:kw-{suffix}"))
+        .get(&format!("/api/v1/bibitems/by-key/test:kw-{suffix}"))
         .await;
     let bib: serde_json::Value = bib_resp.json().await.unwrap();
     let bib_id = bib["id"].as_i64().unwrap();
@@ -510,15 +504,14 @@ async fn test_import_bibitems_with_keywords() {
         .get(&format!("/api/v1/bibitems/{bib_id}/keywords"))
         .await;
     assert_eq!(kw_resp.status(), 200);
-    let kw_body: serde_json::Value = kw_resp.json().await.unwrap();
+    let kw_list: Vec<serde_json::Value> = kw_resp.json().await.unwrap();
 
-    // Check that at least one of the keyword levels is populated
-    let keywords = &kw_body["keywords"];
-    let has_level_1 = keywords["level_1"].as_i64() == Some(kw1_id);
-    let has_level_2 = keywords["level_2"].as_i64() == Some(kw2_id);
+    // Check that both keywords were linked
+    let has_kw1 = kw_list.iter().any(|k| k["keyword_id"] == kw1_id);
+    let has_kw2 = kw_list.iter().any(|k| k["keyword_id"] == kw2_id);
     assert!(
-        has_level_1 || has_level_2,
-        "At least one keyword level should be populated; got: {kw_body}"
+        has_kw1 && has_kw2,
+        "Both keywords should be linked; got: {kw_list:?}"
     );
 }
 
@@ -600,7 +593,7 @@ async fn test_import_multiple_bibitems() {
     // Verify each one
     for label in &["multi-a", "multi-b", "multi-c"] {
         let bib_resp = app
-            .get(&format!("/api/v1/bibitems/by-bibkey/test:{label}-{suffix}"))
+            .get(&format!("/api/v1/bibitems/by-key/test:{label}-{suffix}"))
             .await;
         assert_eq!(bib_resp.status(), 200, "Bibitem {label} should exist");
     }

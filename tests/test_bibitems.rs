@@ -57,7 +57,7 @@ async fn test_get_bibitem_by_bibkey() {
 
     // Lookup by bibkey
     let resp = app
-        .get(&format!("/api/v1/bibitems/by-bibkey/{}", bibkey))
+        .get(&format!("/api/v1/bibitems/by-key/{}", bibkey))
         .await;
     assert_eq!(resp.status(), 200);
 

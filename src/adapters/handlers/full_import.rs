@@ -2,10 +2,10 @@
 
 use axum::extract::Multipart;
 use hexforge::HexforgeError;
-use hexforge::axum_exports::{Json, State};
+use hexforge::axum_exports::{IntoResponse, Json, Response, State, StatusCode};
 
 use super::import::extract_csv_bytes;
-use crate::logic::full_import::{self, ValidationReport};
+use crate::logic::full_import::{self, EntityImportReport, FullImportResult, ValidationReport};
 use crate::state::AppState;
 
 /// Validate a human-readable CSV without importing.
@@ -17,4 +17,39 @@ pub async fn validate_full_csv(
     let data = extract_csv_bytes(multipart).await?;
     let report = full_import::validate_full_csv(&state, data).await?;
     Ok(Json(report))
+}
+
+/// Import missing entities from a human-readable CSV.
+/// `POST /api/v1/admin/import-entities-from-full-csv`
+pub async fn import_entities_from_full_csv(
+    State(state): State<AppState>,
+    multipart: Multipart,
+) -> Result<Json<EntityImportReport>, HexforgeError> {
+    let data = extract_csv_bytes(multipart).await?;
+    let report = full_import::import_entities_from_full_csv(&state, data).await?;
+    Ok(Json(report))
+}
+
+/// Import bibitems from a human-readable CSV (source of truth).
+/// `POST /api/v1/admin/import-full-csv`
+pub async fn import_full_csv(
+    State(state): State<AppState>,
+    multipart: Multipart,
+) -> Result<Response, HexforgeError> {
+    let data = extract_csv_bytes(multipart).await?;
+    let result = full_import::import_full_csv(&state, data).await?;
+    match result {
+        FullImportResult::Success(report) => Ok(Json(report).into_response()),
+        FullImportResult::UnresolvableNames(err) => {
+            Ok((StatusCode::UNPROCESSABLE_ENTITY, Json(err)).into_response())
+        }
+        FullImportResult::ParseErrors(errors) => Ok((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "parse_errors",
+                "errors": errors,
+            })),
+        )
+            .into_response()),
+    }
 }

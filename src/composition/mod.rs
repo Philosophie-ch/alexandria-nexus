@@ -18,8 +18,9 @@ use crate::adapters::db::queries::{
 use crate::adapters::handlers::{
     export_authors, export_bibitems, export_institutions, export_journals, export_keywords,
     export_publishers, export_schools, export_series, get_keyword_tree, import_authors,
-    import_bibitems, import_institutions, import_journals, import_keywords, import_publishers,
-    import_schools, import_series, render_bibitems, search_bibitems, validate_full_csv,
+    import_bibitems, import_entities_from_full_csv, import_full_csv, import_institutions,
+    import_journals, import_keywords, import_publishers, import_schools, import_series,
+    render_bibitems, search_bibitems, validate_full_csv,
 };
 use crate::domain::projections::{
     AuthorExpanded, BibItemCrossref, BibItemSummary, InstitutionExpanded, JournalExpanded,
@@ -288,6 +289,8 @@ pub fn build_app(pool: hexforge::DatabasePool, cors: CorsConfig) -> Router {
             Resource::<AppState>::new("/api/v1/admin")
                 .require_permission(Permission::Admin)
                 .post("/validate-full-csv", validate_full_csv)
+                .post("/import-entities-from-full-csv", import_entities_from_full_csv)
+                .post("/import-full-csv", import_full_csv)
                 .with_state(state),
         )
         // OpenAPI
