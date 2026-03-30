@@ -17,7 +17,7 @@ use crate::state::AppState;
 // =============================================================================
 
 /// Extract CSV bytes from a multipart upload.
-async fn extract_csv_bytes(mut multipart: Multipart) -> Result<Vec<u8>, HexforgeError> {
+pub(crate) async fn extract_csv_bytes(mut multipart: Multipart) -> Result<Vec<u8>, HexforgeError> {
     while let Some(field) = multipart
         .next_field()
         .await

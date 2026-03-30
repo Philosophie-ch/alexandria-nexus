@@ -1,5 +1,6 @@
 pub mod csv_parsing;
 pub mod export;
+pub mod full_import;
 pub mod import;
 pub mod keyword_tree;
 pub mod renderer;

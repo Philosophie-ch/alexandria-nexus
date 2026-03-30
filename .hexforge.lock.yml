@@ -532,112 +532,96 @@ operations:
     path: "/admin/export/authors"
     description: "CSV export for authors"
     permission: Admin
-    group: export
 
   export_journals:
     method: POST
     path: "/admin/export/journals"
     description: "CSV export for journals"
     permission: Admin
-    group: export
 
   export_publishers:
     method: POST
     path: "/admin/export/publishers"
     description: "CSV export for publishers"
     permission: Admin
-    group: export
 
   export_institutions:
     method: POST
     path: "/admin/export/institutions"
     description: "CSV export for institutions"
     permission: Admin
-    group: export
 
   export_schools:
     method: POST
     path: "/admin/export/schools"
     description: "CSV export for schools"
     permission: Admin
-    group: export
 
   export_series:
     method: POST
     path: "/admin/export/series"
     description: "CSV export for series"
     permission: Admin
-    group: export
 
   export_keywords:
     method: POST
     path: "/admin/export/keywords"
     description: "CSV export for keywords"
     permission: Admin
-    group: export
 
   export_bibitems:
     method: POST
     path: "/admin/export/bibitems"
     description: "CSV export for bibitems (expanded or IDs format)"
     permission: Admin
-    group: export
 
   import_authors:
     method: POST
     path: "/admin/import/authors"
     description: "CSV import for authors"
     permission: Admin
-    group: import
 
   import_journals:
     method: POST
     path: "/admin/import/journals"
     description: "CSV import for journals"
     permission: Admin
-    group: import
 
   import_publishers:
     method: POST
     path: "/admin/import/publishers"
     description: "CSV import for publishers"
     permission: Admin
-    group: import
 
   import_institutions:
     method: POST
     path: "/admin/import/institutions"
     description: "CSV import for institutions"
     permission: Admin
-    group: import
 
   import_schools:
     method: POST
     path: "/admin/import/schools"
     description: "CSV import for schools"
     permission: Admin
-    group: import
 
   import_series:
     method: POST
     path: "/admin/import/series"
     description: "CSV import for series"
     permission: Admin
-    group: import
 
   import_keywords:
     method: POST
     path: "/admin/import/keywords"
     description: "CSV import for keywords"
     permission: Admin
-    group: import
 
   import_bibitems:
     method: POST
     path: "/admin/import/bibitems"
     description: "CSV import for bibitems with ID references"
     permission: Admin
-    group: import
 
   keyword_tree:
     method: GET

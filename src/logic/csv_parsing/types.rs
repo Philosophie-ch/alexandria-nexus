@@ -1,4 +1,5 @@
 use serde::Serialize;
+use utoipa::ToSchema;
 
 use crate::domain::{EntryType, Epoch, LangId, PubState};
 
@@ -91,7 +92,7 @@ pub struct ParsedKeywords {
 // Row parsing results
 // =============================================================================
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct FieldError {
     pub field: String,
     pub error: String,

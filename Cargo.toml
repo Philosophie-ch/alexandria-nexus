@@ -27,6 +27,15 @@ sha2 = "0.10"
 hex = "0.4"
 futures = "0.3"
 async-trait = "0.1"
+axum = { version = "0.8", features = ["multipart"] }
+tokio-stream = "0.1"
+
+# Code generator (used via: cargo run --bin generate)
+hexforge-cli = { path = "../../../GitRepos/hexforge/hexforge-cli" }
+
+[[bin]]
+name = "generate"
+path = "tools/generate.rs"
 
 [dev-dependencies]
 reqwest = { version = "0.12", features = ["json", "multipart"] }
@@ -47,5 +56,5 @@ warnings = "deny"
 
 # DEV ONLY: uncomment to use local hexforge instead of git.
 # Comment out before committing.
-# [patch."ssh://git@gitlab.com/alebg/hexforge.git"]
-# hexforge = { path = "../../../GitRepos/hexforge" }
+[patch."ssh://git@gitlab.com/alebg/hexforge.git"]
+hexforge = { path = "../../../GitRepos/hexforge" }
