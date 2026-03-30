@@ -1,3 +1,4 @@
+pub mod csv_parsing;
 pub mod export;
 pub mod import;
 pub mod keyword_tree;
