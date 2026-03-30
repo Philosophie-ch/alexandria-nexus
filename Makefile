@@ -43,13 +43,16 @@ test:
 
 # Code generation from hexforge.yml
 generate:
-	cargo run --bin generate -- generate --schema hexforge.yml --output src
+	cargo run --bin generate -- generate --schema hexforge.yml --output . --source-only
 
 generate-migration:
-	cargo run --bin generate -- generate --schema hexforge.yml --output src --migration
+	cargo run --bin generate -- generate --schema hexforge.yml --output . --migration-only
+
+generate-all:
+	cargo run --bin generate -- generate --schema hexforge.yml --output .
 
 generate-dry-run:
-	cargo run --bin generate -- generate --schema hexforge.yml --dry-run
+	cargo run --bin generate -- generate --schema hexforge.yml --output . --dry-run
 
 # List leaked test containers (if Ctrl+C interrupted tests)
 # Review the list, then remove manually: docker rm -f <id>
