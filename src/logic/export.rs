@@ -10,7 +10,9 @@ use hexforge::db_exports::{FromRow, query_as};
 use hexforge::{HexforgeError, WhereClause};
 use serde::Deserialize;
 
-use crate::domain::{Author, BibItem, Institution, Journal, Keyword, Publisher, School, Series};
+use crate::domain::{
+    Author, AuthorRole, BibItem, Institution, Journal, Keyword, Publisher, School, Series,
+};
 use crate::state::AppState;
 
 // =============================================================================
@@ -578,9 +580,9 @@ async fn build_bibitems_ids_csv(
     for bib in bibitems {
         let bib_authors = authors_by_bibitem.get(&bib.id);
 
-        let author_ids = format_role_ids(bib_authors, "author");
-        let editor_ids = format_role_ids(bib_authors, "editor");
-        let guesteditor_ids = format_role_ids(bib_authors, "guesteditor");
+        let author_ids = format_role_ids(bib_authors, AuthorRole::Author);
+        let editor_ids = format_role_ids(bib_authors, AuthorRole::Editor);
+        let guesteditor_ids = format_role_ids(bib_authors, AuthorRole::Guesteditor);
 
         let keyword_ids = keywords_by_bibitem
             .get(&bib.id)
@@ -644,11 +646,15 @@ async fn build_bibitems_ids_csv(
 }
 
 /// Format author IDs for a given role, sorted by position.
-fn format_role_ids(bib_authors: Option<&Vec<&BibitemAuthorRow>>, role: &str) -> String {
+fn format_role_ids(bib_authors: Option<&Vec<&BibitemAuthorRow>>, role: AuthorRole) -> String {
+    let role_str = role.to_string();
     bib_authors
         .map(|rows| {
-            let mut filtered: Vec<&BibitemAuthorRow> =
-                rows.iter().filter(|r| r.role == role).copied().collect();
+            let mut filtered: Vec<&BibitemAuthorRow> = rows
+                .iter()
+                .filter(|r| r.role == role_str)
+                .copied()
+                .collect();
             filtered.sort_by_key(|r| r.position);
             filtered
                 .iter()
@@ -801,9 +807,9 @@ async fn build_bibitems_expanded_csv(
     for bib in bibitems {
         let bib_authors = authors_by_bibitem.get(&bib.id);
 
-        let author_col = format_role_names(bib_authors, "author", &authors_map);
-        let editor_col = format_role_names(bib_authors, "editor", &authors_map);
-        let guesteditor_col = format_role_names(bib_authors, "guesteditor", &authors_map);
+        let author_col = format_role_names(bib_authors, AuthorRole::Author, &authors_map);
+        let editor_col = format_role_names(bib_authors, AuthorRole::Editor, &authors_map);
+        let guesteditor_col = format_role_names(bib_authors, AuthorRole::Guesteditor, &authors_map);
 
         let journal_name = bib
             .journal_id
@@ -906,13 +912,17 @@ async fn build_bibitems_expanded_csv(
 /// ordered by position.
 fn format_role_names(
     bib_authors: Option<&Vec<&BibitemAuthorRow>>,
-    role: &str,
+    role: AuthorRole,
     authors_map: &HashMap<i64, Author>,
 ) -> String {
+    let role_str = role.to_string();
     bib_authors
         .map(|rows| {
-            let mut filtered: Vec<&BibitemAuthorRow> =
-                rows.iter().filter(|r| r.role == role).copied().collect();
+            let mut filtered: Vec<&BibitemAuthorRow> = rows
+                .iter()
+                .filter(|r| r.role == role_str)
+                .copied()
+                .collect();
             filtered.sort_by_key(|r| r.position);
 
             let names: Vec<String> = filtered

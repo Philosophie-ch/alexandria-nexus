@@ -50,7 +50,7 @@ Pure business logic. No HTTP types, no framework coupling. All functions accept 
 - `export.rs` -- CSV formatting and relation data resolution (expanded vs. IDs format)
 - `search.rs` -- full-text search query building using pg_trgm similarity
 - `keyword_tree.rs` -- keyword hierarchy builder (groups by level 1/2/3)
-- `renderer/` -- HTML bibliography renderer (formats entries by type with author/editor/year display)
+- `render/` -- HTML bibliography renderer (formats entries by type with author/editor/year display)
 
 ### Adapters (`src/adapters/`)
 
@@ -96,8 +96,9 @@ The project uses `hexforge.yml` as the single schema source of truth. The hexfor
 
 ```bash
 make generate-dry-run   # Preview what would be generated
-make generate           # Generate code
-make generate-migration # Generate code + SQL migration
+make generate           # Regenerate source files (safe, idempotent)
+make generate-migration # Regenerate SQL migration only
+make generate-all       # Source + migration
 ```
 
 ## Data Model

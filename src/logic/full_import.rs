@@ -447,46 +447,43 @@ pub async fn import_entities_from_full_csv(
     }
 
     // Named entities
-    report.created_journals += create_missing_named_entities(
-        &collected.journal_names,
-        &maps.journals,
-        "journals",
-        state,
-        &mut report.errors,
-    )
-    .await;
-    report.created_publishers += create_missing_named_entities(
-        &collected.publisher_names,
-        &maps.publishers,
-        "publishers",
-        state,
-        &mut report.errors,
-    )
-    .await;
-    report.created_institutions += create_missing_named_entities(
-        &collected.institution_names,
-        &maps.institutions,
-        "institutions",
-        state,
-        &mut report.errors,
-    )
-    .await;
-    report.created_schools += create_missing_named_entities(
-        &collected.school_names,
-        &maps.schools,
-        "schools",
-        state,
-        &mut report.errors,
-    )
-    .await;
-    report.created_series += create_missing_named_entities(
-        &collected.series_names,
-        &maps.series,
-        "series",
-        state,
-        &mut report.errors,
-    )
-    .await;
+    for (names, map, kind) in [
+        (
+            &collected.journal_names,
+            &maps.journals,
+            NamedEntityKind::Journal,
+        ),
+        (
+            &collected.publisher_names,
+            &maps.publishers,
+            NamedEntityKind::Publisher,
+        ),
+        (
+            &collected.institution_names,
+            &maps.institutions,
+            NamedEntityKind::Institution,
+        ),
+        (
+            &collected.school_names,
+            &maps.schools,
+            NamedEntityKind::School,
+        ),
+        (
+            &collected.series_names,
+            &maps.series,
+            NamedEntityKind::Series,
+        ),
+    ] {
+        let count =
+            create_missing_named_entities(names, map, kind, state, &mut report.errors).await;
+        match kind {
+            NamedEntityKind::Journal => report.created_journals += count,
+            NamedEntityKind::Publisher => report.created_publishers += count,
+            NamedEntityKind::Institution => report.created_institutions += count,
+            NamedEntityKind::School => report.created_schools += count,
+            NamedEntityKind::Series => report.created_series += count,
+        }
+    }
 
     // Keywords
     for kw in &collected.keywords_l1 {
@@ -741,6 +738,27 @@ impl CollectedNames {
 // Entity creation helpers
 // =============================================================================
 
+#[derive(Clone, Copy)]
+enum NamedEntityKind {
+    Journal,
+    Publisher,
+    Institution,
+    School,
+    Series,
+}
+
+impl NamedEntityKind {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Journal => "journals",
+            Self::Publisher => "publishers",
+            Self::Institution => "institutions",
+            Self::School => "schools",
+            Self::Series => "series",
+        }
+    }
+}
+
 fn generate_key(name: &str) -> String {
     name.to_lowercase()
         .chars()
@@ -817,7 +835,7 @@ async fn create_author_from_key(key: &AuthorNameKey, state: &AppState) -> Result
 async fn create_missing_named_entities(
     requested: &HashSet<String>,
     existing: &HashMap<String, i64>,
-    entity_type: &str,
+    kind: NamedEntityKind,
     state: &AppState,
     errors: &mut Vec<EntityImportError>,
 ) -> usize {
@@ -827,18 +845,19 @@ async fn create_missing_named_entities(
             continue;
         }
         let key = generate_key(name);
-        let result = match entity_type {
-            "journals" => create_named_entity_journal(&key, name, state).await,
-            "publishers" => create_named_entity_publisher(&key, name, state).await,
-            "institutions" => create_named_entity_institution(&key, name, state).await,
-            "schools" => create_named_entity_school(&key, name, state).await,
-            "series" => create_named_entity_series(&key, name, state).await,
-            _ => Err(format!("unknown entity type: {entity_type}")),
+        let result = match kind {
+            NamedEntityKind::Journal => create_named_entity_journal(&key, name, state).await,
+            NamedEntityKind::Publisher => create_named_entity_publisher(&key, name, state).await,
+            NamedEntityKind::Institution => {
+                create_named_entity_institution(&key, name, state).await
+            }
+            NamedEntityKind::School => create_named_entity_school(&key, name, state).await,
+            NamedEntityKind::Series => create_named_entity_series(&key, name, state).await,
         };
         match result {
             Ok(()) => created += 1,
             Err(e) => errors.push(EntityImportError {
-                entity_type: entity_type.to_string(),
+                entity_type: kind.label().to_string(),
                 name: name.clone(),
                 error: e,
             }),

@@ -13,7 +13,7 @@ use hexforge::db_exports::{FromRow, query_as};
 use hexforge::{HexforgeError, WhereClause};
 use serde::{Deserialize, Serialize};
 
-use crate::domain::{Author, BibItem};
+use crate::domain::{Author, AuthorRole, BibItem};
 use crate::logic::render::{AuthorName, RenderContext, author_sort_key, render_bibliography};
 use crate::state::AppState;
 
@@ -252,9 +252,10 @@ pub async fn render_bibitems(
         .map(|bib| {
             let bib_authors = authors_by_bibitem.get(&bib.id);
 
-            let authors = extract_role_authors(bib_authors, "author", &authors_map);
-            let editors = extract_role_authors(bib_authors, "editor", &authors_map);
-            let guesteditors = extract_role_authors(bib_authors, "guesteditor", &authors_map);
+            let authors = extract_role_authors(bib_authors, AuthorRole::Author, &authors_map);
+            let editors = extract_role_authors(bib_authors, AuthorRole::Editor, &authors_map);
+            let guesteditors =
+                extract_role_authors(bib_authors, AuthorRole::Guesteditor, &authors_map);
 
             let ctx = RenderContext {
                 authors,
@@ -311,13 +312,17 @@ fn html_response(body: String) -> Response {
 /// Extract AuthorName list for a specific role from junction rows.
 fn extract_role_authors(
     bib_authors: Option<&Vec<&BibitemAuthorRow>>,
-    role: &str,
+    role: AuthorRole,
     authors_map: &HashMap<i64, Author>,
 ) -> Vec<AuthorName> {
+    let role_str = role.to_string();
     bib_authors
         .map(|rows| {
-            let mut filtered: Vec<&BibitemAuthorRow> =
-                rows.iter().filter(|r| r.role == role).copied().collect();
+            let mut filtered: Vec<&BibitemAuthorRow> = rows
+                .iter()
+                .filter(|r| r.role == role_str)
+                .copied()
+                .collect();
             filtered.sort_by_key(|r| r.position);
             filtered
                 .iter()

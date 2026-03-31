@@ -3,7 +3,7 @@
 //! Each function assembles the full HTML string for a specific bibliography entry type,
 //! composing the reusable component functions from `components.rs`.
 
-use crate::domain::BibItem;
+use crate::domain::{AuthorRole, BibItem};
 
 use super::RenderContext;
 use super::components::{
@@ -47,7 +47,7 @@ pub fn render_article(item: &BibItem, ctx: &RenderContext) -> String {
     let mut parts = Vec::new();
 
     // AUTHOR
-    let author_html = render_authors(&ctx.authors, "author", ctx.suppress_author);
+    let author_html = render_authors(&ctx.authors, AuthorRole::Author, ctx.suppress_author);
     push_segment(&mut parts, author_html);
 
     // YEAR
@@ -117,11 +117,11 @@ pub fn render_book(item: &BibItem, ctx: &RenderContext) -> String {
 
     if has_authors {
         // AUTHOR
-        let author_html = render_authors(&ctx.authors, "author", ctx.suppress_author);
+        let author_html = render_authors(&ctx.authors, AuthorRole::Author, ctx.suppress_author);
         push_segment(&mut parts, author_html);
     } else if !ctx.editors.is_empty() {
         // EDITOR, ed[s].
-        let editor_html = render_authors(&ctx.editors, "editor", false);
+        let editor_html = render_authors(&ctx.editors, AuthorRole::Editor, false);
         push_segment(&mut parts, editor_html);
     }
 
@@ -164,7 +164,7 @@ pub fn render_chapter(item: &BibItem, ctx: &RenderContext) -> String {
     let mut parts = Vec::new();
 
     // AUTHOR
-    let author_html = render_authors(&ctx.authors, "author", ctx.suppress_author);
+    let author_html = render_authors(&ctx.authors, AuthorRole::Author, ctx.suppress_author);
     push_segment(&mut parts, author_html);
 
     // YEAR
@@ -283,7 +283,7 @@ pub fn render_thesis(item: &BibItem, ctx: &RenderContext) -> String {
     let mut parts = Vec::new();
 
     // AUTHOR
-    let author_html = render_authors(&ctx.authors, "author", ctx.suppress_author);
+    let author_html = render_authors(&ctx.authors, AuthorRole::Author, ctx.suppress_author);
     push_segment(&mut parts, author_html);
 
     // YEAR
@@ -327,7 +327,7 @@ pub fn render_unpublished(item: &BibItem, ctx: &RenderContext) -> String {
     let mut parts = Vec::new();
 
     // AUTHOR
-    let author_html = render_authors(&ctx.authors, "author", ctx.suppress_author);
+    let author_html = render_authors(&ctx.authors, AuthorRole::Author, ctx.suppress_author);
     push_segment(&mut parts, author_html);
 
     // YEAR
@@ -358,7 +358,7 @@ pub fn render_generic(item: &BibItem, ctx: &RenderContext) -> String {
     let mut parts = Vec::new();
 
     // AUTHOR
-    let author_html = render_authors(&ctx.authors, "author", ctx.suppress_author);
+    let author_html = render_authors(&ctx.authors, AuthorRole::Author, ctx.suppress_author);
     push_segment(&mut parts, author_html);
 
     // YEAR

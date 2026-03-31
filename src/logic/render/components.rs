@@ -3,7 +3,7 @@
 //! Pure functions that format individual fields (authors, dates, titles, etc.)
 //! into HTML strings with `data-field` semantic markup.
 
-use crate::domain::BibItem;
+use crate::domain::{AuthorRole, BibItem};
 
 use super::AuthorName;
 
@@ -28,9 +28,10 @@ pub fn esc(text: &str) -> String {
 /// - Family names are wrapped in `<span class="smallcaps">`.
 /// - 11+ authors: first 7 then "et al."
 /// - If `suppress` is true, renders em-dash instead (for consecutive same-author entries).
-pub fn render_authors(authors: &[AuthorName], role: &str, suppress: bool) -> String {
+pub fn render_authors(authors: &[AuthorName], role: AuthorRole, suppress: bool) -> String {
+    let role_str = role.to_string();
     if suppress {
-        return format!("<span data-field=\"{role}\">\u{2014}</span>");
+        return format!("<span data-field=\"{role_str}\">\u{2014}</span>");
     }
     if authors.is_empty() {
         return String::new();
@@ -71,9 +72,9 @@ pub fn render_authors(authors: &[AuthorName], role: &str, suppress: bool) -> Str
         joined.push_str(" et al.");
     }
 
-    let mut result = format!("<span data-field=\"{role}\">{joined}</span>");
+    let mut result = format!("<span data-field=\"{role_str}\">{joined}</span>");
 
-    if role == "editor" {
+    if role == AuthorRole::Editor {
         if authors.len() == 1 {
             result.push_str(", ed.");
         } else {
