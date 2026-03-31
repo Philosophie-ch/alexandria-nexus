@@ -105,6 +105,7 @@ enums:
     db_name: "author_role"
     rename_all: "lowercase"
     default: "Author"
+    extra_derives: [Hash]
     variants:
       - Author
       - Editor
@@ -521,12 +522,14 @@ operations:
     path: "/search"
     description: "Full-text search with pg_trgm similarity"
     permission: Read
+    fn_name: search_bibitems
 
   render:
     method: POST
     path: "/render"
     description: "HTML bibliography renderer"
     permission: Public
+    fn_name: render_bibitems
 
   export_authors:
     method: POST
@@ -645,6 +648,7 @@ operations:
     path: "/keywords/tree"
     description: "Keyword hierarchy organized by level"
     permission: Read
+    fn_name: get_keyword_tree
 
   validate_full_csv:
     method: POST

@@ -7,7 +7,7 @@ use hexforge::{Crud, Entity};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::domain::{PermissionLevel};
+use crate::domain::PermissionLevel;
 
 #[derive(Entity, Crud, Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[entity(table = "api_keys")]
@@ -20,15 +20,9 @@ pub struct ApiKey {
     pub name: String,
     #[crud(required)]
     pub permission: PermissionLevel,
-    pub revoked_at: Option<timestamp>,
+    pub revoked_at: Option<DateTime<Utc>>,
     #[crud(skip)]
     pub created_at: DateTime<Utc>,
     #[crud(skip)]
     pub updated_at: DateTime<Utc>,
-}
-
-pub fn create_api_key_transform(input: &mut CreateApiKey) {
-}
-
-pub fn update_api_key_transform(input: &mut UpdateApiKey) {
 }

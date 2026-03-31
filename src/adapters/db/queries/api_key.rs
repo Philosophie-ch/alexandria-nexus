@@ -5,6 +5,6 @@
 use hexforge::Filter;
 use serde::Deserialize;
 
+/// Query parameters for filtering api_key results.
 #[derive(Filter, Debug, Default, Deserialize)]
-pub struct ApiKeyQuery {
-}
+pub struct ApiKeyQuery {}

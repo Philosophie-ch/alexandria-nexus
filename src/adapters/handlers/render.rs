@@ -14,7 +14,7 @@ use hexforge::{HexforgeError, WhereClause};
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{Author, BibItem};
-use crate::logic::renderer::{AuthorName, RenderContext, author_sort_key, render_bibliography};
+use crate::logic::render::{AuthorName, RenderContext, author_sort_key, render_bibliography};
 use crate::state::AppState;
 
 // =============================================================================

@@ -41,9 +41,14 @@ Each entity has corresponding `Create*` and `Update*` structs and transform func
 Pure business logic. No HTTP types, no framework coupling. All functions accept domain types and return domain types or plain results.
 
 - `validation/` -- input validation per entity (one file per entity, consumer-owned)
-- `search.rs` -- full-text search query building using pg_trgm similarity
+- `csv_parsing/` -- pure parsers for human-readable CSV fields (authors, dates, bibkeys, pages, keywords). Ported from the Python bib-sdk. Zero I/O, full unit test coverage.
+- `full_import.rs` -- orchestration for human-readable CSV import pipeline:
+  - `validate_full_csv()` -- parse CSV, batch-check all references, report missing/ambiguous/stale
+  - `import_entities_from_full_csv()` -- create missing authors, journals, publishers, etc.
+  - `import_full_csv()` -- resolve names to IDs, upsert bibitems + junctions, delete stale (CSV is source of truth)
+- `import.rs` -- ID-based CSV import with bulk reference validation (for machine-generated CSVs)
 - `export.rs` -- CSV formatting and relation data resolution (expanded vs. IDs format)
-- `import.rs` -- CSV parsing, reference validation, and batch insert logic
+- `search.rs` -- full-text search query building using pg_trgm similarity
 - `keyword_tree.rs` -- keyword hierarchy builder (groups by level 1/2/3)
 - `renderer/` -- HTML bibliography renderer (formats entries by type with author/editor/year display)
 
@@ -57,8 +62,9 @@ Concrete I/O implementations. This is where framework types and database access 
   - `search.rs` -- `POST /api/v1/search`
   - `render.rs` -- `POST /api/v1/render`
   - `keyword_tree.rs` -- `GET /api/v1/keywords/tree`
-  - `export/` -- CSV export handlers for all entities
-  - `import/` -- CSV import handlers for all entities
+  - `export.rs` -- CSV export handlers for all entities
+  - `import.rs` -- ID-based CSV import handlers for all entities
+  - `full_import.rs` -- human-readable CSV import handlers (validate, import-entities, import-bibitems)
 
 ### Composition (`src/composition/`)
 
@@ -98,17 +104,20 @@ make generate-migration # Generate code + SQL migration
 
 **8 primary entities:** Author, Journal, Publisher, Institution, School, Series, Keyword, BibItem.
 
-**2 junction tables:**
+**3 junction tables:**
 - `bibitem_authors` -- links BibItem to Author with extra columns `role` (author/editor/guesteditor) and `position` (ordering)
 - `bibitem_keywords` -- links BibItem to Keyword with extra column `keyword_level`
+- `bibitem_refs` -- links BibItem to BibItem with `ref_type` (further_ref/depends_on)
 
-**6 foreign key relations on BibItem:**
+**7 foreign key relations on BibItem:**
 - `journal_id` -> Journal
 - `publisher_id` -> Publisher
 - `institution_id` -> Institution
 - `school_id` -> School
 - `series_id` -> Series
 - `crossref_id` -> BibItem (self-referencing)
+- `person_id` -> Author (subject philosopher)
 
-**1 internal entity:**
+**2 internal entities:**
 - `ApiKey` -- authentication keys with permission level, stored as hashed values
+- `BibitemNotes` -- 1:1 JSONB workflow notes per bibitem

@@ -15,15 +15,9 @@ pub struct BibitemNotes {
     #[crud(required)]
     pub bibitem_id: i64,
     #[crud(required)]
-    pub notes: jsonb,
+    pub notes: serde_json::Value,
     #[crud(skip)]
     pub created_at: DateTime<Utc>,
     #[crud(skip)]
     pub updated_at: DateTime<Utc>,
-}
-
-pub fn create_bibitem_notes_transform(input: &mut CreateBibitemNotes) {
-}
-
-pub fn update_bibitem_notes_transform(input: &mut UpdateBibitemNotes) {
 }

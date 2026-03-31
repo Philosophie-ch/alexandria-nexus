@@ -5,6 +5,6 @@
 use hexforge::Filter;
 use serde::Deserialize;
 
+/// Query parameters for filtering bibitem_notes results.
 #[derive(Filter, Debug, Default, Deserialize)]
-pub struct BibitemNotesQuery {
-}
+pub struct BibitemNotesQuery {}

@@ -138,3 +138,88 @@ curl -X POST ... -d '{"format": "expanded", "bibkeys": ["kant:1781"]}'
 - `kw_level1`, `kw_level2`, `kw_level3`: semicolon-separated keyword names
 
 **IDs format:** Relations as numeric IDs (same format accepted by import).
+
+## Full CSV Import (Human-Readable)
+
+For teams working with ODS/CSV spreadsheets that use human-readable names instead of database IDs. Three-step pipeline:
+
+### Workflow
+
+1. **Validate** -- check CSV for parse errors, missing entities, ambiguous authors, stale bibitems
+2. **Import entities** -- create missing authors, journals, publishers, etc. from the CSV
+3. **Import bibitems** -- resolve names to IDs, upsert bibitems + junctions, delete stale entries
+
+### Step 1: Validate
+
+```bash
+curl -X POST http://localhost:8080/api/v1/admin/validate-full-csv \
+  -H "Authorization: Bearer <key>" \
+  -F "file=@bibliography.csv"
+```
+
+Response:
+```json
+{
+  "total_rows": 1000,
+  "valid_rows": 998,
+  "errors": [{"row": 42, "bibkey": "bad:2024", "errors": [{"field": "date", "error": "..."}]}],
+  "missing_authors": ["Unknown, Person"],
+  "ambiguous_authors": [{"name": "Smith, John", "matching_ids": [5, 12]}],
+  "missing_journals": ["Nonexistent Review"],
+  "missing_publishers": [],
+  "missing_institutions": [],
+  "missing_schools": [],
+  "missing_series": [],
+  "missing_keywords": {"level_1": ["new-keyword"], "level_2": [], "level_3": []},
+  "missing_crossrefs": [],
+  "missing_further_refs": [],
+  "missing_depends_on": [],
+  "stale_bibitems": ["old:2020"]
+}
+```
+
+### Step 2: Import entities
+
+```bash
+curl -X POST http://localhost:8080/api/v1/admin/import-entities-from-full-csv \
+  -H "Authorization: Bearer <key>" \
+  -F "file=@bibliography.csv"
+```
+
+Creates authors, journals, publishers, institutions, schools, series, and keywords that are referenced in the CSV but don't exist in the database. Auto-generates keys from names. Does NOT create duplicate authors with the same name.
+
+### Step 3: Import bibitems
+
+```bash
+curl -X POST http://localhost:8080/api/v1/admin/import-full-csv \
+  -H "Authorization: Bearer <key>" \
+  -F "file=@bibliography.csv"
+```
+
+The CSV is the **source of truth**:
+- New bibitems are inserted
+- Existing bibitems (same bibkey) are updated
+- Bibitems in the DB but NOT in the CSV are **deleted**
+
+Returns 422 if any entities can't be resolved (missing or ambiguous). Nothing is modified until all references are validated.
+
+### CSV format
+
+The CSV follows the ODS spreadsheet structure. Column names use hyphens (normalized to underscores internally).
+
+**Key columns:**
+- `entry_type` -- BibTeX type (`@article{` or `article`)
+- `bibkey` -- unique identifier in `author:year` format (e.g., `kant:1781a`)
+- `title` -- single column, stored in all three variants (latex/unicode/simplified)
+- `author` -- `" and "`-separated: `"Kant, Immanuel and Aristotle"`
+- `editor`, `_guesteditor` -- same format as author
+- `date` -- year (`2024`), range (`2021-2022`, `2021/2022`), full (`2024-01-15`), or `no date`
+- `journal`, `publisher`, `institution`, `school`, `series` -- human-readable names (looked up by `name_latex`)
+- `pages` -- double-hyphen ranges: `123--456, 789`
+- `_kw-level1`, `_kw-level2`, `_kw-level3` -- semicolon-separated keyword names
+- `crossref` -- bibkey of parent entry
+- `_further_refs`, `_depends_on` -- comma-separated bibkeys
+- `_person` -- philosopher mononym with optional trailing semicolon (e.g., `Kierkegaard;`)
+- `pubstate`, `_epoch`, `_langid` -- enum values (default to None on invalid)
+- `_lang-der` -- non-empty = is_translation
+- `_has-link-to-full-text` -- non-empty = has_fulltext
