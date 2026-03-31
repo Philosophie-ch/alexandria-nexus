@@ -207,7 +207,7 @@ pub fn build_app(pool: hexforge::DatabasePool, cors: CorsConfig) -> Router {
                 "bibitem_authors",
                 "bibitem_id",
                 "author_id",
-                Some("role = 'author'"),
+                Some(("role", "author")),
                 state.author_ds.clone(),
             )
             .expand_junction_projected::<AuthorExpanded, _, _>(
@@ -215,7 +215,7 @@ pub fn build_app(pool: hexforge::DatabasePool, cors: CorsConfig) -> Router {
                 "bibitem_authors",
                 "bibitem_id",
                 "author_id",
-                Some("role = 'editor'"),
+                Some(("role", "editor")),
                 state.author_ds.clone(),
             )
             .expand_junction_projected::<AuthorExpanded, _, _>(
@@ -223,7 +223,7 @@ pub fn build_app(pool: hexforge::DatabasePool, cors: CorsConfig) -> Router {
                 "bibitem_authors",
                 "bibitem_id",
                 "author_id",
-                Some("role = 'guesteditor'"),
+                Some(("role", "guesteditor")),
                 state.author_ds.clone(),
             )
             .expand_junction_projected::<KeywordExpanded, _, _>(
