@@ -493,3 +493,93 @@ async fn test_full_pipeline() {
     assert_eq!(bib["date_year"], 2024);
     assert!(bib["journal_id"].is_number(), "Should have journal_id set");
 }
+
+// ============================================================================
+// EXPORT
+// ============================================================================
+
+#[tokio::test]
+async fn test_export_full_csv() {
+    let app = TestApp::spawn().await;
+    let s = unique_suffix();
+
+    // Seed entities
+    seed_author(&app, &format!("kant-{s}"), "Kant", "Immanuel").await;
+    seed_journal(&app, &format!("mind-{s}"), &format!("Mind-{s}")).await;
+
+    // Import a bibitem
+    let csv = format!(
+        "entry_type,bibkey,title,author,journal,date\n\
+         article,kant{s}:1781,Critique of Pure Reason,\"Kant, Immanuel\",Mind-{s},1781"
+    );
+    let import_resp = upload_csv(&app, "/api/v1/admin/import-full-csv", &csv).await;
+    assert_eq!(import_resp.status(), 200);
+
+    // Export
+    let export_resp = app
+        .client
+        .post(app.url("/api/v1/admin/export-full-csv"))
+        .header("Authorization", format!("Bearer {}", app.api_key))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(export_resp.status(), 200);
+
+    let exported_csv = export_resp.text().await.unwrap();
+
+    // Verify headers
+    assert!(exported_csv.starts_with("entry_type,bibkey,"));
+
+    // Verify our bibitem is in the export
+    assert!(
+        exported_csv.contains(&format!("kant{s}:1781")),
+        "Export should contain our bibitem bibkey"
+    );
+    assert!(
+        exported_csv.contains("Critique of Pure Reason"),
+        "Export should contain title"
+    );
+    assert!(
+        exported_csv.contains("Kant, Immanuel"),
+        "Export should contain author name"
+    );
+    assert!(
+        exported_csv.contains(&format!("Mind-{s}")),
+        "Export should contain journal name"
+    );
+}
+
+#[tokio::test]
+async fn test_export_import_round_trip() {
+    let app = TestApp::spawn().await;
+    let s = unique_suffix();
+
+    // Seed entities
+    seed_author(&app, &format!("round-{s}"), "Roundtrip", "Author").await;
+
+    // Import
+    let csv = format!(
+        "entry_type,bibkey,title,author,date,pubstate\n\
+         book,round{s}:2024,Round Trip Book,\"Roundtrip, Author\",2024,published"
+    );
+    let import_resp = upload_csv(&app, "/api/v1/admin/import-full-csv", &csv).await;
+    assert_eq!(import_resp.status(), 200);
+
+    // Export
+    let export_resp = app
+        .client
+        .post(app.url("/api/v1/admin/export-full-csv"))
+        .header("Authorization", format!("Bearer {}", app.api_key))
+        .send()
+        .await
+        .unwrap();
+    let exported_csv = export_resp.text().await.unwrap();
+
+    // Re-import the exported CSV (should update, not create new)
+    let reimport_resp = upload_csv(&app, "/api/v1/admin/import-full-csv", &exported_csv).await;
+    assert_eq!(reimport_resp.status(), 200);
+    let body: serde_json::Value = reimport_resp.json().await.unwrap();
+    assert_eq!(body["failed"], 0, "Round-trip re-import should not fail");
+    assert_eq!(body["updated"], 1, "Should update the existing bibitem");
+    assert_eq!(body["imported"], 0, "Should not create new bibitems");
+}

@@ -670,3 +670,10 @@ operations:
     description: "Import bibitems from a human-readable CSV (source of truth)"
     permission: Admin
     group: full_import
+
+  export_full_csv:
+    method: POST
+    path: "/admin/export-full-csv"
+    description: "Export bibitems as human-readable CSV matching the ODS import format"
+    permission: Admin
+    group: full_import

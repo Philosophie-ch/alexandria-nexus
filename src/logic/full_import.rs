@@ -1409,3 +1409,295 @@ async fn delete_bibitems_by_bibkeys(
         .map_err(HexforgeError::data_source)?;
     Ok(usize::try_from(result.rows_affected()).unwrap_or(0))
 }
+
+// =============================================================================
+// Full CSV export (human-readable, matches import format)
+// =============================================================================
+
+const FULL_CSV_HEADERS: &str = "entry_type,bibkey,author,editor,_guesteditor,date,pubstate,title,\
+booktitle,journal,publisher,institution,school,series,volume,number,pages,eid,address,type,edition,\
+note,_issuetitle,_extra_note,crossref,_further_refs,_depends_on,\
+_kw_level1,_kw_level2,_kw_level3,_epoch,_langid,_lang_der,_person,\
+_has_link_to_full_text,shorthand,options,doi,url,eprint,urn";
+
+/// Export all bibitems as a human-readable CSV matching the full import format.
+pub async fn export_full_csv(state: &AppState) -> Result<String, HexforgeError> {
+    let pool = state.pool.pool();
+
+    // Fetch all bibitems via raw SQL (orchestration layer — allowed to use db_exports)
+    let bibitems: Vec<crate::domain::BibItem> = query_as("SELECT * FROM bibitems ORDER BY bibkey")
+        .fetch_all(pool)
+        .await
+        .map_err(HexforgeError::data_source)?;
+
+    // Build reverse lookup maps (ID → name)
+    let authors: Vec<AuthorRow> =
+        query_as("SELECT id, family_name_latex, given_name_latex, mononym_latex FROM authors")
+            .fetch_all(pool)
+            .await
+            .map_err(HexforgeError::data_source)?;
+    let author_names: HashMap<i64, String> = authors
+        .into_iter()
+        .map(|a| {
+            let name = if let Some(m) = a.mononym_latex {
+                m
+            } else {
+                match (a.family_name_latex, a.given_name_latex) {
+                    (Some(f), Some(g)) => format!("{f}, {g}"),
+                    (Some(f), None) => f,
+                    _ => String::new(),
+                }
+            };
+            (a.id, name)
+        })
+        .collect();
+
+    let journal_names = reverse_name_map(pool, "journals").await?;
+    let publisher_names = reverse_name_map(pool, "publishers").await?;
+    let institution_names = reverse_name_map(pool, "institutions").await?;
+    let school_names = reverse_name_map(pool, "schools").await?;
+    let series_names = reverse_name_map(pool, "series").await?;
+
+    // Keywords by ID
+    let kw_rows: Vec<KeywordRow> = query_as("SELECT id, name, level FROM keywords")
+        .fetch_all(pool)
+        .await
+        .map_err(HexforgeError::data_source)?;
+    let keyword_names: HashMap<i64, (String, i16)> = kw_rows
+        .into_iter()
+        .map(|k| (k.id, (k.name, k.level)))
+        .collect();
+
+    // Bibkey by ID (for crossref/refs resolution)
+    let bibkey_by_id: HashMap<i64, String> =
+        bibitems.iter().map(|b| (b.id, b.bibkey.clone())).collect();
+
+    // Junction data
+    #[derive(FromRow)]
+    struct JunctionAuthorRow {
+        bibitem_id: i64,
+        author_id: i64,
+        role: String,
+        position: i16,
+    }
+    let bib_authors: Vec<JunctionAuthorRow> =
+        query_as("SELECT bibitem_id, author_id, role::text, position FROM bibitem_authors ORDER BY bibitem_id, role, position")
+            .fetch_all(pool)
+            .await
+            .map_err(HexforgeError::data_source)?;
+
+    #[derive(FromRow)]
+    struct JunctionKeywordRow {
+        bibitem_id: i64,
+        keyword_id: i64,
+    }
+    let bib_keywords: Vec<JunctionKeywordRow> =
+        query_as("SELECT bibitem_id, keyword_id FROM bibitem_keywords")
+            .fetch_all(pool)
+            .await
+            .map_err(HexforgeError::data_source)?;
+
+    #[derive(FromRow)]
+    struct JunctionRefRow {
+        source_id: i64,
+        target_id: i64,
+        ref_type: String,
+    }
+    let bib_refs: Vec<JunctionRefRow> =
+        query_as("SELECT source_id, target_id, ref_type::text FROM bibitem_refs")
+            .fetch_all(pool)
+            .await
+            .map_err(HexforgeError::data_source)?;
+
+    // Index junction data by bibitem_id
+    let mut authors_by_bib: HashMap<i64, Vec<&JunctionAuthorRow>> = HashMap::new();
+    for row in &bib_authors {
+        authors_by_bib.entry(row.bibitem_id).or_default().push(row);
+    }
+    let mut keywords_by_bib: HashMap<i64, Vec<&JunctionKeywordRow>> = HashMap::new();
+    for row in &bib_keywords {
+        keywords_by_bib.entry(row.bibitem_id).or_default().push(row);
+    }
+    let mut refs_by_bib: HashMap<i64, Vec<&JunctionRefRow>> = HashMap::new();
+    for row in &bib_refs {
+        refs_by_bib.entry(row.source_id).or_default().push(row);
+    }
+
+    // Build CSV
+    let mut wtr = csv::Writer::from_writer(Vec::new());
+    wtr.write_record(FULL_CSV_HEADERS.split(','))
+        .map_err(|e| HexforgeError::Internal(format!("CSV header error: {e}")))?;
+
+    for bib in &bibitems {
+        let authors_for_role = |role: AuthorRole| -> String {
+            let role_str = role.to_string();
+            authors_by_bib
+                .get(&bib.id)
+                .map(|rows| {
+                    let mut filtered: Vec<&&JunctionAuthorRow> =
+                        rows.iter().filter(|r| r.role == role_str).collect();
+                    filtered.sort_by_key(|r| r.position);
+                    filtered
+                        .iter()
+                        .filter_map(|r| author_names.get(&r.author_id))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(" and ")
+                })
+                .unwrap_or_default()
+        };
+
+        let keywords_for_level = |level: i16| -> String {
+            keywords_by_bib
+                .get(&bib.id)
+                .map(|rows| {
+                    rows.iter()
+                        .filter_map(|r| {
+                            keyword_names.get(&r.keyword_id).and_then(|(name, lv)| {
+                                if *lv == level {
+                                    Some(name.as_str())
+                                } else {
+                                    None
+                                }
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                })
+                .unwrap_or_default()
+        };
+
+        let refs_for_type = |rt: RefType| -> String {
+            let rt_str = rt.to_string();
+            refs_by_bib
+                .get(&bib.id)
+                .map(|rows| {
+                    rows.iter()
+                        .filter(|r| r.ref_type == rt_str)
+                        .filter_map(|r| bibkey_by_id.get(&r.target_id))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default()
+        };
+
+        let date = format_date_for_export(bib);
+        let crossref = bib
+            .crossref_id
+            .and_then(|id| bibkey_by_id.get(&id))
+            .cloned()
+            .unwrap_or_default();
+        let person = bib
+            .person_id
+            .and_then(|id| author_names.get(&id))
+            .map(|n| format!("{n};"))
+            .unwrap_or_default();
+
+        let record = vec![
+            bib.entry_type.to_string(),
+            bib.bibkey.clone(),
+            authors_for_role(AuthorRole::Author),
+            authors_for_role(AuthorRole::Editor),
+            authors_for_role(AuthorRole::Guesteditor),
+            date,
+            bib.pubstate.map(|p| p.to_string()).unwrap_or_default(),
+            bib.title_latex.clone(),
+            bib.booktitle_latex.clone().unwrap_or_default(),
+            bib.journal_id
+                .and_then(|id| journal_names.get(&id))
+                .cloned()
+                .unwrap_or_default(),
+            bib.publisher_id
+                .and_then(|id| publisher_names.get(&id))
+                .cloned()
+                .unwrap_or_default(),
+            bib.institution_id
+                .and_then(|id| institution_names.get(&id))
+                .cloned()
+                .unwrap_or_default(),
+            bib.school_id
+                .and_then(|id| school_names.get(&id))
+                .cloned()
+                .unwrap_or_default(),
+            bib.series_id
+                .and_then(|id| series_names.get(&id))
+                .cloned()
+                .unwrap_or_default(),
+            bib.volume.clone().unwrap_or_default(),
+            bib.number.clone().unwrap_or_default(),
+            bib.pages.clone().unwrap_or_default(),
+            bib.eid.clone().unwrap_or_default(),
+            bib.address.clone().unwrap_or_default(),
+            bib.type_field.clone().unwrap_or_default(),
+            bib.edition.clone().unwrap_or_default(),
+            bib.note_latex.clone().unwrap_or_default(),
+            bib.issuetitle_latex.clone().unwrap_or_default(),
+            bib.extra_note_latex.clone().unwrap_or_default(),
+            crossref,
+            refs_for_type(RefType::FurtherRef),
+            refs_for_type(RefType::DependsOn),
+            keywords_for_level(1),
+            keywords_for_level(2),
+            keywords_for_level(3),
+            bib.epoch.map(|e| e.to_string()).unwrap_or_default(),
+            bib.langid.map(|l| l.to_string()).unwrap_or_default(),
+            if bib.is_translation {
+                "x".to_string()
+            } else {
+                String::new()
+            },
+            person,
+            if bib.has_fulltext {
+                "x".to_string()
+            } else {
+                String::new()
+            },
+            bib.shorthand.clone().unwrap_or_default(),
+            bib.options.clone().unwrap_or_default(),
+            bib.doi.clone().unwrap_or_default(),
+            bib.url.clone().unwrap_or_default(),
+            bib.eprint.clone().unwrap_or_default(),
+            bib.urn.clone().unwrap_or_default(),
+        ];
+
+        wtr.write_record(&record)
+            .map_err(|e| HexforgeError::Internal(format!("CSV write error: {e}")))?;
+    }
+
+    let bytes = wtr
+        .into_inner()
+        .map_err(|e| HexforgeError::Internal(format!("CSV flush error: {e}")))?;
+    String::from_utf8(bytes).map_err(|e| HexforgeError::Internal(format!("CSV UTF-8 error: {e}")))
+}
+
+async fn reverse_name_map(
+    pool: &hexforge::db_exports::PgPool,
+    table: &str,
+) -> Result<HashMap<i64, String>, HexforgeError> {
+    let sql = format!("SELECT id, name_latex FROM {table}");
+    let rows: Vec<NameIdRow> = query_as(&sql)
+        .fetch_all(pool)
+        .await
+        .map_err(HexforgeError::data_source)?;
+    Ok(rows.into_iter().map(|r| (r.id, r.name_latex)).collect())
+}
+
+fn format_date_for_export(bib: &crate::domain::BibItem) -> String {
+    if bib.date_is_no_date {
+        return "no date".to_string();
+    }
+    match (bib.date_year, bib.date_month, bib.date_day) {
+        (Some(y), Some(m), Some(d)) => format!("{y}-{m:02}-{d:02}"),
+        (Some(y), _, _) => {
+            if let Some(y2) = bib.date_year_2_hyphen {
+                format!("{y}-{y2}")
+            } else if let Some(y2) = bib.date_year_2_slash {
+                format!("{y}/{y2}")
+            } else {
+                y.to_string()
+            }
+        }
+        _ => String::new(),
+    }
+}

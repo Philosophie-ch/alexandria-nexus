@@ -53,3 +53,21 @@ pub async fn import_full_csv(
             .into_response()),
     }
 }
+
+/// Export all bibitems as a human-readable CSV matching the full import format.
+/// `POST /api/v1/admin/export-full-csv`
+pub async fn export_full_csv(State(state): State<AppState>) -> Result<Response, HexforgeError> {
+    let csv = full_import::export_full_csv(&state).await?;
+    Ok((
+        StatusCode::OK,
+        [
+            ("content-type", "text/csv; charset=utf-8"),
+            (
+                "content-disposition",
+                "attachment; filename=\"bibliography-export.csv\"",
+            ),
+        ],
+        csv,
+    )
+        .into_response())
+}
