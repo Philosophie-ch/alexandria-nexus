@@ -14,15 +14,12 @@ pub fn validate_create_bibitem(input: &CreateBibItem) -> Result<(), ValidationEr
         return Err(ValidationError::required("bibkey"));
     }
 
-    // Title fields: required, non-empty
-    if input.title_latex.trim().is_empty() {
-        return Err(ValidationError::required("title_latex"));
-    }
-    if input.title_unicode.trim().is_empty() {
-        return Err(ValidationError::required("title_unicode"));
-    }
-    if input.title_simplified.trim().is_empty() {
-        return Err(ValidationError::required("title_simplified"));
+    // Title: at least one variant must be non-empty
+    if input.title_latex.trim().is_empty()
+        && input.title_unicode.trim().is_empty()
+        && input.title_simplified.trim().is_empty()
+    {
+        return Err(ValidationError::required("title"));
     }
 
     // Date validation: if year_2_* set, year must be set
@@ -175,7 +172,18 @@ mod tests {
     fn test_missing_title() {
         let mut input = minimal_create_input();
         input.title_latex = String::new();
+        input.title_unicode = String::new();
+        input.title_simplified = String::new();
         assert!(validate_create_bibitem(&input).is_err());
+    }
+
+    #[test]
+    fn test_partial_title_is_valid() {
+        let mut input = minimal_create_input();
+        input.title_latex = String::new();
+        input.title_unicode = String::new();
+        // title_simplified still set — at least one variant present
+        assert!(validate_create_bibitem(&input).is_ok());
     }
 
     #[test]
