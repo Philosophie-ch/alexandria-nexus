@@ -592,6 +592,7 @@ pub enum FullImportResult {
 pub async fn import_full_csv(
     state: &AppState,
     data: &[u8],
+    delete_stale: bool,
 ) -> Result<FullImportResult, HexforgeError> {
     let pool = state.pool.pool();
 
@@ -633,16 +634,20 @@ pub async fn import_full_csv(
         existing_bibkeys: maps.bibkeys,
     };
 
-    // 4. Delete stale bibitems
-    let stale: Vec<String> = ctx
-        .existing_bibkeys
-        .difference(&csv_bibkeys)
-        .cloned()
-        .collect();
-    let deleted = if stale.is_empty() {
-        0
+    // 4. Delete stale bibitems (only if explicitly requested)
+    let deleted = if delete_stale {
+        let stale: Vec<String> = ctx
+            .existing_bibkeys
+            .difference(&csv_bibkeys)
+            .cloned()
+            .collect();
+        if stale.is_empty() {
+            0
+        } else {
+            delete_bibitems_by_bibkeys(pool, &stale).await?
+        }
     } else {
-        delete_bibitems_by_bibkeys(pool, &stale).await?
+        0
     };
 
     // 6. Upsert each bibitem
@@ -1139,11 +1144,11 @@ fn build_bibitem_dto(row: &ParsedBibRow, ctx: &ResolutionCtx) -> Result<CreateBi
         date_is_no_date: None,
         pubstate: row.pubstate,
         title_latex: row.title.clone(),
-        title_unicode: row.title.clone(),
-        title_simplified: row.title.clone(),
+        title_unicode: String::new(),
+        title_simplified: String::new(),
         booktitle_latex: row.booktitle.clone(),
-        booktitle_unicode: row.booktitle.clone(),
-        booktitle_simplified: row.booktitle.clone(),
+        booktitle_unicode: None,
+        booktitle_simplified: None,
         journal_id: row
             .journal_name
             .as_ref()
@@ -1177,11 +1182,11 @@ fn build_bibitem_dto(row: &ParsedBibRow, ctx: &ResolutionCtx) -> Result<CreateBi
         urn: row.urn.clone(),
         crossref_id: None, // resolved after all bibitems inserted — skip for now
         issuetitle_latex: row.issuetitle.clone(),
-        issuetitle_unicode: row.issuetitle.clone(),
+        issuetitle_unicode: None,
         note_latex: row.note.clone(),
-        note_unicode: row.note.clone(),
+        note_unicode: None,
         extra_note_latex: row.extra_note.clone(),
-        extra_note_unicode: row.extra_note.clone(),
+        extra_note_unicode: None,
         langid: row.langid,
         is_translation: Some(row.is_translation),
         epoch: row.epoch,

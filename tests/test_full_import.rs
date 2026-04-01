@@ -321,12 +321,23 @@ async fn test_import_full_csv_deletes_stale() {
          book,new{s}:2024,Replacement Book,2024"
     );
 
+    // Without delete_stale: stale bibitem should survive
     let resp = upload_csv(&app, "/api/v1/admin/import-full-csv", &csv).await;
     assert_eq!(resp.status(), 200);
-
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(body["deleted"], 1, "Should delete 1 stale bibitem");
+    assert_eq!(body["deleted"], 0, "Should not delete without delete_stale");
     assert_eq!(body["imported"], 1);
+
+    // With delete_stale=true: stale bibitem should be deleted
+    let resp2 = upload_csv(
+        &app,
+        "/api/v1/admin/import-full-csv?delete_stale=true",
+        &csv,
+    )
+    .await;
+    assert_eq!(resp2.status(), 200);
+    let body2: serde_json::Value = resp2.json().await.unwrap();
+    assert_eq!(body2["deleted"], 1, "Should delete 1 stale bibitem");
 
     // Verify stale bibitem is gone
     let stale_resp = app

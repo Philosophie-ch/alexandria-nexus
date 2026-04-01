@@ -4,7 +4,15 @@ use axum::extract::Multipart;
 use hexforge::HexforgeError;
 use hexforge::axum_exports::{IntoResponse, Json, Response, State, StatusCode};
 
+use serde::Deserialize;
+
 use super::import::extract_csv_bytes;
+
+#[derive(Deserialize)]
+pub struct ImportFullCsvParams {
+    #[serde(default)]
+    pub delete_stale: bool,
+}
 use crate::logic::full_import::{self, EntityImportReport, FullImportResult, ValidationReport};
 use crate::state::AppState;
 
@@ -30,14 +38,18 @@ pub async fn import_entities_from_full_csv(
     Ok(Json(report))
 }
 
-/// Import bibitems from a human-readable CSV (source of truth).
-/// `POST /api/v1/admin/import-full-csv`
+/// Import bibitems from a human-readable CSV.
+/// `POST /api/v1/admin/import-full-csv?delete_stale=true`
+///
+/// By default, only upserts (insert new + update existing). Stale bibitems
+/// (in DB but not in CSV) are left untouched unless `?delete_stale=true`.
 pub async fn import_full_csv(
     State(state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<ImportFullCsvParams>,
     multipart: Multipart,
 ) -> Result<Response, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
-    let result = full_import::import_full_csv(&state, &data).await?;
+    let result = full_import::import_full_csv(&state, &data, params.delete_stale).await?;
     match result {
         FullImportResult::Success(report) => Ok(Json(report).into_response()),
         FullImportResult::ValidationFailed(report) => {
