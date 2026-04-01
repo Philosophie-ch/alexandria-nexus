@@ -1,17 +1,20 @@
 SHELL := /bin/bash
 .PHONY: dev stop db lint test test-unit test-integration
 
-# Start app on its own
+# Build DATABASE_URL from the compose env vars
+DB_URL = postgres://$${POSTGRES_USER}:$${POSTGRES_PASSWORD}@localhost:$${DB_PORT:-5433}/$${POSTGRES_DB}
+
+# Start app on its own (DB must already be running)
 dev-raw:
-	set -a && source .env && set +a && cargo run --bin alexandria-nexus
+	set -a && source .env && set +a && DATABASE_URL=$(DB_URL) cargo run --bin alexandria-nexus
 
 # Start DB + Adminer and run the app
 dev-start:
-	docker compose up -d db adminer
+	docker compose up -d alexandria-db adminer
 	@echo "Waiting for Postgres to be ready..."
-	@until docker compose exec db pg_isready -U $${POSTGRES_USER:-bib} > /dev/null 2>&1; do sleep 0.5; done
+	@until docker compose exec alexandria-db pg_isready -U $${POSTGRES_USER} > /dev/null 2>&1; do sleep 0.5; done
 	@echo "Postgres ready"
-	set -a && source .env && set +a && cargo run --bin alexandria-nexus
+	set -a && source .env && set +a && DATABASE_URL=$(DB_URL) cargo run --bin alexandria-nexus
 
 # Stop all containers
 dev-stop:
@@ -19,11 +22,11 @@ dev-stop:
 
 # Stop all containers and remove volumes (data will be lost)
 dev-purge:
-	docker compose down -v
+	docker compose down -v --remove-orphans
 
 # Start only the database
 dev-db:
-	docker compose up -d db adminer
+	docker compose up -d alexandria-db adminer
 
 # checks
 check:
