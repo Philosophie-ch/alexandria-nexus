@@ -39,6 +39,7 @@ pub struct ValidationReport {
     pub total_rows: usize,
     pub valid_rows: usize,
     pub errors: Vec<RowError>,
+    pub duplicate_bibkeys: Vec<DuplicateBibkey>,
     pub missing_authors: Vec<String>,
     pub ambiguous_authors: Vec<AmbiguousAuthor>,
     pub missing_journals: Vec<String>,
@@ -64,6 +65,12 @@ pub struct RowError {
 pub struct AmbiguousAuthor {
     pub name: String,
     pub matching_ids: Vec<i64>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct DuplicateBibkey {
+    pub bibkey: String,
+    pub rows: Vec<usize>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -117,13 +124,24 @@ pub async fn validate_full_csv(
     let (parsed_rows, row_errors) = parse_all_rows(&data)?;
     let total_rows = parsed_rows.len() + row_errors.len();
 
-    // 2. Collect all unique names from successfully parsed rows
+    // 2. Collect all unique names and detect duplicate bibkeys
     let mut collected = CollectedNames::default();
     let mut csv_bibkeys: HashSet<String> = HashSet::new();
-    for row in &parsed_rows {
+    let mut bibkey_rows: HashMap<String, Vec<usize>> = HashMap::new();
+    for (idx, row) in parsed_rows.iter().enumerate() {
+        bibkey_rows
+            .entry(row.bibkey.clone())
+            .or_default()
+            .push(idx + 2); // 1-indexed, skip header
         csv_bibkeys.insert(row.bibkey.clone());
         collected.collect_from_row(row);
     }
+    let mut duplicate_bibkeys: Vec<DuplicateBibkey> = bibkey_rows
+        .into_iter()
+        .filter(|(_, rows)| rows.len() > 1)
+        .map(|(bibkey, rows)| DuplicateBibkey { bibkey, rows })
+        .collect();
+    duplicate_bibkeys.sort_by(|a, b| a.bibkey.cmp(&b.bibkey));
 
     // 3. Batch DB lookups
     let maps = build_lookup_maps(pool).await?;
@@ -172,6 +190,7 @@ pub async fn validate_full_csv(
         total_rows,
         valid_rows: parsed_rows.len(),
         errors: row_errors,
+        duplicate_bibkeys,
         missing_authors,
         ambiguous_authors,
         missing_journals,
@@ -583,12 +602,36 @@ pub async fn import_full_csv(
         return Ok(FullImportResult::ParseErrors(row_errors));
     }
 
-    // 2. Collect names and lookup
+    // 2. Check for duplicate bibkeys in CSV
+    let mut seen_bibkeys: HashSet<String> = HashSet::new();
+    let mut duplicates: Vec<String> = Vec::new();
+    for row in &parsed_rows {
+        if !seen_bibkeys.insert(row.bibkey.clone()) && !duplicates.contains(&row.bibkey) {
+            duplicates.push(row.bibkey.clone());
+        }
+    }
+    if !duplicates.is_empty() {
+        duplicates.sort();
+        return Ok(FullImportResult::ParseErrors(
+            duplicates
+                .iter()
+                .map(|bk| RowError {
+                    row: 0,
+                    bibkey: Some(bk.clone()),
+                    errors: vec![FieldError {
+                        field: "bibkey".to_string(),
+                        error: "duplicate bibkey in CSV".to_string(),
+                    }],
+                })
+                .collect(),
+        ));
+    }
+
+    // 3. Collect names and lookup
     let mut collected = CollectedNames::default();
-    let mut csv_bibkeys = HashSet::new();
+    let csv_bibkeys = seen_bibkeys;
     for row in &parsed_rows {
         collected.collect_from_row(row);
-        csv_bibkeys.insert(row.bibkey.clone());
     }
 
     let maps = build_lookup_maps(pool).await?;

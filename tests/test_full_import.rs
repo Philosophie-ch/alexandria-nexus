@@ -495,6 +495,55 @@ async fn test_full_pipeline() {
 }
 
 // ============================================================================
+// DUPLICATE BIBKEYS
+// ============================================================================
+
+#[tokio::test]
+async fn test_validate_reports_duplicate_bibkeys() {
+    let app = TestApp::spawn().await;
+    let s = unique_suffix();
+
+    let csv = format!(
+        "entry_type,bibkey,title,date\n\
+         book,dup{s}:2024,First Copy,2024\n\
+         book,dup{s}:2024,Second Copy,2024"
+    );
+
+    let resp = upload_csv(&app, "/api/v1/admin/validate-full-csv", &csv).await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let dups = body["duplicate_bibkeys"].as_array().unwrap();
+    assert_eq!(dups.len(), 1);
+    assert_eq!(dups[0]["bibkey"], format!("dup{s}:2024"));
+    assert_eq!(dups[0]["rows"].as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn test_import_rejects_duplicate_bibkeys() {
+    let app = TestApp::spawn().await;
+    let s = unique_suffix();
+
+    let csv = format!(
+        "entry_type,bibkey,title,date\n\
+         book,dup{s}:2024,First,2024\n\
+         book,dup{s}:2024,Second,2024"
+    );
+
+    let resp = upload_csv(&app, "/api/v1/admin/import-full-csv", &csv).await;
+    assert_eq!(resp.status(), 400);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "parse_errors");
+    let errors = body["errors"].as_array().unwrap();
+    assert!(
+        errors
+            .iter()
+            .any(|e| e["errors"][0]["error"] == "duplicate bibkey in CSV")
+    );
+}
+
+// ============================================================================
 // EXPORT
 // ============================================================================
 
