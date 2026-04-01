@@ -80,6 +80,26 @@ pub struct MissingKeywords {
     pub level_3: Vec<String>,
 }
 
+impl ValidationReport {
+    pub fn has_issues(&self) -> bool {
+        !self.errors.is_empty()
+            || !self.duplicate_bibkeys.is_empty()
+            || !self.missing_authors.is_empty()
+            || !self.ambiguous_authors.is_empty()
+            || !self.missing_journals.is_empty()
+            || !self.missing_publishers.is_empty()
+            || !self.missing_institutions.is_empty()
+            || !self.missing_schools.is_empty()
+            || !self.missing_series.is_empty()
+            || !self.missing_keywords.level_1.is_empty()
+            || !self.missing_keywords.level_2.is_empty()
+            || !self.missing_keywords.level_3.is_empty()
+            || !self.missing_crossrefs.is_empty()
+            || !self.missing_further_refs.is_empty()
+            || !self.missing_depends_on.is_empty()
+    }
+}
+
 // =============================================================================
 // Author lookup key
 // =============================================================================
@@ -116,12 +136,12 @@ impl AuthorNameKey {
 /// Returns a validation report. Does NOT modify anything.
 pub async fn validate_full_csv(
     state: &AppState,
-    data: Vec<u8>,
+    data: &[u8],
 ) -> Result<ValidationReport, HexforgeError> {
     let pool = state.pool.pool();
 
     // 1. Parse all rows
-    let (parsed_rows, row_errors) = parse_all_rows(&data)?;
+    let (parsed_rows, row_errors) = parse_all_rows(data)?;
     let total_rows = parsed_rows.len() + row_errors.len();
 
     // 2. Collect all unique names and detect duplicate bibkeys
@@ -426,10 +446,10 @@ pub struct EntityImportError {
 /// Authors with exact duplicate names (same family+given or mononym) produce an error.
 pub async fn import_entities_from_full_csv(
     state: &AppState,
-    data: Vec<u8>,
+    data: &[u8],
 ) -> Result<EntityImportReport, HexforgeError> {
     let pool = state.pool.pool();
-    let (parsed_rows, _) = parse_all_rows(&data)?;
+    let (parsed_rows, _) = parse_all_rows(data)?;
 
     let mut collected = CollectedNames::default();
     for row in &parsed_rows {
@@ -558,91 +578,40 @@ pub struct FullImportReport {
     pub errors: Vec<RowError>,
 }
 
-#[derive(Debug, Serialize, ToSchema)]
-pub struct UnresolvableNamesError {
-    pub error: &'static str,
-    pub message: &'static str,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub missing_authors: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub ambiguous_authors: Vec<AmbiguousAuthor>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub missing_journals: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub missing_publishers: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub missing_institutions: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub missing_schools: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub missing_series: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub missing_keywords: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub missing_bibkeys: Vec<String>,
-}
-
 pub enum FullImportResult {
     Success(FullImportReport),
-    UnresolvableNames(UnresolvableNamesError),
-    ParseErrors(Vec<RowError>),
+    /// Validation failed — return the full report so the caller sees everything at once.
+    ValidationFailed(Box<ValidationReport>),
 }
 
 /// Parse CSV, resolve all names to IDs, upsert bibitems + junctions.
 /// CSV is source of truth: bibitems in DB but not in CSV get deleted.
+///
+/// Runs full validation first — if any issues exist, returns the complete
+/// `ValidationReport` so the caller sees everything in one response.
 pub async fn import_full_csv(
     state: &AppState,
-    data: Vec<u8>,
+    data: &[u8],
 ) -> Result<FullImportResult, HexforgeError> {
     let pool = state.pool.pool();
 
-    // 1. Parse
-    let (parsed_rows, row_errors) = parse_all_rows(&data)?;
-    if !row_errors.is_empty() {
-        return Ok(FullImportResult::ParseErrors(row_errors));
+    // 1. Validate — return full report if anything is wrong
+    let report = validate_full_csv(state, data).await?;
+    if report.has_issues() {
+        return Ok(FullImportResult::ValidationFailed(Box::new(report)));
     }
 
-    // 2. Check for duplicate bibkeys in CSV
-    let mut seen_bibkeys: HashSet<String> = HashSet::new();
-    let mut duplicates: Vec<String> = Vec::new();
-    for row in &parsed_rows {
-        if !seen_bibkeys.insert(row.bibkey.clone()) && !duplicates.contains(&row.bibkey) {
-            duplicates.push(row.bibkey.clone());
-        }
-    }
-    if !duplicates.is_empty() {
-        duplicates.sort();
-        return Ok(FullImportResult::ParseErrors(
-            duplicates
-                .iter()
-                .map(|bk| RowError {
-                    row: 0,
-                    bibkey: Some(bk.clone()),
-                    errors: vec![FieldError {
-                        field: "bibkey".to_string(),
-                        error: "duplicate bibkey in CSV".to_string(),
-                    }],
-                })
-                .collect(),
-        ));
-    }
+    // 2. Parse (validated, so no errors expected)
+    let (parsed_rows, _) = parse_all_rows(data)?;
 
-    // 3. Collect names and lookup
+    // 3. Build resolution context
     let mut collected = CollectedNames::default();
-    let csv_bibkeys = seen_bibkeys;
+    let mut csv_bibkeys = HashSet::new();
     for row in &parsed_rows {
         collected.collect_from_row(row);
+        csv_bibkeys.insert(row.bibkey.clone());
     }
-
     let maps = build_lookup_maps(pool).await?;
-
-    // 3. Check for unresolvable names
-    let unresolvable = build_unresolvable(&collected, &maps, &csv_bibkeys);
-    if unresolvable.has_any() {
-        return Ok(FullImportResult::UnresolvableNames(unresolvable));
-    }
-
-    // 4. Build resolution context
     let ctx = ResolutionCtx {
         author_resolve: maps
             .authors
@@ -664,7 +633,7 @@ pub async fn import_full_csv(
         existing_bibkeys: maps.bibkeys,
     };
 
-    // 5. Delete stale bibitems
+    // 4. Delete stale bibitems
     let stale: Vec<String> = ctx
         .existing_bibkeys
         .difference(&csv_bibkeys)
@@ -1067,91 +1036,6 @@ async fn build_lookup_maps(
         keywords: batch_lookup_keywords(pool).await?,
         bibkeys: fetch_all_bibkeys(pool).await?,
     })
-}
-
-// =============================================================================
-// Unresolvable names check
-// =============================================================================
-
-impl UnresolvableNamesError {
-    fn has_any(&self) -> bool {
-        !self.missing_authors.is_empty()
-            || !self.ambiguous_authors.is_empty()
-            || !self.missing_journals.is_empty()
-            || !self.missing_publishers.is_empty()
-            || !self.missing_institutions.is_empty()
-            || !self.missing_schools.is_empty()
-            || !self.missing_series.is_empty()
-            || !self.missing_keywords.is_empty()
-            || !self.missing_bibkeys.is_empty()
-    }
-}
-
-fn build_unresolvable(
-    collected: &CollectedNames,
-    maps: &LookupMaps,
-    csv_bibkeys: &HashSet<String>,
-) -> UnresolvableNamesError {
-    let mut missing_authors = Vec::new();
-    let mut ambiguous_authors = Vec::new();
-    for key in &collected.authors {
-        match maps.authors.get(key) {
-            None => missing_authors.push(format_author_key(key)),
-            Some(ids) if ids.len() > 1 => ambiguous_authors.push(AmbiguousAuthor {
-                name: format_author_key(key),
-                matching_ids: ids.clone(),
-            }),
-            _ => {}
-        }
-    }
-    missing_authors.sort();
-
-    // All referenced bibkeys (crossrefs, further_refs, depends_on) must be either
-    // in the CSV itself or already in the DB
-    let all_ref_bibkeys: HashSet<&String> = collected
-        .crossref_bibkeys
-        .iter()
-        .chain(&collected.further_ref_bibkeys)
-        .chain(&collected.depends_on_bibkeys)
-        .collect();
-    let mut missing_bibkeys: Vec<String> = all_ref_bibkeys
-        .iter()
-        .filter(|bk| !csv_bibkeys.contains(**bk) && !maps.bibkeys.contains(**bk))
-        .map(|bk| (*bk).clone())
-        .collect();
-    missing_bibkeys.sort();
-
-    let mut missing_kw = Vec::new();
-    for kw in &collected.keywords_l1 {
-        if !maps.keywords.contains_key(&(kw.clone(), 1)) {
-            missing_kw.push(format!("{kw} (level 1)"));
-        }
-    }
-    for kw in &collected.keywords_l2 {
-        if !maps.keywords.contains_key(&(kw.clone(), 2)) {
-            missing_kw.push(format!("{kw} (level 2)"));
-        }
-    }
-    for kw in &collected.keywords_l3 {
-        if !maps.keywords.contains_key(&(kw.clone(), 3)) {
-            missing_kw.push(format!("{kw} (level 3)"));
-        }
-    }
-    missing_kw.sort();
-
-    UnresolvableNamesError {
-        error: "unresolvable_names",
-        message: "Some referenced entities could not be resolved",
-        missing_authors,
-        ambiguous_authors,
-        missing_journals: find_missing_names(&collected.journal_names, &maps.journals),
-        missing_publishers: find_missing_names(&collected.publisher_names, &maps.publishers),
-        missing_institutions: find_missing_names(&collected.institution_names, &maps.institutions),
-        missing_schools: find_missing_names(&collected.school_names, &maps.schools),
-        missing_series: find_missing_names(&collected.series_names, &maps.series),
-        missing_keywords: missing_kw,
-        missing_bibkeys,
-    }
 }
 
 // =============================================================================

@@ -383,7 +383,6 @@ async fn test_import_full_csv_fails_on_missing_entities() {
     assert_eq!(resp.status(), 422);
 
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(body["error"], "unresolvable_names");
     let missing = body["missing_journals"].as_array().unwrap();
     assert_eq!(missing.len(), 1);
 }
@@ -406,7 +405,6 @@ async fn test_import_full_csv_fails_on_ambiguous_author() {
     assert_eq!(resp.status(), 422);
 
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(body["error"], "unresolvable_names");
     assert_eq!(body["ambiguous_authors"].as_array().unwrap().len(), 1);
 }
 
@@ -531,16 +529,11 @@ async fn test_import_rejects_duplicate_bibkeys() {
     );
 
     let resp = upload_csv(&app, "/api/v1/admin/import-full-csv", &csv).await;
-    assert_eq!(resp.status(), 400);
+    assert_eq!(resp.status(), 422);
 
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(body["error"], "parse_errors");
-    let errors = body["errors"].as_array().unwrap();
-    assert!(
-        errors
-            .iter()
-            .any(|e| e["errors"][0]["error"] == "duplicate bibkey in CSV")
-    );
+    let dups = body["duplicate_bibkeys"].as_array().unwrap();
+    assert_eq!(dups.len(), 1, "Should report 1 duplicate bibkey");
 }
 
 // ============================================================================

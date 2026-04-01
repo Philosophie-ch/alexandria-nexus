@@ -15,7 +15,7 @@ pub async fn validate_full_csv(
     multipart: Multipart,
 ) -> Result<Json<ValidationReport>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
-    let report = full_import::validate_full_csv(&state, data).await?;
+    let report = full_import::validate_full_csv(&state, &data).await?;
     Ok(Json(report))
 }
 
@@ -26,7 +26,7 @@ pub async fn import_entities_from_full_csv(
     multipart: Multipart,
 ) -> Result<Json<EntityImportReport>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
-    let report = full_import::import_entities_from_full_csv(&state, data).await?;
+    let report = full_import::import_entities_from_full_csv(&state, &data).await?;
     Ok(Json(report))
 }
 
@@ -37,20 +37,12 @@ pub async fn import_full_csv(
     multipart: Multipart,
 ) -> Result<Response, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
-    let result = full_import::import_full_csv(&state, data).await?;
+    let result = full_import::import_full_csv(&state, &data).await?;
     match result {
         FullImportResult::Success(report) => Ok(Json(report).into_response()),
-        FullImportResult::UnresolvableNames(err) => {
-            Ok((StatusCode::UNPROCESSABLE_ENTITY, Json(err)).into_response())
+        FullImportResult::ValidationFailed(report) => {
+            Ok((StatusCode::UNPROCESSABLE_ENTITY, Json(report)).into_response())
         }
-        FullImportResult::ParseErrors(errors) => Ok((
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": "parse_errors",
-                "errors": errors,
-            })),
-        )
-            .into_response()),
     }
 }
 
