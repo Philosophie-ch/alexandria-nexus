@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "${1:-}" in -h|--help) echo "Usage: tools/import-schools <file.csv>" >&2; exit 0;; esac
+
+if [ $# -lt 1 ]; then
+    echo "Usage: tools/import-schools <file.csv>" >&2
+    exit 1
+fi
+
+source .env 2>/dev/null || true
+BASE="http://${HOST:-localhost}:${PORT:-8080}"
+KEY="${SEED_API_KEY:?Set SEED_API_KEY in .env}"
+
+curl -s -w "\nHTTP %{http_code}\n" -X POST "$BASE/api/v1/admin/import/schools" \
+    -H "Authorization: Bearer $KEY" \
+    -F "file=@$1"

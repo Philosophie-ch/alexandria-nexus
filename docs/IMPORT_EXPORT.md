@@ -141,6 +141,38 @@ curl -X POST ... -d '{"format": "expanded", "bibkeys": ["kant:1781"]}'
 
 ## Full CSV Import (Human-Readable)
 
+### Quick start (shell scripts)
+
+All scripts in `tools/` output raw JSON to stdout. Pipe to a file, then use the `-format` scripts to split into a human-readable summary (.txt) and per-row errors (.csv).
+
+With the app running (`make dev-start`):
+
+```bash
+# 1. Validate
+tools/validate-csv bibliography.csv > report.json
+tools/validate-csv-format report.json summary.txt errors.csv
+
+# 2. Create missing entities
+tools/import-entities bibliography.csv > entities.json
+tools/import-entities-format entities.json summary.txt errors.csv
+
+# 3. Import bibitems (upsert only — safe, doesn't delete)
+tools/import-bibitems bibliography.csv > import.json
+tools/import-bibitems-format import.json summary.txt errors.csv
+
+# 3b. Source-of-truth mode (also deletes bibitems not in the CSV)
+tools/import-bibitems bibliography.csv --delete-stale > import.json
+
+# 4. Export
+tools/export-csv > exported.csv
+```
+
+The `-format` scripts take a JSON file and produce two files:
+- **summary.txt** — counts, missing entities listed by name, stale bibkeys
+- **errors.csv** — one row per error with columns: `row, bibkey, field, error` (open in a spreadsheet)
+
+### API endpoints
+
 For teams working with ODS/CSV spreadsheets that use human-readable names instead of database IDs. Three-step pipeline:
 
 ### Workflow

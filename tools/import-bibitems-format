@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "${1:-}" in -h|--help) echo "Usage: tools/import-bibitems-format <report.json> [summary.txt] [errors.csv]" >&2; exit 0;; esac
+
+if [ $# -lt 1 ]; then
+    echo "Usage: tools/import-bibitems-format <report.json> [summary.txt] [errors.csv]" >&2
+    exit 1
+fi
+
+JSON="$1"
+SUMMARY="${2:-import-bibitems-summary.txt}"
+ERRORS="${3:-import-bibitems-errors.csv}"
+
+python3 << PYEOF
+import json, csv
+
+d = json.load(open('$JSON'))
+
+with open('$SUMMARY', 'w') as f:
+    if 'imported' in d:
+        # Success response
+        f.write(f'Imported: {d["imported"]}\n')
+        f.write(f'Updated:  {d["updated"]}\n')
+        f.write(f'Deleted:  {d["deleted"]}\n')
+        f.write(f'Failed:   {d["failed"]}\n')
+    else:
+        # Validation failed — full ValidationReport
+        f.write(f'IMPORT REJECTED — validation failed\n\n')
+        f.write(f'Total rows:   {d["total_rows"]}\n')
+        f.write(f'Valid rows:   {d["valid_rows"]}\n')
+        f.write(f'Parse errors: {len(d["errors"])}\n')
+        f.write(f'Duplicates:   {len(d.get("duplicate_bibkeys", []))}\n')
+        f.write(f'\n')
+        f.write(f'Missing authors:      {len(d.get("missing_authors", []))}\n')
+        f.write(f'Ambiguous authors:    {len(d.get("ambiguous_authors", []))}\n')
+        f.write(f'Missing journals:     {len(d.get("missing_journals", []))}\n')
+        f.write(f'Missing publishers:   {len(d.get("missing_publishers", []))}\n')
+        f.write(f'Missing institutions: {len(d.get("missing_institutions", []))}\n')
+        f.write(f'Missing schools:      {len(d.get("missing_schools", []))}\n')
+        f.write(f'Missing series:       {len(d.get("missing_series", []))}\n')
+        kw = d.get('missing_keywords', {})
+        f.write(f'Missing keywords:     L1={len(kw.get("level_1", []))}, L2={len(kw.get("level_2", []))}, L3={len(kw.get("level_3", []))}\n')
+        f.write(f'Missing crossrefs:    {len(d.get("missing_crossrefs", []))}\n')
+        f.write(f'Missing further_refs: {len(d.get("missing_further_refs", []))}\n')
+        f.write(f'Missing depends_on:   {len(d.get("missing_depends_on", []))}\n')
+        f.write(f'Stale bibitems:       {len(d.get("stale_bibitems", []))}\n')
+
+        for label, items in [
+            ('Missing authors', sorted(d.get('missing_authors', []))),
+            ('Ambiguous authors', [f'{a["name"]} (ids: {a["matching_ids"]})' for a in d.get('ambiguous_authors', [])]),
+            ('Missing journals', sorted(d.get('missing_journals', []))),
+            ('Missing publishers', sorted(d.get('missing_publishers', []))),
+            ('Missing institutions', sorted(d.get('missing_institutions', []))),
+            ('Missing schools', sorted(d.get('missing_schools', []))),
+            ('Missing series', sorted(d.get('missing_series', []))),
+            ('Missing keywords L1', sorted(kw.get('level_1', []))),
+            ('Missing keywords L2', sorted(kw.get('level_2', []))),
+            ('Missing keywords L3', sorted(kw.get('level_3', []))),
+            ('Missing crossrefs', sorted(d.get('missing_crossrefs', []))),
+            ('Missing further_refs', sorted(d.get('missing_further_refs', []))),
+            ('Missing depends_on', sorted(d.get('missing_depends_on', []))),
+            ('Stale bibitems', sorted(d.get('stale_bibitems', []))),
+            ('Duplicate bibkeys', [f'{dup["bibkey"]} (rows {dup["rows"]})' for dup in d.get('duplicate_bibkeys', [])]),
+        ]:
+            if items:
+                f.write(f'\n{label}:\n')
+                for item in items:
+                    f.write(f'  {item}\n')
+
+with open('$ERRORS', 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['row', 'bibkey', 'field', 'error'])
+    for e in d.get('errors', []):
+        if 'errors' in e:
+            for err in e['errors']:
+                w.writerow([e.get('row', ''), e.get('bibkey', ''), err['field'], err['error']])
+        elif 'identifier' in e:
+            w.writerow([e.get('row', ''), e['identifier'], '', e.get('error', '')])
+
+print(f'Wrote $SUMMARY and $ERRORS')
+PYEOF

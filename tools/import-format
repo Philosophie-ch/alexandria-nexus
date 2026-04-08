@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "${1:-}" in -h|--help) echo "Usage: tools/import-format <report.json> [summary.txt] [errors.csv]" >&2; exit 0;; esac
+
+if [ $# -lt 1 ]; then
+    echo "Usage: tools/import-format <report.json> [summary.txt] [errors.csv]" >&2
+    exit 1
+fi
+
+JSON="$1"
+SUMMARY="${2:-import-summary.txt}"
+ERRORS="${3:-import-errors.csv}"
+
+python3 -c "
+import json, csv
+
+d = json.load(open('$JSON'))
+
+with open('$SUMMARY', 'w') as f:
+    f.write(f'Imported: {d[\"imported\"]}\n')
+    f.write(f'Failed:   {d[\"failed\"]}\n')
+    if 'updated' in d:
+        f.write(f'Updated:  {d[\"updated\"]}\n')
+    if 'deleted' in d:
+        f.write(f'Deleted:  {d[\"deleted\"]}\n')
+
+with open('$ERRORS', 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['row', 'identifier', 'error'])
+    for e in d.get('errors', []):
+        if 'identifier' in e:
+            w.writerow([e['row'], e['identifier'], e['error']])
+        else:
+            for err in e.get('errors', []):
+                w.writerow([e.get('row', ''), e.get('bibkey', ''), f'{err[\"field\"]}: {err[\"error\"]}'])
+
+print(f'Wrote {\"$SUMMARY\"} and {\"$ERRORS\"}')
+"

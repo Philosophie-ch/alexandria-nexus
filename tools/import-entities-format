@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "${1:-}" in -h|--help) echo "Usage: tools/import-entities-format <report.json> <summary.txt> <errors.csv>" >&2; exit 0;; esac
+
+if [ $# -lt 1 ]; then
+    echo "Usage: tools/import-entities-format <report.json> <summary.txt> <errors.csv>" >&2
+    exit 1
+fi
+
+JSON="$1"
+SUMMARY="${2:-import-entities-summary.txt}"
+ERRORS="${3:-import-entities-errors.csv}"
+
+python3 -c "
+import json, csv
+
+d = json.load(open('$JSON'))
+
+with open('$SUMMARY', 'w') as f:
+    f.write(f'Created authors:      {d[\"created_authors\"]}\n')
+    f.write(f'Created journals:     {d[\"created_journals\"]}\n')
+    f.write(f'Created publishers:   {d[\"created_publishers\"]}\n')
+    f.write(f'Created institutions: {d[\"created_institutions\"]}\n')
+    f.write(f'Created schools:      {d[\"created_schools\"]}\n')
+    f.write(f'Created series:       {d[\"created_series\"]}\n')
+    f.write(f'Created keywords:     {d[\"created_keywords\"]}\n')
+    f.write(f'Errors:               {len(d[\"errors\"])}\n')
+
+with open('$ERRORS', 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['entity_type', 'name', 'error'])
+    for e in d['errors']:
+        w.writerow([e['entity_type'], e['name'], e['error']])
+
+print(f'Wrote {\"$SUMMARY\"} and {\"$ERRORS\"}')
+"

@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "${1:-}" in -h|--help) echo "Usage: tools/validate-csv-format <report.json> [summary.txt] [errors.csv]" >&2; exit 0;; esac
+
+if [ $# -lt 1 ]; then
+    echo "Usage: tools/validate-csv-format <report.json> [summary.txt] [errors.csv]" >&2
+    exit 1
+fi
+
+JSON="$1"
+SUMMARY="${2:-validation-summary.txt}"
+ERRORS="${3:-validation-errors.csv}"
+
+python3 << PYEOF
+import json, csv
+
+d = json.load(open('$JSON'))
+
+with open('$SUMMARY', 'w') as f:
+    f.write(f'Total rows:   {d["total_rows"]}\n')
+    f.write(f'Valid rows:   {d["valid_rows"]}\n')
+    f.write(f'Parse errors: {len(d["errors"])}\n')
+    f.write(f'Duplicates:   {len(d["duplicate_bibkeys"])}\n')
+    f.write(f'\n')
+    f.write(f'Missing authors:      {len(d["missing_authors"])}\n')
+    f.write(f'Ambiguous authors:    {len(d["ambiguous_authors"])}\n')
+    f.write(f'Missing journals:     {len(d["missing_journals"])}\n')
+    f.write(f'Missing publishers:   {len(d["missing_publishers"])}\n')
+    f.write(f'Missing institutions: {len(d["missing_institutions"])}\n')
+    f.write(f'Missing schools:      {len(d["missing_schools"])}\n')
+    f.write(f'Missing series:       {len(d["missing_series"])}\n')
+    kw = d['missing_keywords']
+    f.write(f'Missing keywords:     L1={len(kw["level_1"])}, L2={len(kw["level_2"])}, L3={len(kw["level_3"])}\n')
+    f.write(f'Missing crossrefs:    {len(d["missing_crossrefs"])}\n')
+    f.write(f'Missing further_refs: {len(d["missing_further_refs"])}\n')
+    f.write(f'Missing depends_on:   {len(d["missing_depends_on"])}\n')
+    f.write(f'Stale bibitems:       {len(d["stale_bibitems"])}\n')
+
+    for label, items in [
+        ('Missing authors', sorted(d['missing_authors'])),
+        ('Ambiguous authors', [f'{a["name"]} (ids: {a["matching_ids"]})' for a in d['ambiguous_authors']]),
+        ('Missing journals', sorted(d['missing_journals'])),
+        ('Missing publishers', sorted(d['missing_publishers'])),
+        ('Missing institutions', sorted(d['missing_institutions'])),
+        ('Missing schools', sorted(d['missing_schools'])),
+        ('Missing series', sorted(d['missing_series'])),
+        ('Missing keywords L1', sorted(kw['level_1'])),
+        ('Missing keywords L2', sorted(kw['level_2'])),
+        ('Missing keywords L3', sorted(kw['level_3'])),
+        ('Missing crossrefs', sorted(d['missing_crossrefs'])),
+        ('Missing further_refs', sorted(d['missing_further_refs'])),
+        ('Missing depends_on', sorted(d['missing_depends_on'])),
+        ('Stale bibitems', sorted(d['stale_bibitems'])),
+        ('Duplicate bibkeys', [f'{dup["bibkey"]} (rows {dup["rows"]})' for dup in d['duplicate_bibkeys']]),
+    ]:
+        if items:
+            f.write(f'\n{label}:\n')
+            for item in items:
+                f.write(f'  {item}\n')
+
+with open('$ERRORS', 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['row', 'bibkey', 'field', 'error'])
+    for e in d['errors']:
+        for err in e['errors']:
+            w.writerow([e['row'], e.get('bibkey', ''), err['field'], err['error']])
+
+print(f'Wrote $SUMMARY and $ERRORS')
+PYEOF
