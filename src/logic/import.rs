@@ -116,12 +116,6 @@ fn parse_i64_field(record: &csv::StringRecord, idx: usize) -> Option<i64> {
     get_field(record, idx).and_then(|s| s.parse().ok())
 }
 
-/// Parse a bool from a CSV field.
-fn parse_bool_field(record: &csv::StringRecord, idx: usize) -> Option<bool> {
-    get_field(record, idx)
-        .map(|s| matches!(s.to_lowercase().as_str(), "true" | "1" | "yes" | "y" | "x"))
-}
-
 /// Parse comma-separated i64 IDs from a CSV field.
 fn parse_id_list(record: &csv::StringRecord, idx: usize) -> Vec<i64> {
     get_field(record, idx)
@@ -1666,7 +1660,18 @@ pub async fn import_bibitems_from_csv(
         };
 
         let entry_type_str = get_field(&record, col_entry_type).unwrap_or_default();
-        let entry_type: EntryType = entry_type_str.parse().unwrap_or(EntryType::Unknown);
+        let entry_type: EntryType = match entry_type_str.parse() {
+            Ok(et) => et,
+            Err(_) if entry_type_str.is_empty() => EntryType::Unknown,
+            Err(_) => {
+                parse_errors.push(ImportRowError {
+                    row: row_num,
+                    identifier: bibkey,
+                    error: format!("Invalid entry_type: '{entry_type_str}'"),
+                });
+                continue;
+            }
+        };
 
         let title_latex = col_title_latex
             .and_then(|i| get_field(&record, i))
@@ -1723,6 +1728,25 @@ pub async fn import_bibitems_from_csv(
             all_crossref_ids.insert(id);
         }
 
+        // Validate is_translation: absent/empty → false, known bool → value, else error
+        let is_translation = match col_is_translation.and_then(|i| get_field(&record, i)) {
+            None => false,
+            Some(raw) => {
+                match raw.to_lowercase().as_str() {
+                    "true" | "1" | "yes" | "y" | "x" => true,
+                    "false" | "0" | "no" | "n" => false,
+                    _ => {
+                        parse_errors.push(ImportRowError {
+                        row: row_num,
+                        identifier: bibkey,
+                        error: format!("Invalid is_translation value: '{raw}' (expected true/false/yes/no/1/0)"),
+                    });
+                        continue;
+                    }
+                }
+            }
+        };
+
         let dto = CreateBibItem {
             bibkey: bibkey.clone(),
             entry_type,
@@ -1767,9 +1791,7 @@ pub async fn import_bibitems_from_csv(
             langid: col_langid
                 .and_then(|i| get_field(&record, i))
                 .and_then(|s| s.parse().ok()),
-            is_translation: col_is_translation
-                .and_then(|i| parse_bool_field(&record, i))
-                .unwrap_or(false),
+            is_translation,
             epoch: col_epoch
                 .and_then(|i| get_field(&record, i))
                 .and_then(|s| s.parse().ok()),
@@ -2067,7 +2089,11 @@ async fn insert_bibitem_authors(
 ) -> Result<(), HexforgeError> {
     let role_str = role.to_string();
     for (position, &author_id) in author_ids.iter().enumerate() {
-        let pos = i16::try_from(position).unwrap_or(0);
+        let pos = i16::try_from(position).map_err(|_| {
+            HexforgeError::Validation(ValidationError::custom(format!(
+                "author position {position} exceeds i16 range"
+            )))
+        })?;
         query(
             r#"
             INSERT INTO bibitem_authors (bibitem_id, author_id, role, position)
