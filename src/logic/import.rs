@@ -11,16 +11,22 @@ use serde::Serialize;
 
 use crate::domain::{
     AuthorRole, CreateAuthor, CreateBibItem, CreateInstitution, CreateJournal, CreateKeyword,
-    CreatePublisher, CreateSchool, CreateSeries, EntryType, create_author_transform,
-    create_bib_item_transform, create_institution_transform, create_journal_transform,
-    create_keyword_transform, create_publisher_transform, create_school_transform,
-    create_series_transform,
+    CreatePublisher, CreateSchool, CreateSeries, EntryType, UpdateAuthor, UpdateBibItem,
+    UpdateInstitution, UpdateJournal, UpdateKeyword, UpdatePublisher, UpdateSchool, UpdateSeries,
+    create_author_transform, create_bib_item_transform, create_institution_transform,
+    create_journal_transform, create_keyword_transform, create_publisher_transform,
+    create_school_transform, create_series_transform, update_author_transform,
+    update_bib_item_transform, update_institution_transform, update_journal_transform,
+    update_keyword_transform, update_publisher_transform, update_school_transform,
+    update_series_transform,
 };
 use crate::state::AppState;
 use crate::validation::{
     validate_create_author, validate_create_bibitem, validate_create_institution,
     validate_create_journal, validate_create_keyword, validate_create_publisher,
-    validate_create_school, validate_create_series,
+    validate_create_school, validate_create_series, validate_update_author,
+    validate_update_institution, validate_update_journal, validate_update_keyword,
+    validate_update_publisher, validate_update_school, validate_update_series,
 };
 
 // =============================================================================
@@ -31,6 +37,7 @@ use crate::validation::{
 #[derive(Debug, Serialize)]
 pub struct ImportResponse {
     pub imported: usize,
+    pub updated: usize,
     pub failed: usize,
     pub errors: Vec<ImportRowError>,
 }
@@ -163,6 +170,7 @@ pub async fn import_authors_from_csv(
         .map_err(|e| HexforgeError::Validation(ValidationError::custom(e.to_string())))?
         .clone();
 
+    let col_id = column_index(&headers, "id");
     let col_author_key = require_column(&headers, "author_key")?;
     let col_given_name_latex = column_index(&headers, "given_name_latex");
     let col_given_name_unicode = column_index(&headers, "given_name_unicode");
@@ -182,6 +190,7 @@ pub async fn import_authors_from_csv(
     let col_name_variants = column_index(&headers, "name_variants");
 
     let mut imported = 0usize;
+    let mut updated = 0usize;
     let mut errors = Vec::new();
 
     for (idx, result) in reader.records().enumerate() {
@@ -198,6 +207,8 @@ pub async fn import_authors_from_csv(
             }
         };
 
+        let csv_id = col_id.and_then(|i| parse_i64_field(&record, i));
+
         let author_key = match get_field(&record, col_author_key) {
             Some(k) => k,
             None => {
@@ -210,6 +221,144 @@ pub async fn import_authors_from_csv(
             }
         };
 
+        let name_variants = col_name_variants.and_then(|i| {
+            get_field(&record, i).map(|s| {
+                s.split(';')
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty())
+                    .collect::<Vec<_>>()
+            })
+        });
+
+        // Check if this is an update (CSV has ID that exists in DB)
+        if let Some(id) = csv_id {
+            match state.author_ds.find_by_id(&id).await {
+                Ok(Some(existing)) => {
+                    if existing.author_key != author_key {
+                        let msg = format!(
+                            "ID {id} exists but has key '{}', CSV has '{author_key}'",
+                            existing.author_key
+                        );
+                        errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: author_key,
+                            error: msg,
+                        });
+                        continue;
+                    }
+                    let update_dto = UpdateAuthor {
+                        author_key: Some(author_key.clone()),
+                        given_name_latex: col_given_name_latex.and_then(|i| get_field(&record, i)),
+                        given_name_unicode: col_given_name_unicode
+                            .and_then(|i| get_field(&record, i)),
+                        given_name_simplified: col_given_name_simplified
+                            .and_then(|i| get_field(&record, i)),
+                        family_name_latex: col_family_name_latex
+                            .and_then(|i| get_field(&record, i)),
+                        family_name_unicode: col_family_name_unicode
+                            .and_then(|i| get_field(&record, i)),
+                        family_name_simplified: col_family_name_simplified
+                            .and_then(|i| get_field(&record, i)),
+                        mononym_latex: col_mononym_latex.and_then(|i| get_field(&record, i)),
+                        mononym_unicode: col_mononym_unicode.and_then(|i| get_field(&record, i)),
+                        mononym_simplified: col_mononym_simplified
+                            .and_then(|i| get_field(&record, i)),
+                        shorthand_latex: col_shorthand_latex.and_then(|i| get_field(&record, i)),
+                        shorthand_unicode: col_shorthand_unicode
+                            .and_then(|i| get_field(&record, i)),
+                        shorthand_simplified: col_shorthand_simplified
+                            .and_then(|i| get_field(&record, i)),
+                        famous_name_latex: col_famous_name_latex
+                            .and_then(|i| get_field(&record, i)),
+                        famous_name_unicode: col_famous_name_unicode
+                            .and_then(|i| get_field(&record, i)),
+                        famous_name_simplified: col_famous_name_simplified
+                            .and_then(|i| get_field(&record, i)),
+                        name_variants: name_variants.clone(),
+                    };
+                    if let Err(e) = validate_update_author(&update_dto) {
+                        errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: author_key,
+                            error: e.to_string(),
+                        });
+                        continue;
+                    }
+                    let merged = update_author_transform(update_dto, existing);
+                    match state.author_ds.update(&id, merged).await {
+                        Ok(_) => updated += 1,
+                        Err(e) => errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: author_key,
+                            error: format_insert_error(e),
+                        }),
+                    }
+                    continue;
+                }
+                Ok(None) => {
+                    // ID not in DB — create with this ID
+                    let dto = CreateAuthor {
+                        author_key: author_key.clone(),
+                        given_name_latex: col_given_name_latex.and_then(|i| get_field(&record, i)),
+                        given_name_unicode: col_given_name_unicode
+                            .and_then(|i| get_field(&record, i)),
+                        given_name_simplified: col_given_name_simplified
+                            .and_then(|i| get_field(&record, i)),
+                        family_name_latex: col_family_name_latex
+                            .and_then(|i| get_field(&record, i)),
+                        family_name_unicode: col_family_name_unicode
+                            .and_then(|i| get_field(&record, i)),
+                        family_name_simplified: col_family_name_simplified
+                            .and_then(|i| get_field(&record, i)),
+                        mononym_latex: col_mononym_latex.and_then(|i| get_field(&record, i)),
+                        mononym_unicode: col_mononym_unicode.and_then(|i| get_field(&record, i)),
+                        mononym_simplified: col_mononym_simplified
+                            .and_then(|i| get_field(&record, i)),
+                        shorthand_latex: col_shorthand_latex.and_then(|i| get_field(&record, i)),
+                        shorthand_unicode: col_shorthand_unicode
+                            .and_then(|i| get_field(&record, i)),
+                        shorthand_simplified: col_shorthand_simplified
+                            .and_then(|i| get_field(&record, i)),
+                        famous_name_latex: col_famous_name_latex
+                            .and_then(|i| get_field(&record, i)),
+                        famous_name_unicode: col_famous_name_unicode
+                            .and_then(|i| get_field(&record, i)),
+                        famous_name_simplified: col_famous_name_simplified
+                            .and_then(|i| get_field(&record, i)),
+                        name_variants,
+                    };
+                    if let Err(e) = validate_create_author(&dto) {
+                        errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: author_key,
+                            error: e.to_string(),
+                        });
+                        continue;
+                    }
+                    let mut entity = create_author_transform(dto);
+                    entity.id = id;
+                    match state.author_ds.insert_with_id(entity).await {
+                        Ok(_) => imported += 1,
+                        Err(e) => errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: author_key,
+                            error: format_insert_error(e),
+                        }),
+                    }
+                    continue;
+                }
+                Err(e) => {
+                    errors.push(ImportRowError {
+                        row: row_num,
+                        identifier: author_key,
+                        error: format!("DB lookup error: {e}"),
+                    });
+                    continue;
+                }
+            }
+        }
+
+        // No ID — create normally
         let dto = CreateAuthor {
             author_key: author_key.clone(),
             given_name_latex: col_given_name_latex.and_then(|i| get_field(&record, i)),
@@ -227,14 +376,7 @@ pub async fn import_authors_from_csv(
             famous_name_latex: col_famous_name_latex.and_then(|i| get_field(&record, i)),
             famous_name_unicode: col_famous_name_unicode.and_then(|i| get_field(&record, i)),
             famous_name_simplified: col_famous_name_simplified.and_then(|i| get_field(&record, i)),
-            name_variants: col_name_variants.and_then(|i| {
-                get_field(&record, i).map(|s| {
-                    s.split(';')
-                        .map(|v| v.trim().to_string())
-                        .filter(|v| !v.is_empty())
-                        .collect::<Vec<_>>()
-                })
-            }),
+            name_variants,
         };
 
         if let Err(e) = validate_create_author(&dto) {
@@ -261,6 +403,7 @@ pub async fn import_authors_from_csv(
 
     Ok(ImportResponse {
         imported,
+        updated,
         failed: errors.len(),
         errors,
     })
@@ -285,6 +428,7 @@ pub async fn import_journals_from_csv(
         .map_err(|e| HexforgeError::Validation(ValidationError::custom(e.to_string())))?
         .clone();
 
+    let col_id = column_index(&headers, "id");
     let col_journal_key = require_column(&headers, "journal_key")?;
     let col_name_latex = column_index(&headers, "name_latex");
     let col_name_unicode = column_index(&headers, "name_unicode");
@@ -293,6 +437,7 @@ pub async fn import_journals_from_csv(
     let col_issn_electronic = column_index(&headers, "issn_electronic");
 
     let mut imported = 0usize;
+    let mut updated = 0usize;
     let mut errors = Vec::new();
 
     for (idx, result) in reader.records().enumerate() {
@@ -321,6 +466,99 @@ pub async fn import_journals_from_csv(
             }
         };
 
+        let csv_id = col_id.and_then(|i| parse_i64_field(&record, i));
+
+        // Check if this is an update (CSV has ID that exists in DB)
+        if let Some(id) = csv_id {
+            match state.journal_ds.find_by_id(&id).await {
+                Ok(Some(existing)) => {
+                    if existing.journal_key != journal_key {
+                        let msg = format!(
+                            "ID {id} exists but has key '{}', CSV has '{journal_key}'",
+                            existing.journal_key
+                        );
+                        errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: journal_key,
+                            error: msg,
+                        });
+                        continue;
+                    }
+                    let update_dto = UpdateJournal {
+                        journal_key: Some(journal_key.clone()),
+                        name_latex: col_name_latex.and_then(|i| get_field(&record, i)),
+                        name_unicode: col_name_unicode.and_then(|i| get_field(&record, i)),
+                        name_simplified: col_name_simplified.and_then(|i| get_field(&record, i)),
+                        issn_print: col_issn_print.and_then(|i| get_field(&record, i)),
+                        issn_electronic: col_issn_electronic.and_then(|i| get_field(&record, i)),
+                    };
+                    if let Err(e) = validate_update_journal(&update_dto) {
+                        errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: journal_key,
+                            error: e.to_string(),
+                        });
+                        continue;
+                    }
+                    let merged = update_journal_transform(update_dto, existing);
+                    match state.journal_ds.update(&id, merged).await {
+                        Ok(_) => updated += 1,
+                        Err(e) => errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: journal_key,
+                            error: format_insert_error(e),
+                        }),
+                    }
+                    continue;
+                }
+                Ok(None) => {
+                    // ID not in DB — create with this ID
+                    let dto = CreateJournal {
+                        journal_key: journal_key.clone(),
+                        name_latex: col_name_latex
+                            .and_then(|i| get_field(&record, i))
+                            .unwrap_or_default(),
+                        name_unicode: col_name_unicode
+                            .and_then(|i| get_field(&record, i))
+                            .unwrap_or_default(),
+                        name_simplified: col_name_simplified
+                            .and_then(|i| get_field(&record, i))
+                            .unwrap_or_default(),
+                        issn_print: col_issn_print.and_then(|i| get_field(&record, i)),
+                        issn_electronic: col_issn_electronic.and_then(|i| get_field(&record, i)),
+                    };
+                    if let Err(e) = validate_create_journal(&dto) {
+                        errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: journal_key,
+                            error: e.to_string(),
+                        });
+                        continue;
+                    }
+                    let mut entity = create_journal_transform(dto);
+                    entity.id = id;
+                    match state.journal_ds.insert_with_id(entity).await {
+                        Ok(_) => imported += 1,
+                        Err(e) => errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: journal_key,
+                            error: format_insert_error(e),
+                        }),
+                    }
+                    continue;
+                }
+                Err(e) => {
+                    errors.push(ImportRowError {
+                        row: row_num,
+                        identifier: journal_key,
+                        error: format!("DB lookup error: {e}"),
+                    });
+                    continue;
+                }
+            }
+        }
+
+        // No ID — create normally
         let dto = CreateJournal {
             journal_key: journal_key.clone(),
             name_latex: col_name_latex
@@ -360,6 +598,7 @@ pub async fn import_journals_from_csv(
 
     Ok(ImportResponse {
         imported,
+        updated,
         failed: errors.len(),
         errors,
     })
@@ -384,6 +623,7 @@ pub async fn import_publishers_from_csv(
         .map_err(|e| HexforgeError::Validation(ValidationError::custom(e.to_string())))?
         .clone();
 
+    let col_id = column_index(&headers, "id");
     let col_publisher_key = require_column(&headers, "publisher_key")?;
     let col_name_latex = column_index(&headers, "name_latex");
     let col_name_unicode = column_index(&headers, "name_unicode");
@@ -391,6 +631,7 @@ pub async fn import_publishers_from_csv(
     let col_default_address = column_index(&headers, "default_address");
 
     let mut imported = 0usize;
+    let mut updated = 0usize;
     let mut errors = Vec::new();
 
     for (idx, result) in reader.records().enumerate() {
@@ -419,6 +660,97 @@ pub async fn import_publishers_from_csv(
             }
         };
 
+        let csv_id = col_id.and_then(|i| parse_i64_field(&record, i));
+
+        // Check if this is an update (CSV has ID that exists in DB)
+        if let Some(id) = csv_id {
+            match state.publisher_ds.find_by_id(&id).await {
+                Ok(Some(existing)) => {
+                    if existing.publisher_key != publisher_key {
+                        let msg = format!(
+                            "ID {id} exists but has key '{}', CSV has '{publisher_key}'",
+                            existing.publisher_key
+                        );
+                        errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: publisher_key,
+                            error: msg,
+                        });
+                        continue;
+                    }
+                    let update_dto = UpdatePublisher {
+                        publisher_key: Some(publisher_key.clone()),
+                        name_latex: col_name_latex.and_then(|i| get_field(&record, i)),
+                        name_unicode: col_name_unicode.and_then(|i| get_field(&record, i)),
+                        name_simplified: col_name_simplified.and_then(|i| get_field(&record, i)),
+                        default_address: col_default_address.and_then(|i| get_field(&record, i)),
+                    };
+                    if let Err(e) = validate_update_publisher(&update_dto) {
+                        errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: publisher_key,
+                            error: e.to_string(),
+                        });
+                        continue;
+                    }
+                    let merged = update_publisher_transform(update_dto, existing);
+                    match state.publisher_ds.update(&id, merged).await {
+                        Ok(_) => updated += 1,
+                        Err(e) => errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: publisher_key,
+                            error: format_insert_error(e),
+                        }),
+                    }
+                    continue;
+                }
+                Ok(None) => {
+                    // ID not in DB — create with this ID
+                    let dto = CreatePublisher {
+                        publisher_key: publisher_key.clone(),
+                        name_latex: col_name_latex
+                            .and_then(|i| get_field(&record, i))
+                            .unwrap_or_default(),
+                        name_unicode: col_name_unicode
+                            .and_then(|i| get_field(&record, i))
+                            .unwrap_or_default(),
+                        name_simplified: col_name_simplified
+                            .and_then(|i| get_field(&record, i))
+                            .unwrap_or_default(),
+                        default_address: col_default_address.and_then(|i| get_field(&record, i)),
+                    };
+                    if let Err(e) = validate_create_publisher(&dto) {
+                        errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: publisher_key,
+                            error: e.to_string(),
+                        });
+                        continue;
+                    }
+                    let mut entity = create_publisher_transform(dto);
+                    entity.id = id;
+                    match state.publisher_ds.insert_with_id(entity).await {
+                        Ok(_) => imported += 1,
+                        Err(e) => errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: publisher_key,
+                            error: format_insert_error(e),
+                        }),
+                    }
+                    continue;
+                }
+                Err(e) => {
+                    errors.push(ImportRowError {
+                        row: row_num,
+                        identifier: publisher_key,
+                        error: format!("DB lookup error: {e}"),
+                    });
+                    continue;
+                }
+            }
+        }
+
+        // No ID — create normally
         let dto = CreatePublisher {
             publisher_key: publisher_key.clone(),
             name_latex: col_name_latex
@@ -457,6 +789,7 @@ pub async fn import_publishers_from_csv(
 
     Ok(ImportResponse {
         imported,
+        updated,
         failed: errors.len(),
         errors,
     })
@@ -481,6 +814,7 @@ pub async fn import_institutions_from_csv(
         .map_err(|e| HexforgeError::Validation(ValidationError::custom(e.to_string())))?
         .clone();
 
+    let col_id = column_index(&headers, "id");
     let col_institution_key = require_column(&headers, "institution_key")?;
     let col_name_latex = column_index(&headers, "name_latex");
     let col_name_unicode = column_index(&headers, "name_unicode");
@@ -488,6 +822,7 @@ pub async fn import_institutions_from_csv(
     let col_default_address = column_index(&headers, "default_address");
 
     let mut imported = 0usize;
+    let mut updated = 0usize;
     let mut errors = Vec::new();
 
     for (idx, result) in reader.records().enumerate() {
@@ -516,6 +851,97 @@ pub async fn import_institutions_from_csv(
             }
         };
 
+        let csv_id = col_id.and_then(|i| parse_i64_field(&record, i));
+
+        // Check if this is an update (CSV has ID that exists in DB)
+        if let Some(id) = csv_id {
+            match state.institution_ds.find_by_id(&id).await {
+                Ok(Some(existing)) => {
+                    if existing.institution_key != institution_key {
+                        let msg = format!(
+                            "ID {id} exists but has key '{}', CSV has '{institution_key}'",
+                            existing.institution_key
+                        );
+                        errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: institution_key,
+                            error: msg,
+                        });
+                        continue;
+                    }
+                    let update_dto = UpdateInstitution {
+                        institution_key: Some(institution_key.clone()),
+                        name_latex: col_name_latex.and_then(|i| get_field(&record, i)),
+                        name_unicode: col_name_unicode.and_then(|i| get_field(&record, i)),
+                        name_simplified: col_name_simplified.and_then(|i| get_field(&record, i)),
+                        default_address: col_default_address.and_then(|i| get_field(&record, i)),
+                    };
+                    if let Err(e) = validate_update_institution(&update_dto) {
+                        errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: institution_key,
+                            error: e.to_string(),
+                        });
+                        continue;
+                    }
+                    let merged = update_institution_transform(update_dto, existing);
+                    match state.institution_ds.update(&id, merged).await {
+                        Ok(_) => updated += 1,
+                        Err(e) => errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: institution_key,
+                            error: format_insert_error(e),
+                        }),
+                    }
+                    continue;
+                }
+                Ok(None) => {
+                    // ID not in DB — create with this ID
+                    let dto = CreateInstitution {
+                        institution_key: institution_key.clone(),
+                        name_latex: col_name_latex
+                            .and_then(|i| get_field(&record, i))
+                            .unwrap_or_default(),
+                        name_unicode: col_name_unicode
+                            .and_then(|i| get_field(&record, i))
+                            .unwrap_or_default(),
+                        name_simplified: col_name_simplified
+                            .and_then(|i| get_field(&record, i))
+                            .unwrap_or_default(),
+                        default_address: col_default_address.and_then(|i| get_field(&record, i)),
+                    };
+                    if let Err(e) = validate_create_institution(&dto) {
+                        errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: institution_key,
+                            error: e.to_string(),
+                        });
+                        continue;
+                    }
+                    let mut entity = create_institution_transform(dto);
+                    entity.id = id;
+                    match state.institution_ds.insert_with_id(entity).await {
+                        Ok(_) => imported += 1,
+                        Err(e) => errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: institution_key,
+                            error: format_insert_error(e),
+                        }),
+                    }
+                    continue;
+                }
+                Err(e) => {
+                    errors.push(ImportRowError {
+                        row: row_num,
+                        identifier: institution_key,
+                        error: format!("DB lookup error: {e}"),
+                    });
+                    continue;
+                }
+            }
+        }
+
+        // No ID — create normally
         let dto = CreateInstitution {
             institution_key: institution_key.clone(),
             name_latex: col_name_latex
@@ -554,6 +980,7 @@ pub async fn import_institutions_from_csv(
 
     Ok(ImportResponse {
         imported,
+        updated,
         failed: errors.len(),
         errors,
     })
@@ -578,6 +1005,7 @@ pub async fn import_schools_from_csv(
         .map_err(|e| HexforgeError::Validation(ValidationError::custom(e.to_string())))?
         .clone();
 
+    let col_id = column_index(&headers, "id");
     let col_school_key = require_column(&headers, "school_key")?;
     let col_name_latex = column_index(&headers, "name_latex");
     let col_name_unicode = column_index(&headers, "name_unicode");
@@ -585,6 +1013,7 @@ pub async fn import_schools_from_csv(
     let col_default_address = column_index(&headers, "default_address");
 
     let mut imported = 0usize;
+    let mut updated = 0usize;
     let mut errors = Vec::new();
 
     for (idx, result) in reader.records().enumerate() {
@@ -601,6 +1030,8 @@ pub async fn import_schools_from_csv(
             }
         };
 
+        let csv_id = col_id.and_then(|i| parse_i64_field(&record, i));
+
         let school_key = match get_field(&record, col_school_key) {
             Some(k) => k,
             None => {
@@ -613,6 +1044,95 @@ pub async fn import_schools_from_csv(
             }
         };
 
+        // Check if this is an update (CSV has ID that exists in DB)
+        if let Some(id) = csv_id {
+            match state.school_ds.find_by_id(&id).await {
+                Ok(Some(existing)) => {
+                    if existing.school_key != school_key {
+                        let msg = format!(
+                            "ID {id} exists but has key '{}', CSV has '{school_key}'",
+                            existing.school_key
+                        );
+                        errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: school_key,
+                            error: msg,
+                        });
+                        continue;
+                    }
+                    let update_dto = UpdateSchool {
+                        school_key: Some(school_key.clone()),
+                        name_latex: col_name_latex.and_then(|i| get_field(&record, i)),
+                        name_unicode: col_name_unicode.and_then(|i| get_field(&record, i)),
+                        name_simplified: col_name_simplified.and_then(|i| get_field(&record, i)),
+                        default_address: col_default_address.and_then(|i| get_field(&record, i)),
+                    };
+                    if let Err(e) = validate_update_school(&update_dto) {
+                        errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: school_key,
+                            error: e.to_string(),
+                        });
+                        continue;
+                    }
+                    let merged = update_school_transform(update_dto, existing);
+                    match state.school_ds.update(&id, merged).await {
+                        Ok(_) => updated += 1,
+                        Err(e) => errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: school_key,
+                            error: format_insert_error(e),
+                        }),
+                    }
+                    continue;
+                }
+                Ok(None) => {
+                    // ID not in DB — create with this ID
+                    let dto = CreateSchool {
+                        school_key: school_key.clone(),
+                        name_latex: col_name_latex
+                            .and_then(|i| get_field(&record, i))
+                            .unwrap_or_default(),
+                        name_unicode: col_name_unicode
+                            .and_then(|i| get_field(&record, i))
+                            .unwrap_or_default(),
+                        name_simplified: col_name_simplified
+                            .and_then(|i| get_field(&record, i))
+                            .unwrap_or_default(),
+                        default_address: col_default_address.and_then(|i| get_field(&record, i)),
+                    };
+                    if let Err(e) = validate_create_school(&dto) {
+                        errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: school_key,
+                            error: e.to_string(),
+                        });
+                        continue;
+                    }
+                    let mut entity = create_school_transform(dto);
+                    entity.id = id;
+                    match state.school_ds.insert_with_id(entity).await {
+                        Ok(_) => imported += 1,
+                        Err(e) => errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: school_key,
+                            error: format_insert_error(e),
+                        }),
+                    }
+                    continue;
+                }
+                Err(e) => {
+                    errors.push(ImportRowError {
+                        row: row_num,
+                        identifier: school_key,
+                        error: format!("DB lookup error: {e}"),
+                    });
+                    continue;
+                }
+            }
+        }
+
+        // No ID — create normally
         let dto = CreateSchool {
             school_key: school_key.clone(),
             name_latex: col_name_latex
@@ -651,6 +1171,7 @@ pub async fn import_schools_from_csv(
 
     Ok(ImportResponse {
         imported,
+        updated,
         failed: errors.len(),
         errors,
     })
@@ -675,12 +1196,14 @@ pub async fn import_series_from_csv(
         .map_err(|e| HexforgeError::Validation(ValidationError::custom(e.to_string())))?
         .clone();
 
+    let col_id = column_index(&headers, "id");
     let col_series_key = require_column(&headers, "series_key")?;
     let col_name_latex = column_index(&headers, "name_latex");
     let col_name_unicode = column_index(&headers, "name_unicode");
     let col_name_simplified = column_index(&headers, "name_simplified");
 
     let mut imported = 0usize;
+    let mut updated = 0usize;
     let mut errors = Vec::new();
 
     for (idx, result) in reader.records().enumerate() {
@@ -697,6 +1220,8 @@ pub async fn import_series_from_csv(
             }
         };
 
+        let csv_id = col_id.and_then(|i| parse_i64_field(&record, i));
+
         let series_key = match get_field(&record, col_series_key) {
             Some(k) => k,
             None => {
@@ -709,6 +1234,93 @@ pub async fn import_series_from_csv(
             }
         };
 
+        // Check if this is an update (CSV has ID that exists in DB)
+        if let Some(id) = csv_id {
+            match state.series_ds.find_by_id(&id).await {
+                Ok(Some(existing)) => {
+                    if existing.series_key != series_key {
+                        let msg = format!(
+                            "ID {id} exists but has key '{}', CSV has '{series_key}'",
+                            existing.series_key
+                        );
+                        errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: series_key,
+                            error: msg,
+                        });
+                        continue;
+                    }
+                    let update_dto = UpdateSeries {
+                        series_key: Some(series_key.clone()),
+                        name_latex: col_name_latex.and_then(|i| get_field(&record, i)),
+                        name_unicode: col_name_unicode.and_then(|i| get_field(&record, i)),
+                        name_simplified: col_name_simplified.and_then(|i| get_field(&record, i)),
+                    };
+                    if let Err(e) = validate_update_series(&update_dto) {
+                        errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: series_key,
+                            error: e.to_string(),
+                        });
+                        continue;
+                    }
+                    let merged = update_series_transform(update_dto, existing);
+                    match state.series_ds.update(&id, merged).await {
+                        Ok(_) => updated += 1,
+                        Err(e) => errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: series_key,
+                            error: format_insert_error(e),
+                        }),
+                    }
+                    continue;
+                }
+                Ok(None) => {
+                    // ID not in DB — create with this ID
+                    let dto = CreateSeries {
+                        series_key: series_key.clone(),
+                        name_latex: col_name_latex
+                            .and_then(|i| get_field(&record, i))
+                            .unwrap_or_default(),
+                        name_unicode: col_name_unicode
+                            .and_then(|i| get_field(&record, i))
+                            .unwrap_or_default(),
+                        name_simplified: col_name_simplified
+                            .and_then(|i| get_field(&record, i))
+                            .unwrap_or_default(),
+                    };
+                    if let Err(e) = validate_create_series(&dto) {
+                        errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: series_key,
+                            error: e.to_string(),
+                        });
+                        continue;
+                    }
+                    let mut entity = create_series_transform(dto);
+                    entity.id = id;
+                    match state.series_ds.insert_with_id(entity).await {
+                        Ok(_) => imported += 1,
+                        Err(e) => errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: series_key,
+                            error: format_insert_error(e),
+                        }),
+                    }
+                    continue;
+                }
+                Err(e) => {
+                    errors.push(ImportRowError {
+                        row: row_num,
+                        identifier: series_key,
+                        error: format!("DB lookup error: {e}"),
+                    });
+                    continue;
+                }
+            }
+        }
+
+        // No ID — create normally
         let dto = CreateSeries {
             series_key: series_key.clone(),
             name_latex: col_name_latex
@@ -746,6 +1358,7 @@ pub async fn import_series_from_csv(
 
     Ok(ImportResponse {
         imported,
+        updated,
         failed: errors.len(),
         errors,
     })
@@ -770,10 +1383,12 @@ pub async fn import_keywords_from_csv(
         .map_err(|e| HexforgeError::Validation(ValidationError::custom(e.to_string())))?
         .clone();
 
+    let col_id = column_index(&headers, "id");
     let col_name = require_column(&headers, "name")?;
     let col_level = require_column(&headers, "level")?;
 
     let mut imported = 0usize;
+    let mut updated = 0usize;
     let mut errors = Vec::new();
 
     for (idx, result) in reader.records().enumerate() {
@@ -789,6 +1404,8 @@ pub async fn import_keywords_from_csv(
                 continue;
             }
         };
+
+        let csv_id = col_id.and_then(|i| parse_i64_field(&record, i));
 
         let name = match get_field(&record, col_name) {
             Some(n) => n,
@@ -814,6 +1431,83 @@ pub async fn import_keywords_from_csv(
             }
         };
 
+        // Check if this is an update (CSV has ID that exists in DB)
+        if let Some(id) = csv_id {
+            match state.keyword_ds.find_by_id(&id).await {
+                Ok(Some(existing)) => {
+                    if existing.name != name {
+                        let msg = format!(
+                            "ID {id} exists but has key '{}', CSV has '{name}'",
+                            existing.name
+                        );
+                        errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: name,
+                            error: msg,
+                        });
+                        continue;
+                    }
+                    let update_dto = UpdateKeyword {
+                        name: Some(name.clone()),
+                        level: Some(level),
+                    };
+                    if let Err(e) = validate_update_keyword(&update_dto) {
+                        errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: name,
+                            error: e.to_string(),
+                        });
+                        continue;
+                    }
+                    let merged = update_keyword_transform(update_dto, existing);
+                    match state.keyword_ds.update(&id, merged).await {
+                        Ok(_) => updated += 1,
+                        Err(e) => errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: name,
+                            error: format_insert_error(e),
+                        }),
+                    }
+                    continue;
+                }
+                Ok(None) => {
+                    // ID not in DB — create with this ID
+                    let dto = CreateKeyword {
+                        name: name.clone(),
+                        level,
+                    };
+                    if let Err(e) = validate_create_keyword(&dto) {
+                        errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: name,
+                            error: e.to_string(),
+                        });
+                        continue;
+                    }
+                    let mut entity = create_keyword_transform(dto);
+                    entity.id = id;
+                    match state.keyword_ds.insert_with_id(entity).await {
+                        Ok(_) => imported += 1,
+                        Err(e) => errors.push(ImportRowError {
+                            row: row_num,
+                            identifier: name,
+                            error: format_insert_error(e),
+                        }),
+                    }
+                    continue;
+                }
+                Err(e) => {
+                    errors.push(ImportRowError {
+                        row: row_num,
+                        identifier: name,
+                        error: format!("DB lookup error: {e}"),
+                    });
+                    continue;
+                }
+            }
+        }
+
+        // No ID — create normally
         let dto = CreateKeyword {
             name: name.clone(),
             level,
@@ -843,6 +1537,7 @@ pub async fn import_keywords_from_csv(
 
     Ok(ImportResponse {
         imported,
+        updated,
         failed: errors.len(),
         errors,
     })
@@ -855,6 +1550,7 @@ pub async fn import_keywords_from_csv(
 /// Parsed bibitem row with author/keyword junction data.
 struct ParsedBibitemRow {
     row_num: usize,
+    csv_id: Option<i64>,
     bibkey: String,
     dto: CreateBibItem,
     author_ids: Vec<i64>,
@@ -882,6 +1578,7 @@ pub async fn import_bibitems_from_csv(
         .clone();
 
     // Map column names to indices
+    let col_id = column_index(&headers, "id");
     let col_entry_type = require_column(&headers, "entry_type")?;
     let col_bibkey = require_column(&headers, "bibkey")?;
     let col_author_ids = column_index(&headers, "author_ids");
@@ -953,6 +1650,8 @@ pub async fn import_bibitems_from_csv(
                 continue;
             }
         };
+
+        let csv_id = col_id.and_then(|i| parse_i64_field(&record, i));
 
         let bibkey = match get_field(&record, col_bibkey) {
             Some(k) => k,
@@ -1093,6 +1792,7 @@ pub async fn import_bibitems_from_csv(
 
         parsed_rows.push(ParsedBibitemRow {
             row_num,
+            csv_id,
             bibkey,
             dto,
             author_ids: author_ids_list,
@@ -1106,6 +1806,7 @@ pub async fn import_bibitems_from_csv(
     if !parse_errors.is_empty() {
         return Ok(BibitemImportResult::Success(ImportResponse {
             imported: 0,
+            updated: 0,
             failed: parse_errors.len(),
             errors: parse_errors,
         }));
@@ -1114,6 +1815,7 @@ pub async fn import_bibitems_from_csv(
     if parsed_rows.is_empty() {
         return Ok(BibitemImportResult::Success(ImportResponse {
             imported: 0,
+            updated: 0,
             failed: 0,
             errors: vec![],
         }));
@@ -1137,78 +1839,146 @@ pub async fn import_bibitems_from_csv(
         return Ok(BibitemImportResult::MissingReferences(missing));
     }
 
-    // Phase 3: Insert all bibitems and their junction data
+    // Phase 3: Insert/update bibitems and their junction data
     let mut imported = 0usize;
+    let mut updated = 0usize;
     let mut insert_errors = Vec::new();
 
     for row in &parsed_rows {
-        let bibitem = create_bib_item_transform(row.dto.clone());
-        match state.bibitem_ds.insert(bibitem).await {
-            Ok(inserted) => {
-                // Insert junction data for authors
-                if let Err(e) =
-                    insert_bibitem_authors(state, inserted.id, &row.author_ids, AuthorRole::Author)
-                        .await
-                {
+        // Determine the bibitem ID: update existing, insert-with-id, or insert new
+        let (bibitem_id, is_update) = if let Some(id) = row.csv_id {
+            match state.bibitem_ds.find_by_id(&id).await {
+                Ok(Some(existing)) => {
+                    if existing.bibkey != row.bibkey {
+                        insert_errors.push(ImportRowError {
+                            row: row.row_num,
+                            identifier: row.bibkey.clone(),
+                            error: format!(
+                                "ID {id} exists but has bibkey '{}', CSV has '{}'",
+                                existing.bibkey, row.bibkey
+                            ),
+                        });
+                        continue;
+                    }
+                    // Update existing bibitem
+                    let merged =
+                        update_bib_item_transform(build_bibitem_update_dto(&row.dto), existing);
+                    match state.bibitem_ds.update(&id, merged).await {
+                        Ok(Some(_)) => (id, true),
+                        Ok(None) => {
+                            insert_errors.push(ImportRowError {
+                                row: row.row_num,
+                                identifier: row.bibkey.clone(),
+                                error: format!("Failed to update bibitem {id}: not found"),
+                            });
+                            continue;
+                        }
+                        Err(e) => {
+                            insert_errors.push(ImportRowError {
+                                row: row.row_num,
+                                identifier: row.bibkey.clone(),
+                                error: format_insert_error(e),
+                            });
+                            continue;
+                        }
+                    }
+                }
+                Ok(None) => {
+                    // ID not in DB — insert with this ID
+                    let mut bibitem = create_bib_item_transform(row.dto.clone());
+                    bibitem.id = id;
+                    match state.bibitem_ds.insert_with_id(bibitem).await {
+                        Ok(inserted) => (inserted.id, false),
+                        Err(e) => {
+                            insert_errors.push(ImportRowError {
+                                row: row.row_num,
+                                identifier: row.bibkey.clone(),
+                                error: format_insert_error(e),
+                            });
+                            continue;
+                        }
+                    }
+                }
+                Err(e) => {
                     insert_errors.push(ImportRowError {
                         row: row.row_num,
                         identifier: row.bibkey.clone(),
-                        error: format!("Failed to link authors: {e}"),
+                        error: format!("DB lookup error: {e}"),
                     });
                     continue;
                 }
-                if let Err(e) =
-                    insert_bibitem_authors(state, inserted.id, &row.editor_ids, AuthorRole::Editor)
-                        .await
-                {
-                    insert_errors.push(ImportRowError {
-                        row: row.row_num,
-                        identifier: row.bibkey.clone(),
-                        error: format!("Failed to link editors: {e}"),
-                    });
-                    continue;
-                }
-                if let Err(e) = insert_bibitem_authors(
-                    state,
-                    inserted.id,
-                    &row.guesteditor_ids,
-                    AuthorRole::Guesteditor,
-                )
-                .await
-                {
-                    insert_errors.push(ImportRowError {
-                        row: row.row_num,
-                        identifier: row.bibkey.clone(),
-                        error: format!("Failed to link guesteditors: {e}"),
-                    });
-                    continue;
-                }
-
-                // Insert junction data for keywords
-                if let Err(e) = insert_bibitem_keywords(state, inserted.id, &row.keyword_ids).await
-                {
-                    insert_errors.push(ImportRowError {
-                        row: row.row_num,
-                        identifier: row.bibkey.clone(),
-                        error: format!("Failed to link keywords: {e}"),
-                    });
-                    continue;
-                }
-
-                imported += 1;
             }
-            Err(e) => {
-                insert_errors.push(ImportRowError {
-                    row: row.row_num,
-                    identifier: row.bibkey.clone(),
-                    error: format_insert_error(e),
-                });
+        } else {
+            // No CSV ID — insert normally
+            let bibitem = create_bib_item_transform(row.dto.clone());
+            match state.bibitem_ds.insert(bibitem).await {
+                Ok(inserted) => (inserted.id, false),
+                Err(e) => {
+                    insert_errors.push(ImportRowError {
+                        row: row.row_num,
+                        identifier: row.bibkey.clone(),
+                        error: format_insert_error(e),
+                    });
+                    continue;
+                }
             }
+        };
+
+        // Insert/re-insert junction data
+        if let Err(e) =
+            insert_bibitem_authors(state, bibitem_id, &row.author_ids, AuthorRole::Author).await
+        {
+            insert_errors.push(ImportRowError {
+                row: row.row_num,
+                identifier: row.bibkey.clone(),
+                error: format!("Failed to link authors: {e}"),
+            });
+            continue;
+        }
+        if let Err(e) =
+            insert_bibitem_authors(state, bibitem_id, &row.editor_ids, AuthorRole::Editor).await
+        {
+            insert_errors.push(ImportRowError {
+                row: row.row_num,
+                identifier: row.bibkey.clone(),
+                error: format!("Failed to link editors: {e}"),
+            });
+            continue;
+        }
+        if let Err(e) = insert_bibitem_authors(
+            state,
+            bibitem_id,
+            &row.guesteditor_ids,
+            AuthorRole::Guesteditor,
+        )
+        .await
+        {
+            insert_errors.push(ImportRowError {
+                row: row.row_num,
+                identifier: row.bibkey.clone(),
+                error: format!("Failed to link guesteditors: {e}"),
+            });
+            continue;
+        }
+        if let Err(e) = insert_bibitem_keywords(state, bibitem_id, &row.keyword_ids).await {
+            insert_errors.push(ImportRowError {
+                row: row.row_num,
+                identifier: row.bibkey.clone(),
+                error: format!("Failed to link keywords: {e}"),
+            });
+            continue;
+        }
+
+        if is_update {
+            updated += 1;
+        } else {
+            imported += 1;
         }
     }
 
     Ok(BibitemImportResult::Success(ImportResponse {
         imported,
+        updated,
         failed: insert_errors.len(),
         errors: insert_errors,
     }))
@@ -1359,6 +2129,57 @@ struct KeywordLevelRow {
 // =============================================================================
 // Helpers
 // =============================================================================
+
+fn build_bibitem_update_dto(create: &CreateBibItem) -> UpdateBibItem {
+    UpdateBibItem {
+        bibkey: Some(create.bibkey.clone()),
+        entry_type: Some(create.entry_type),
+        date_year: create.date_year,
+        date_year_2_hyphen: create.date_year_2_hyphen,
+        date_year_2_slash: create.date_year_2_slash,
+        date_month: create.date_month,
+        date_day: create.date_day,
+        date_is_no_date: Some(create.date_is_no_date),
+        pubstate: create.pubstate,
+        title_latex: Some(create.title_latex.clone()),
+        title_unicode: Some(create.title_unicode.clone()),
+        title_simplified: Some(create.title_simplified.clone()),
+        booktitle_latex: create.booktitle_latex.clone(),
+        booktitle_unicode: create.booktitle_unicode.clone(),
+        booktitle_simplified: create.booktitle_simplified.clone(),
+        journal_id: create.journal_id,
+        publisher_id: create.publisher_id,
+        address: create.address.clone(),
+        volume: create.volume.clone(),
+        number: create.number.clone(),
+        pages: create.pages.clone(),
+        eid: create.eid.clone(),
+        series_id: create.series_id,
+        edition: create.edition.clone(),
+        institution_id: create.institution_id,
+        school_id: create.school_id,
+        type_field: create.type_field.clone(),
+        doi: create.doi.clone(),
+        url: create.url.clone(),
+        eprint: create.eprint.clone(),
+        urn: create.urn.clone(),
+        crossref_id: create.crossref_id,
+        issuetitle_latex: create.issuetitle_latex.clone(),
+        issuetitle_unicode: create.issuetitle_unicode.clone(),
+        note_latex: create.note_latex.clone(),
+        note_unicode: create.note_unicode.clone(),
+        extra_note_latex: create.extra_note_latex.clone(),
+        extra_note_unicode: create.extra_note_unicode.clone(),
+        langid: create.langid,
+        is_translation: Some(create.is_translation),
+        epoch: create.epoch,
+        options: create.options.clone(),
+        shorthand: create.shorthand.clone(),
+        person_id: create.person_id,
+        has_fulltext: Some(create.has_fulltext),
+        fulltext_path: create.fulltext_path.clone(),
+    }
+}
 
 fn format_insert_error(e: hexforge::DataSourceError) -> String {
     let msg = e.to_string();
