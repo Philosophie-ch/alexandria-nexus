@@ -179,6 +179,7 @@ pub async fn import_authors_from_csv(
     let col_famous_name_latex = column_index(&headers, "famous_name_latex");
     let col_famous_name_unicode = column_index(&headers, "famous_name_unicode");
     let col_famous_name_simplified = column_index(&headers, "famous_name_simplified");
+    let col_name_variants = column_index(&headers, "name_variants");
 
     let mut imported = 0usize;
     let mut errors = Vec::new();
@@ -226,6 +227,14 @@ pub async fn import_authors_from_csv(
             famous_name_latex: col_famous_name_latex.and_then(|i| get_field(&record, i)),
             famous_name_unicode: col_famous_name_unicode.and_then(|i| get_field(&record, i)),
             famous_name_simplified: col_famous_name_simplified.and_then(|i| get_field(&record, i)),
+            name_variants: col_name_variants.and_then(|i| {
+                get_field(&record, i).map(|s| {
+                    s.split(';')
+                        .map(|v| v.trim().to_string())
+                        .filter(|v| !v.is_empty())
+                        .collect::<Vec<_>>()
+                })
+            }),
         };
 
         if let Err(e) = validate_create_author(&dto) {
@@ -314,9 +323,15 @@ pub async fn import_journals_from_csv(
 
         let dto = CreateJournal {
             journal_key: journal_key.clone(),
-            name_latex: col_name_latex.and_then(|i| get_field(&record, i)),
-            name_unicode: col_name_unicode.and_then(|i| get_field(&record, i)),
-            name_simplified: col_name_simplified.and_then(|i| get_field(&record, i)),
+            name_latex: col_name_latex
+                .and_then(|i| get_field(&record, i))
+                .unwrap_or_default(),
+            name_unicode: col_name_unicode
+                .and_then(|i| get_field(&record, i))
+                .unwrap_or_default(),
+            name_simplified: col_name_simplified
+                .and_then(|i| get_field(&record, i))
+                .unwrap_or_default(),
             issn_print: col_issn_print.and_then(|i| get_field(&record, i)),
             issn_electronic: col_issn_electronic.and_then(|i| get_field(&record, i)),
         };
@@ -406,9 +421,15 @@ pub async fn import_publishers_from_csv(
 
         let dto = CreatePublisher {
             publisher_key: publisher_key.clone(),
-            name_latex: col_name_latex.and_then(|i| get_field(&record, i)),
-            name_unicode: col_name_unicode.and_then(|i| get_field(&record, i)),
-            name_simplified: col_name_simplified.and_then(|i| get_field(&record, i)),
+            name_latex: col_name_latex
+                .and_then(|i| get_field(&record, i))
+                .unwrap_or_default(),
+            name_unicode: col_name_unicode
+                .and_then(|i| get_field(&record, i))
+                .unwrap_or_default(),
+            name_simplified: col_name_simplified
+                .and_then(|i| get_field(&record, i))
+                .unwrap_or_default(),
             default_address: col_default_address.and_then(|i| get_field(&record, i)),
         };
 
@@ -497,9 +518,15 @@ pub async fn import_institutions_from_csv(
 
         let dto = CreateInstitution {
             institution_key: institution_key.clone(),
-            name_latex: col_name_latex.and_then(|i| get_field(&record, i)),
-            name_unicode: col_name_unicode.and_then(|i| get_field(&record, i)),
-            name_simplified: col_name_simplified.and_then(|i| get_field(&record, i)),
+            name_latex: col_name_latex
+                .and_then(|i| get_field(&record, i))
+                .unwrap_or_default(),
+            name_unicode: col_name_unicode
+                .and_then(|i| get_field(&record, i))
+                .unwrap_or_default(),
+            name_simplified: col_name_simplified
+                .and_then(|i| get_field(&record, i))
+                .unwrap_or_default(),
             default_address: col_default_address.and_then(|i| get_field(&record, i)),
         };
 
@@ -588,9 +615,15 @@ pub async fn import_schools_from_csv(
 
         let dto = CreateSchool {
             school_key: school_key.clone(),
-            name_latex: col_name_latex.and_then(|i| get_field(&record, i)),
-            name_unicode: col_name_unicode.and_then(|i| get_field(&record, i)),
-            name_simplified: col_name_simplified.and_then(|i| get_field(&record, i)),
+            name_latex: col_name_latex
+                .and_then(|i| get_field(&record, i))
+                .unwrap_or_default(),
+            name_unicode: col_name_unicode
+                .and_then(|i| get_field(&record, i))
+                .unwrap_or_default(),
+            name_simplified: col_name_simplified
+                .and_then(|i| get_field(&record, i))
+                .unwrap_or_default(),
             default_address: col_default_address.and_then(|i| get_field(&record, i)),
         };
 
@@ -678,9 +711,15 @@ pub async fn import_series_from_csv(
 
         let dto = CreateSeries {
             series_key: series_key.clone(),
-            name_latex: col_name_latex.and_then(|i| get_field(&record, i)),
-            name_unicode: col_name_unicode.and_then(|i| get_field(&record, i)),
-            name_simplified: col_name_simplified.and_then(|i| get_field(&record, i)),
+            name_latex: col_name_latex
+                .and_then(|i| get_field(&record, i))
+                .unwrap_or_default(),
+            name_unicode: col_name_unicode
+                .and_then(|i| get_field(&record, i))
+                .unwrap_or_default(),
+            name_simplified: col_name_simplified
+                .and_then(|i| get_field(&record, i))
+                .unwrap_or_default(),
         };
 
         if let Err(e) = validate_create_series(&dto) {
@@ -993,7 +1032,7 @@ pub async fn import_bibitems_from_csv(
             date_year_2_slash: None,
             date_month: col_date_month.and_then(|i| parse_i16_field(&record, i)),
             date_day: col_date_day.and_then(|i| parse_i16_field(&record, i)),
-            date_is_no_date: None,
+            date_is_no_date: false,
             pubstate: col_pubstate
                 .and_then(|i| get_field(&record, i))
                 .and_then(|s| s.parse().ok()),
@@ -1029,14 +1068,16 @@ pub async fn import_bibitems_from_csv(
             langid: col_langid
                 .and_then(|i| get_field(&record, i))
                 .and_then(|s| s.parse().ok()),
-            is_translation: col_is_translation.and_then(|i| parse_bool_field(&record, i)),
+            is_translation: col_is_translation
+                .and_then(|i| parse_bool_field(&record, i))
+                .unwrap_or(false),
             epoch: col_epoch
                 .and_then(|i| get_field(&record, i))
                 .and_then(|s| s.parse().ok()),
             options: col_options.and_then(|i| get_field(&record, i)),
             shorthand: col_shorthand.and_then(|i| get_field(&record, i)),
             person_id: None,
-            has_fulltext: None,
+            has_fulltext: false,
             fulltext_path: None,
         };
 

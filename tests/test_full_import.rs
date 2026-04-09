@@ -201,6 +201,105 @@ async fn test_validate_reports_ambiguous_author() {
     assert_eq!(ambiguous[0]["matching_ids"].as_array().unwrap().len(), 2);
 }
 
+#[tokio::test]
+async fn test_validate_resolves_author_via_name_variant() {
+    let app = TestApp::spawn().await;
+    let s = unique_suffix();
+
+    // Seed an author with a name variant
+    let payload = json!({
+        "author_key": format!("aristotle-{s}"),
+        "mononym_latex": "Aristotle",
+        "mononym_unicode": "Aristotle",
+        "mononym_simplified": "aristotle",
+        "name_variants": ["Aristote", "Aristoteles"]
+    });
+    app.post_json("/api/v1/authors", &payload).await;
+
+    // CSV uses a variant name — should resolve, not report as missing
+    let csv = format!(
+        "entry_type,bibkey,title,author,date\n\
+         book,variant{s}:2024,A Book,Aristote,2024"
+    );
+
+    let resp = upload_csv(&app, "/api/v1/admin/validate-full-csv", &csv).await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(
+        body["missing_authors"].as_array().unwrap().len(),
+        0,
+        "Author should resolve via name_variant 'Aristote'"
+    );
+}
+
+#[tokio::test]
+async fn test_import_resolves_author_via_name_variant() {
+    let app = TestApp::spawn().await;
+    let s = unique_suffix();
+
+    // Seed an author with a name variant
+    let payload = json!({
+        "author_key": format!("aristotle-{s}"),
+        "mononym_latex": "Aristotle",
+        "mononym_unicode": "Aristotle",
+        "mononym_simplified": "aristotle",
+        "name_variants": ["Aristote", "Aristoteles"]
+    });
+    app.post_json("/api/v1/authors", &payload).await;
+
+    // Import using variant name
+    let csv = format!(
+        "entry_type,bibkey,title,author,date\n\
+         book,variant{s}:2024,A Book,Aristoteles,2024"
+    );
+
+    let resp = upload_csv(&app, "/api/v1/admin/import-full-csv", &csv).await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["imported"], 1, "Should import via name variant");
+    assert_eq!(body["failed"], 0);
+}
+
+#[tokio::test]
+async fn test_variant_collision_reported_as_ambiguous() {
+    let app = TestApp::spawn().await;
+    let s = unique_suffix();
+
+    // Two authors — one has "Stageirites" as a variant, the other has it as mononym
+    let payload1 = json!({
+        "author_key": format!("aristotle-{s}"),
+        "mononym_latex": "Aristotle",
+        "mononym_unicode": "Aristotle",
+        "mononym_simplified": "aristotle",
+        "name_variants": ["Stageirites"]
+    });
+    app.post_json("/api/v1/authors", &payload1).await;
+
+    let payload2 = json!({
+        "author_key": format!("stageirites-{s}"),
+        "mononym_latex": "Stageirites",
+        "mononym_unicode": "Stageirites",
+        "mononym_simplified": "stageirites",
+    });
+    app.post_json("/api/v1/authors", &payload2).await;
+
+    // CSV uses "Stageirites" — should be ambiguous (matches variant of author1 + mononym of author2)
+    let csv = format!(
+        "entry_type,bibkey,title,author,date\n\
+         book,ambig{s}:2024,A Book,Stageirites,2024"
+    );
+
+    let resp = upload_csv(&app, "/api/v1/admin/validate-full-csv", &csv).await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let ambiguous = body["ambiguous_authors"].as_array().unwrap();
+    assert_eq!(ambiguous.len(), 1, "Stageirites should be ambiguous");
+    assert_eq!(ambiguous[0]["matching_ids"].as_array().unwrap().len(), 2);
+}
+
 // ============================================================================
 // IMPORT ENTITIES
 // ============================================================================

@@ -157,6 +157,7 @@ models:
       mononym: { type: bib_string }
       shorthand: { type: bib_string }
       famous_name: { type: bib_string }
+      name_variants: { type: "string[]?" }
     constraints:
       - either: [family_name_latex, mononym_latex]
     filters:
@@ -166,6 +167,7 @@ models:
       - { columns: [family_name_simplified] }
       - { columns: [family_name_simplified, given_name_simplified] }
       - { columns: [family_name_simplified], type: gin_trgm }
+      - { columns: [name_variants], type: gin }
       - { columns: [given_name_simplified], type: gin_trgm }
 
   # ---------------------------------------------------------------------------

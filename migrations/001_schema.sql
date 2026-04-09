@@ -53,6 +53,7 @@ CREATE TABLE authors (
     mononym_latex TEXT,
     mononym_unicode TEXT,
     mononym_simplified TEXT,
+    name_variants TEXT[],
     shorthand_latex TEXT,
     shorthand_unicode TEXT,
     shorthand_simplified TEXT,
@@ -224,6 +225,7 @@ CREATE INDEX idx_api_keys_key_hash_partial ON api_keys(key_hash) WHERE revoked_a
 CREATE INDEX idx_authors_family_name_simplified ON authors(family_name_simplified);
 CREATE INDEX idx_authors_family_name_simplified_given_name_simplified ON authors(family_name_simplified, given_name_simplified);
 CREATE INDEX idx_authors_family_name_simplified_trgm ON authors USING gin(family_name_simplified gin_trgm_ops);
+CREATE INDEX idx_authors_name_variants_gin ON authors USING gin(name_variants);
 CREATE INDEX idx_authors_given_name_simplified_trgm ON authors USING gin(given_name_simplified gin_trgm_ops);
 CREATE INDEX idx_bibitems_entry_type ON bibitems(entry_type);
 CREATE INDEX idx_bibitems_date_year ON bibitems(date_year);

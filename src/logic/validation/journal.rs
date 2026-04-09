@@ -15,18 +15,9 @@ pub fn validate_create_journal(input: &CreateJournal) -> Result<(), ValidationEr
         return Err(ValidationError::required("journal_key"));
     }
 
-    let has_name = input
-        .name_latex
-        .as_ref()
-        .is_some_and(|s| !s.trim().is_empty())
-        || input
-            .name_unicode
-            .as_ref()
-            .is_some_and(|s| !s.trim().is_empty())
-        || input
-            .name_simplified
-            .as_ref()
-            .is_some_and(|s| !s.trim().is_empty());
+    let has_name = !input.name_latex.trim().is_empty()
+        || !input.name_unicode.trim().is_empty()
+        || !input.name_simplified.trim().is_empty();
 
     if !has_name {
         return Err(ValidationError::required("name"));
@@ -127,9 +118,9 @@ mod tests {
     fn test_valid_journal() {
         let input = CreateJournal {
             journal_key: "nature".to_string(),
-            name_latex: Some("Nature".to_string()),
-            name_unicode: None,
-            name_simplified: None,
+            name_latex: "Nature".to_string(),
+            name_unicode: String::new(),
+            name_simplified: String::new(),
             issn_print: Some("0028-0836".to_string()),
             issn_electronic: None,
         };
@@ -140,9 +131,9 @@ mod tests {
     fn test_journal_without_key() {
         let input = CreateJournal {
             journal_key: String::new(),
-            name_latex: Some("Nature".to_string()),
-            name_unicode: None,
-            name_simplified: None,
+            name_latex: "Nature".to_string(),
+            name_unicode: String::new(),
+            name_simplified: String::new(),
             issn_print: None,
             issn_electronic: None,
         };
@@ -153,9 +144,9 @@ mod tests {
     fn test_journal_without_name() {
         let input = CreateJournal {
             journal_key: "noname".to_string(),
-            name_latex: None,
-            name_unicode: None,
-            name_simplified: None,
+            name_latex: String::new(),
+            name_unicode: String::new(),
+            name_simplified: String::new(),
             issn_print: None,
             issn_electronic: None,
         };

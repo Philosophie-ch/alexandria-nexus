@@ -24,9 +24,9 @@ async fn test_create_bibitem() {
     });
 
     let resp = app.post_json("/api/v1/bibitems", &payload).await;
-    assert_eq!(resp.status(), 200);
-
+    let status = resp.status();
     let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(status, 200, "Create bibitem failed: {body}");
     assert!(body["id"].as_i64().is_some(), "Response should contain id");
     assert_eq!(body["bibkey"], format!("test:article-{}", suffix));
     assert_eq!(body["entry_type"], "article");

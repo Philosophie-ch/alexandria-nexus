@@ -113,7 +113,7 @@ mod tests {
             date_year_2_slash: None,
             date_month: None,
             date_day: None,
-            date_is_no_date: None,
+            date_is_no_date: false,
             pubstate: None,
             title_latex: "Test Title".to_string(),
             title_unicode: "Test Title".to_string(),
@@ -145,12 +145,12 @@ mod tests {
             extra_note_latex: None,
             extra_note_unicode: None,
             langid: None,
-            is_translation: None,
+            is_translation: false,
             epoch: None,
             options: None,
             shorthand: None,
             person_id: None,
-            has_fulltext: None,
+            has_fulltext: false,
             fulltext_path: None,
         }
     }

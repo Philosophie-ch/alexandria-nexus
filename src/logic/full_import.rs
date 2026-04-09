@@ -288,30 +288,41 @@ struct AuthorRow {
     family_name_latex: Option<String>,
     given_name_latex: Option<String>,
     mononym_latex: Option<String>,
+    name_variants: Option<Vec<String>>,
 }
 
 async fn batch_lookup_authors(
     pool: &hexforge::db_exports::PgPool,
 ) -> Result<HashMap<AuthorNameKey, Vec<i64>>, HexforgeError> {
-    let rows: Vec<AuthorRow> =
-        query_as("SELECT id, family_name_latex, given_name_latex, mononym_latex FROM authors")
-            .fetch_all(pool)
-            .await
-            .map_err(HexforgeError::data_source)?;
+    let rows: Vec<AuthorRow> = query_as(
+        "SELECT id, family_name_latex, given_name_latex, mononym_latex, name_variants FROM authors",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(HexforgeError::data_source)?;
 
     let mut map: HashMap<AuthorNameKey, Vec<i64>> = HashMap::new();
-    for row in rows {
-        let key = if let Some(mononym) = row.mononym_latex {
-            AuthorNameKey::Mononym(mononym)
-        } else if let Some(family) = row.family_name_latex {
+    for row in &rows {
+        // Primary name key
+        let key = if let Some(mononym) = &row.mononym_latex {
+            AuthorNameKey::Mononym(mononym.clone())
+        } else if let Some(family) = &row.family_name_latex {
             AuthorNameKey::Named {
-                family_name: family,
-                given_name: row.given_name_latex,
+                family_name: family.clone(),
+                given_name: row.given_name_latex.clone(),
             }
         } else {
             continue;
         };
         map.entry(key).or_default().push(row.id);
+
+        // Name variants — each variant is indexed as a Mononym pointing to the same author
+        if let Some(variants) = &row.name_variants {
+            for variant in variants {
+                let variant_key = AuthorNameKey::Mononym(variant.clone());
+                map.entry(variant_key).or_default().push(row.id);
+            }
+        }
     }
     Ok(map)
 }
@@ -812,6 +823,7 @@ async fn create_author_from_key(key: &AuthorNameKey, state: &AppState) -> Result
                 famous_name_latex: None,
                 famous_name_unicode: None,
                 famous_name_simplified: None,
+                name_variants: None,
             };
             (ak, dto)
         }
@@ -834,6 +846,7 @@ async fn create_author_from_key(key: &AuthorNameKey, state: &AppState) -> Result
                 famous_name_latex: None,
                 famous_name_unicode: None,
                 famous_name_simplified: None,
+                name_variants: None,
             };
             (ak, dto)
         }
@@ -890,9 +903,9 @@ async fn create_named_entity_journal(
 ) -> Result<(), String> {
     let dto = CreateJournal {
         journal_key: key.to_string(),
-        name_latex: Some(name.to_string()),
-        name_unicode: Some(name.to_string()),
-        name_simplified: Some(name.to_string()),
+        name_latex: name.to_string(),
+        name_unicode: name.to_string(),
+        name_simplified: name.to_string(),
         issn_print: None,
         issn_electronic: None,
     };
@@ -913,9 +926,9 @@ async fn create_named_entity_publisher(
 ) -> Result<(), String> {
     let dto = CreatePublisher {
         publisher_key: key.to_string(),
-        name_latex: Some(name.to_string()),
-        name_unicode: Some(name.to_string()),
-        name_simplified: Some(name.to_string()),
+        name_latex: name.to_string(),
+        name_unicode: name.to_string(),
+        name_simplified: name.to_string(),
         default_address: None,
     };
     validate_create_publisher(&dto).map_err(|e| e.to_string())?;
@@ -935,9 +948,9 @@ async fn create_named_entity_institution(
 ) -> Result<(), String> {
     let dto = CreateInstitution {
         institution_key: key.to_string(),
-        name_latex: Some(name.to_string()),
-        name_unicode: Some(name.to_string()),
-        name_simplified: Some(name.to_string()),
+        name_latex: name.to_string(),
+        name_unicode: name.to_string(),
+        name_simplified: name.to_string(),
         default_address: None,
     };
     validate_create_institution(&dto).map_err(|e| e.to_string())?;
@@ -953,9 +966,9 @@ async fn create_named_entity_institution(
 async fn create_named_entity_school(key: &str, name: &str, state: &AppState) -> Result<(), String> {
     let dto = CreateSchool {
         school_key: key.to_string(),
-        name_latex: Some(name.to_string()),
-        name_unicode: Some(name.to_string()),
-        name_simplified: Some(name.to_string()),
+        name_latex: name.to_string(),
+        name_unicode: name.to_string(),
+        name_simplified: name.to_string(),
         default_address: None,
     };
     validate_create_school(&dto).map_err(|e| e.to_string())?;
@@ -971,9 +984,9 @@ async fn create_named_entity_school(key: &str, name: &str, state: &AppState) -> 
 async fn create_named_entity_series(key: &str, name: &str, state: &AppState) -> Result<(), String> {
     let dto = CreateSeries {
         series_key: key.to_string(),
-        name_latex: Some(name.to_string()),
-        name_unicode: Some(name.to_string()),
-        name_simplified: Some(name.to_string()),
+        name_latex: name.to_string(),
+        name_unicode: name.to_string(),
+        name_simplified: name.to_string(),
     };
     validate_create_series(&dto).map_err(|e| e.to_string())?;
     let entity = create_series_transform(dto);
@@ -1141,7 +1154,7 @@ fn build_bibitem_dto(row: &ParsedBibRow, ctx: &ResolutionCtx) -> Result<CreateBi
         date_year_2_slash: None,
         date_month: None,
         date_day: None,
-        date_is_no_date: None,
+        date_is_no_date: false,
         pubstate: row.pubstate,
         title_latex: row.title.clone(),
         title_unicode: String::new(),
@@ -1188,12 +1201,12 @@ fn build_bibitem_dto(row: &ParsedBibRow, ctx: &ResolutionCtx) -> Result<CreateBi
         extra_note_latex: row.extra_note.clone(),
         extra_note_unicode: None,
         langid: row.langid,
-        is_translation: Some(row.is_translation),
+        is_translation: row.is_translation,
         epoch: row.epoch,
         options: row.options.clone(),
         shorthand: row.shorthand.clone(),
         person_id,
-        has_fulltext: Some(row.has_fulltext),
+        has_fulltext: row.has_fulltext,
         fulltext_path: None,
     };
 
@@ -1204,7 +1217,7 @@ fn build_bibitem_dto(row: &ParsedBibRow, ctx: &ResolutionCtx) -> Result<CreateBi
 fn apply_date_to_dto(date: &ParsedDate, dto: &mut CreateBibItem) {
     match date {
         ParsedDate::NoDate => {
-            dto.date_is_no_date = Some(true);
+            dto.date_is_no_date = true;
         }
         ParsedDate::Year(y) => {
             dto.date_year = Some(*y);
@@ -1363,11 +1376,12 @@ pub async fn export_full_csv(state: &AppState) -> Result<String, HexforgeError> 
         .map_err(HexforgeError::data_source)?;
 
     // Build reverse lookup maps (ID → name)
-    let authors: Vec<AuthorRow> =
-        query_as("SELECT id, family_name_latex, given_name_latex, mononym_latex FROM authors")
-            .fetch_all(pool)
-            .await
-            .map_err(HexforgeError::data_source)?;
+    let authors: Vec<AuthorRow> = query_as(
+        "SELECT id, family_name_latex, given_name_latex, mononym_latex, name_variants FROM authors",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(HexforgeError::data_source)?;
     let author_names: HashMap<i64, String> = authors
         .into_iter()
         .map(|a| {

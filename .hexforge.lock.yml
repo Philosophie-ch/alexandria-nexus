@@ -105,6 +105,7 @@ enums:
     db_name: "author_role"
     rename_all: "lowercase"
     default: "Author"
+    extra_derives: [Hash]
     variants:
       - Author
       - Editor
@@ -156,6 +157,7 @@ models:
       mononym: { type: bib_string }
       shorthand: { type: bib_string }
       famous_name: { type: bib_string }
+      name_variants: { type: "string[]?" }
     constraints:
       - either: [family_name_latex, mononym_latex]
     filters:
@@ -165,6 +167,7 @@ models:
       - { columns: [family_name_simplified] }
       - { columns: [family_name_simplified, given_name_simplified] }
       - { columns: [family_name_simplified], type: gin_trgm }
+      - { columns: [name_variants], type: gin }
       - { columns: [given_name_simplified], type: gin_trgm }
 
   # ---------------------------------------------------------------------------
@@ -278,6 +281,7 @@ models:
   BibItem:
     table: "bibitems"
     key_field: "bibkey"
+    file_name: "bibitem"
     fields:
       # Identity
       bibkey: { type: string, required: true, unique: true }
@@ -520,12 +524,14 @@ operations:
     path: "/search"
     description: "Full-text search with pg_trgm similarity"
     permission: Read
+    fn_name: search_bibitems
 
   render:
     method: POST
     path: "/render"
     description: "HTML bibliography renderer"
     permission: Public
+    fn_name: render_bibitems
 
   export_authors:
     method: POST
@@ -644,3 +650,32 @@ operations:
     path: "/keywords/tree"
     description: "Keyword hierarchy organized by level"
     permission: Read
+    fn_name: get_keyword_tree
+
+  validate_full_csv:
+    method: POST
+    path: "/admin/validate-full-csv"
+    description: "Validate a human-readable CSV against the database"
+    permission: Admin
+    group: full_import
+
+  import_entities_from_full_csv:
+    method: POST
+    path: "/admin/import-entities-from-full-csv"
+    description: "Create missing entities from a human-readable CSV"
+    permission: Admin
+    group: full_import
+
+  import_full_csv:
+    method: POST
+    path: "/admin/import-full-csv"
+    description: "Import bibitems from a human-readable CSV (source of truth)"
+    permission: Admin
+    group: full_import
+
+  export_full_csv:
+    method: POST
+    path: "/admin/export-full-csv"
+    description: "Export bibitems as human-readable CSV matching the ODS import format"
+    permission: Admin
+    group: full_import

@@ -40,6 +40,35 @@ impl From<&str> for BibStringAttr {
     }
 }
 
+/// Normalize bib_string fields: if unicode/simplified are empty, copy from latex.
+///
+/// Called by generated pre-transform hooks on entity DTOs. Ensures the unicode
+/// and simplified variants are populated when only latex is provided.
+pub fn bib_string_normalize(
+    latex: &Option<String>,
+    unicode: &mut Option<String>,
+    simplified: &mut Option<String>,
+) {
+    if let Some(latex_val) = latex {
+        if unicode.as_ref().is_none_or(|s| s.is_empty()) {
+            *unicode = Some(latex_val.clone());
+        }
+        if simplified.as_ref().is_none_or(|s| s.is_empty()) {
+            *simplified = Some(latex_val.clone());
+        }
+    }
+}
+
+/// Normalize required bib_string fields: if unicode/simplified are empty, copy from latex.
+pub fn bib_string_normalize_required(latex: &str, unicode: &mut String, simplified: &mut String) {
+    if unicode.is_empty() {
+        *unicode = latex.to_string();
+    }
+    if simplified.is_empty() {
+        *simplified = latex.to_string();
+    }
+}
+
 impl From<String> for BibStringAttr {
     fn from(s: String) -> Self {
         Self {

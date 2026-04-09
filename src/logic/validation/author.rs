@@ -80,6 +80,7 @@ mod tests {
             famous_name_latex: None,
             famous_name_unicode: None,
             famous_name_simplified: None,
+            name_variants: None,
         };
         assert!(validate_create_author(&input).is_ok());
     }
@@ -103,6 +104,7 @@ mod tests {
             famous_name_latex: None,
             famous_name_unicode: None,
             famous_name_simplified: None,
+            name_variants: None,
         };
         assert!(validate_create_author(&input).is_ok());
     }
@@ -126,6 +128,7 @@ mod tests {
             famous_name_latex: None,
             famous_name_unicode: None,
             famous_name_simplified: None,
+            name_variants: None,
         };
         assert!(validate_create_author(&input).is_err());
     }

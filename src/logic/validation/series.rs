@@ -15,18 +15,9 @@ pub fn validate_create_series(input: &CreateSeries) -> Result<(), ValidationErro
         return Err(ValidationError::required("series_key"));
     }
 
-    let has_name = input
-        .name_latex
-        .as_ref()
-        .is_some_and(|s| !s.trim().is_empty())
-        || input
-            .name_unicode
-            .as_ref()
-            .is_some_and(|s| !s.trim().is_empty())
-        || input
-            .name_simplified
-            .as_ref()
-            .is_some_and(|s| !s.trim().is_empty());
+    let has_name = !input.name_latex.trim().is_empty()
+        || !input.name_unicode.trim().is_empty()
+        || !input.name_simplified.trim().is_empty();
 
     if !has_name {
         return Err(ValidationError::required("name"));
@@ -58,9 +49,9 @@ mod tests {
     fn test_valid_series() {
         let input = CreateSeries {
             series_key: "synthese_library".to_string(),
-            name_latex: Some("Synthese Library".to_string()),
-            name_unicode: None,
-            name_simplified: None,
+            name_latex: "Synthese Library".to_string(),
+            name_unicode: String::new(),
+            name_simplified: String::new(),
         };
         assert!(validate_create_series(&input).is_ok());
     }
@@ -69,9 +60,9 @@ mod tests {
     fn test_series_without_key() {
         let input = CreateSeries {
             series_key: String::new(),
-            name_latex: Some("Synthese Library".to_string()),
-            name_unicode: None,
-            name_simplified: None,
+            name_latex: "Synthese Library".to_string(),
+            name_unicode: String::new(),
+            name_simplified: String::new(),
         };
         assert!(validate_create_series(&input).is_err());
     }
@@ -80,9 +71,9 @@ mod tests {
     fn test_series_without_name() {
         let input = CreateSeries {
             series_key: "synthese_library".to_string(),
-            name_latex: None,
-            name_unicode: None,
-            name_simplified: None,
+            name_latex: String::new(),
+            name_unicode: String::new(),
+            name_simplified: String::new(),
         };
         assert!(validate_create_series(&input).is_err());
     }

@@ -15,18 +15,9 @@ pub fn validate_create_publisher(input: &CreatePublisher) -> Result<(), Validati
         return Err(ValidationError::required("publisher_key"));
     }
 
-    let has_name = input
-        .name_latex
-        .as_ref()
-        .is_some_and(|s| !s.trim().is_empty())
-        || input
-            .name_unicode
-            .as_ref()
-            .is_some_and(|s| !s.trim().is_empty())
-        || input
-            .name_simplified
-            .as_ref()
-            .is_some_and(|s| !s.trim().is_empty());
+    let has_name = !input.name_latex.trim().is_empty()
+        || !input.name_unicode.trim().is_empty()
+        || !input.name_simplified.trim().is_empty();
 
     if !has_name {
         return Err(ValidationError::required("name"));
@@ -58,9 +49,9 @@ mod tests {
     fn test_valid_publisher() {
         let input = CreatePublisher {
             publisher_key: "springer".to_string(),
-            name_latex: Some("Springer".to_string()),
-            name_unicode: None,
-            name_simplified: None,
+            name_latex: "Springer".to_string(),
+            name_unicode: String::new(),
+            name_simplified: String::new(),
             default_address: None,
         };
         assert!(validate_create_publisher(&input).is_ok());
@@ -70,9 +61,9 @@ mod tests {
     fn test_publisher_without_key() {
         let input = CreatePublisher {
             publisher_key: String::new(),
-            name_latex: Some("Springer".to_string()),
-            name_unicode: None,
-            name_simplified: None,
+            name_latex: "Springer".to_string(),
+            name_unicode: String::new(),
+            name_simplified: String::new(),
             default_address: None,
         };
         assert!(validate_create_publisher(&input).is_err());
@@ -82,9 +73,9 @@ mod tests {
     fn test_publisher_without_name() {
         let input = CreatePublisher {
             publisher_key: "springer".to_string(),
-            name_latex: None,
-            name_unicode: None,
-            name_simplified: None,
+            name_latex: String::new(),
+            name_unicode: String::new(),
+            name_simplified: String::new(),
             default_address: None,
         };
         assert!(validate_create_publisher(&input).is_err());

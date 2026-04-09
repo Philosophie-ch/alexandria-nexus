@@ -83,16 +83,28 @@ Wires everything together. This is the only layer that knows about all other lay
 
 The project uses `hexforge.yml` as the single schema source of truth. The hexforge CLI reads this file and generates:
 
-- Entity structs with derives
+- Entity structs with derives, Create/Update DTOs, and transform functions
+- Pre-create/pre-update hooks for custom types (e.g., `bib_string` normalization)
 - Database enum type mappings
 - Query filter structs
 - DataStore instances in AppState
 - Composition wiring in `build_app()`
 
-**Consumer-owned files** are never overwritten by the generator:
-- Validation functions (`src/logic/validation/`)
-- Custom handlers (`src/adapters/handlers/`)
-- Custom logic (`src/logic/search.rs`, `src/logic/export.rs`, etc.)
+**File ownership model:**
+
+| Policy | Files | Behavior |
+|--------|-------|----------|
+| **Regenerate** | Entity files, enums.rs, projections.rs, db_mappings.rs, queries/*.rs, state.rs | Always overwritten by generator. Do not edit by hand. |
+| **CreateOnce** | Validation stubs, operation stubs, lib.rs, main.rs, composition/mod.rs | Written once, then consumer-owned. Never overwritten unless `--overwrite` is passed. |
+| **Merge** | mod.rs files | Generated modules merged with consumer-added modules. |
+
+Entity files (`src/domain/*.rs`) are **generator-owned** — they are deterministically derived from `hexforge.yml` and overwritten on every `make generate`. To change an entity:
+
+1. Edit the field/type/attribute in `hexforge.yml`
+2. Run `make generate`
+3. Fix any consumer code affected by the type change
+
+Entity-level behavior (e.g., field normalization) is expressed through `hexforge.yml` custom types and `#[crud(pre_create, pre_update)]` hooks, which the generator emits automatically.
 
 ```bash
 make generate-dry-run   # Preview what would be generated
