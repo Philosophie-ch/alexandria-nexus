@@ -17,6 +17,10 @@ struct Config {
     seed_api_key: Option<String>,
     /// Required when seed_api_key is set
     seed_api_key_name: Option<String>,
+    /// Optional: seed a read-only API key on startup (e.g., for the portal)
+    seed_read_key: Option<String>,
+    /// Required when seed_read_key is set
+    seed_read_key_name: Option<String>,
 }
 
 impl Config {
@@ -32,14 +36,23 @@ impl Config {
             }
         }
 
-        // Check conditional requirement: SEED_API_KEY_NAME when SEED_API_KEY is set
+        // Check conditional requirements for seed keys
         let seed_key = std::env::var("SEED_API_KEY").ok().filter(|s| !s.is_empty());
         let seed_name = std::env::var("SEED_API_KEY_NAME")
+            .ok()
+            .filter(|s| !s.is_empty());
+        let seed_read_key = std::env::var("SEED_READ_KEY")
+            .ok()
+            .filter(|s| !s.is_empty());
+        let seed_read_name = std::env::var("SEED_READ_KEY_NAME")
             .ok()
             .filter(|s| !s.is_empty());
 
         if seed_key.is_some() && seed_name.is_none() {
             missing.push("SEED_API_KEY_NAME (required when SEED_API_KEY is set)");
+        }
+        if seed_read_key.is_some() && seed_read_name.is_none() {
+            missing.push("SEED_READ_KEY_NAME (required when SEED_READ_KEY is set)");
         }
 
         if !missing.is_empty() {
@@ -60,6 +73,8 @@ impl Config {
             allowed_origins: std::env::var("ALLOWED_ORIGINS").expect("validated above"),
             seed_api_key: seed_key,
             seed_api_key_name: seed_name,
+            seed_read_key,
+            seed_read_key_name: seed_read_name,
         })
     }
 
@@ -124,7 +139,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .bind(seed_name)
         .execute(pool.pool())
         .await?;
-        tracing::info!("Seeded API key: {}", seed_name);
+        tracing::info!("Seeded admin API key: {}", seed_name);
+    }
+
+    // Seed read-only API key (optional, e.g., for portal integration)
+    if let Some(ref read_key) = config.seed_read_key {
+        let read_name = config.seed_read_key_name.as_ref().expect("validated above");
+        let key_hash = alexandria_nexus::auth::hash_api_key(read_key);
+        hexforge::db_exports::query(
+            r#"
+            INSERT INTO api_keys (key_hash, name, permission)
+            VALUES ($1, $2, 'read'::permission_level)
+            ON CONFLICT (key_hash) DO NOTHING
+            "#,
+        )
+        .bind(&key_hash)
+        .bind(read_name)
+        .execute(pool.pool())
+        .await?;
+        tracing::info!("Seeded read API key: {}", read_name);
     }
 
     // Build and serve
