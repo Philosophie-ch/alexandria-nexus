@@ -15,9 +15,7 @@ pub fn validate_create_institution(input: &CreateInstitution) -> Result<(), Vali
         return Err(ValidationError::required("institution_key"));
     }
 
-    let has_name = !input.name_latex.trim().is_empty()
-        || !input.name_unicode.trim().is_empty()
-        || !input.name_simplified.trim().is_empty();
+    let has_name = !input.name_latex.trim().is_empty() || !input.name_unicode.trim().is_empty();
 
     if !has_name {
         return Err(ValidationError::required("name"));
@@ -51,7 +49,6 @@ mod tests {
             institution_key: "csli_stanford".to_string(),
             name_latex: "CSLI".to_string(),
             name_unicode: String::new(),
-            name_simplified: String::new(),
             default_address: None,
         };
         assert!(validate_create_institution(&input).is_ok());
@@ -63,7 +60,6 @@ mod tests {
             institution_key: String::new(),
             name_latex: "CSLI".to_string(),
             name_unicode: String::new(),
-            name_simplified: String::new(),
             default_address: None,
         };
         assert!(validate_create_institution(&input).is_err());
@@ -75,7 +71,6 @@ mod tests {
             institution_key: "csli_stanford".to_string(),
             name_latex: String::new(),
             name_unicode: String::new(),
-            name_simplified: String::new(),
             default_address: None,
         };
         assert!(validate_create_institution(&input).is_err());
@@ -87,7 +82,6 @@ mod tests {
             institution_key: Some(String::new()),
             name_latex: None,
             name_unicode: None,
-            name_simplified: None,
             default_address: None,
         };
         assert!(validate_update_institution(&input).is_err());
@@ -99,7 +93,6 @@ mod tests {
             institution_key: None,
             name_latex: Some("New Name".to_string()),
             name_unicode: None,
-            name_simplified: None,
             default_address: None,
         };
         assert!(validate_update_institution(&input).is_ok());

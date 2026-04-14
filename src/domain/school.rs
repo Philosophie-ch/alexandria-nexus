@@ -16,8 +16,6 @@ pub struct School {
     #[crud(required)]
     pub name_latex: String,
     #[crud(required)]
-    pub name_simplified: String,
-    #[crud(required)]
     pub name_unicode: String,
     #[crud(required)]
     pub school_key: String,

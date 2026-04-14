@@ -12,7 +12,7 @@ use serde::Deserialize;
 /// - `entry_type` — exact match on `entry_type::entry_type`
 /// - `epoch` — exact match on `epoch::epoch`
 /// - `journal_id` — exact match on `journal_id`
-/// - `search_term` — LIKE on `title_simplified`
+/// - `search_term` — LIKE on `title_unicode`
 /// - `year_from` — >= on `date_year`
 /// - `year_to` — <= on `date_year`
 #[derive(Filter, Debug, Default, Deserialize)]
@@ -25,7 +25,7 @@ pub struct BibItemQuery {
     pub epoch: Option<String>,
     #[query(eq = "journal_id")]
     pub journal_id: Option<i64>,
-    #[query(like = "title_simplified")]
+    #[query(like = "title_unicode")]
     pub search_term: Option<String>,
     #[query(gte = "date_year")]
     pub year_from: Option<i16>,

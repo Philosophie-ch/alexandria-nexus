@@ -8,9 +8,9 @@ use serde::Deserialize;
 /// Query parameters for filtering institution results.
 ///
 /// Supported filters:
-/// - `name` — LIKE on `name_simplified`
+/// - `name` — LIKE on `name_unicode`
 #[derive(Filter, Debug, Default, Deserialize)]
 pub struct InstitutionQuery {
-    #[query(like = "name_simplified")]
+    #[query(like = "name_unicode")]
     pub name: Option<String>,
 }

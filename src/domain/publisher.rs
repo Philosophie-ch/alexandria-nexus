@@ -16,8 +16,6 @@ pub struct Publisher {
     #[crud(required)]
     pub name_latex: String,
     #[crud(required)]
-    pub name_simplified: String,
-    #[crud(required)]
     pub name_unicode: String,
     #[crud(required)]
     pub publisher_key: String,

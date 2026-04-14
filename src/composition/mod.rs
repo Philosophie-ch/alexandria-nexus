@@ -5,7 +5,7 @@ pub mod state;
 use hexforge::{
     Api, CorsConfig, CrudPermissions, CrudResourceConfig, JunctionConfig, OpenApiConfig,
     Permission, Resource,
-    axum_exports::{Router, get},
+    axum_exports::{DefaultBodyLimit, Router, get},
 };
 
 pub use state::AppState;
@@ -304,5 +304,8 @@ pub fn build_app(pool: hexforge::DatabasePool, cors: CorsConfig) -> Router {
         .with_cors(cors)
         .build();
 
-    Router::new().route("/health", get(health)).merge(api)
+    Router::new()
+        .route("/health", get(health))
+        .merge(api)
+        .layer(DefaultBodyLimit::max(100 * 1024 * 1024))
 }

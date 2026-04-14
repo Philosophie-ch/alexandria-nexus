@@ -15,9 +15,7 @@ pub fn validate_create_series(input: &CreateSeries) -> Result<(), ValidationErro
         return Err(ValidationError::required("series_key"));
     }
 
-    let has_name = !input.name_latex.trim().is_empty()
-        || !input.name_unicode.trim().is_empty()
-        || !input.name_simplified.trim().is_empty();
+    let has_name = !input.name_latex.trim().is_empty() || !input.name_unicode.trim().is_empty();
 
     if !has_name {
         return Err(ValidationError::required("name"));
@@ -51,7 +49,6 @@ mod tests {
             series_key: "synthese_library".to_string(),
             name_latex: "Synthese Library".to_string(),
             name_unicode: String::new(),
-            name_simplified: String::new(),
         };
         assert!(validate_create_series(&input).is_ok());
     }
@@ -62,7 +59,6 @@ mod tests {
             series_key: String::new(),
             name_latex: "Synthese Library".to_string(),
             name_unicode: String::new(),
-            name_simplified: String::new(),
         };
         assert!(validate_create_series(&input).is_err());
     }
@@ -73,7 +69,6 @@ mod tests {
             series_key: "synthese_library".to_string(),
             name_latex: String::new(),
             name_unicode: String::new(),
-            name_simplified: String::new(),
         };
         assert!(validate_create_series(&input).is_err());
     }
@@ -84,7 +79,6 @@ mod tests {
             series_key: Some(String::new()),
             name_latex: None,
             name_unicode: None,
-            name_simplified: None,
         };
         assert!(validate_update_series(&input).is_err());
     }
@@ -95,7 +89,6 @@ mod tests {
             series_key: None,
             name_latex: Some("New Name".to_string()),
             name_unicode: None,
-            name_simplified: None,
         };
         assert!(validate_update_series(&input).is_ok());
     }

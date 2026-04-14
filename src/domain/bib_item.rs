@@ -71,11 +71,11 @@ pub struct BibItem {
 use crate::domain::bib_string_normalize;
 
 pub fn create_bib_item_transform(input: &mut CreateBibItem) {
-    bib_string_normalize(&input.booktitle_latex, &mut input.booktitle_unicode, &mut input.booktitle_simplified);
-    bib_string_normalize(&input.title_latex, &mut input.title_unicode, &mut input.title_simplified);
+    bib_string_normalize(&input.booktitle_latex, &mut input.booktitle_unicode);
+    bib_string_normalize(&input.title_latex, &mut input.title_unicode);
 }
 
 pub fn update_bib_item_transform(input: &mut UpdateBibItem) {
-    bib_string_normalize(&input.booktitle_latex, &mut input.booktitle_unicode, &mut input.booktitle_simplified);
-    bib_string_normalize(&input.title_latex, &mut input.title_unicode, &mut input.title_simplified);
+    bib_string_normalize(&input.booktitle_latex, &mut input.booktitle_unicode);
+    bib_string_normalize(&input.title_latex, &mut input.title_unicode);
 }

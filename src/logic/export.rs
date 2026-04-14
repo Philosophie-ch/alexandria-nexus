@@ -133,19 +133,14 @@ pub async fn export_authors_csv(
         "author_key",
         "given_name_latex",
         "given_name_unicode",
-        "given_name_simplified",
         "family_name_latex",
         "family_name_unicode",
-        "family_name_simplified",
         "mononym_latex",
         "mononym_unicode",
-        "mononym_simplified",
         "shorthand_latex",
         "shorthand_unicode",
-        "shorthand_simplified",
         "famous_name_latex",
         "famous_name_unicode",
-        "famous_name_simplified",
     ])
     .map_err(|e| HexforgeError::internal(e.to_string()))?;
 
@@ -155,19 +150,14 @@ pub async fn export_authors_csv(
             &a.author_key,
             opt_str(&a.given_name_latex),
             opt_str(&a.given_name_unicode),
-            opt_str(&a.given_name_simplified),
             opt_str(&a.family_name_latex),
             opt_str(&a.family_name_unicode),
-            opt_str(&a.family_name_simplified),
             opt_str(&a.mononym_latex),
             opt_str(&a.mononym_unicode),
-            opt_str(&a.mononym_simplified),
             opt_str(&a.shorthand_latex),
             opt_str(&a.shorthand_unicode),
-            opt_str(&a.shorthand_simplified),
             opt_str(&a.famous_name_latex),
             opt_str(&a.famous_name_unicode),
-            opt_str(&a.famous_name_simplified),
         ])
         .map_err(|e| HexforgeError::internal(e.to_string()))?;
     }
@@ -192,7 +182,6 @@ pub async fn export_journals_csv(
         "journal_key",
         "name_latex",
         "name_unicode",
-        "name_simplified",
         "issn_print",
         "issn_electronic",
     ])
@@ -204,7 +193,6 @@ pub async fn export_journals_csv(
             &j.journal_key,
             &j.name_latex,
             &j.name_unicode,
-            &j.name_simplified,
             opt_str(&j.issn_print),
             opt_str(&j.issn_electronic),
         ])
@@ -231,7 +219,6 @@ pub async fn export_publishers_csv(
         "publisher_key",
         "name_latex",
         "name_unicode",
-        "name_simplified",
         "default_address",
     ])
     .map_err(|e| HexforgeError::internal(e.to_string()))?;
@@ -242,7 +229,6 @@ pub async fn export_publishers_csv(
             &p.publisher_key,
             &p.name_latex,
             &p.name_unicode,
-            &p.name_simplified,
             opt_str(&p.default_address),
         ])
         .map_err(|e| HexforgeError::internal(e.to_string()))?;
@@ -268,7 +254,6 @@ pub async fn export_institutions_csv(
         "institution_key",
         "name_latex",
         "name_unicode",
-        "name_simplified",
         "default_address",
     ])
     .map_err(|e| HexforgeError::internal(e.to_string()))?;
@@ -279,7 +264,6 @@ pub async fn export_institutions_csv(
             &inst.institution_key,
             &inst.name_latex,
             &inst.name_unicode,
-            &inst.name_simplified,
             opt_str(&inst.default_address),
         ])
         .map_err(|e| HexforgeError::internal(e.to_string()))?;
@@ -304,7 +288,6 @@ pub async fn export_schools_csv(
         "school_key",
         "name_latex",
         "name_unicode",
-        "name_simplified",
         "default_address",
     ])
     .map_err(|e| HexforgeError::internal(e.to_string()))?;
@@ -315,7 +298,6 @@ pub async fn export_schools_csv(
             &s.school_key,
             &s.name_latex,
             &s.name_unicode,
-            &s.name_simplified,
             opt_str(&s.default_address),
         ])
         .map_err(|e| HexforgeError::internal(e.to_string()))?;
@@ -336,14 +318,8 @@ pub async fn export_series_csv(
         fetch_entities_by_request(&state.series_ds, "series_key", all, ids, keys).await?;
 
     let mut wtr = csv::Writer::from_writer(vec![]);
-    wtr.write_record([
-        "id",
-        "series_key",
-        "name_latex",
-        "name_unicode",
-        "name_simplified",
-    ])
-    .map_err(|e| HexforgeError::internal(e.to_string()))?;
+    wtr.write_record(["id", "series_key", "name_latex", "name_unicode"])
+        .map_err(|e| HexforgeError::internal(e.to_string()))?;
 
     for s in &series_list {
         wtr.write_record([
@@ -351,7 +327,6 @@ pub async fn export_series_csv(
             &s.series_key,
             &s.name_latex,
             &s.name_unicode,
-            &s.name_simplified,
         ])
         .map_err(|e| HexforgeError::internal(e.to_string()))?;
     }
@@ -499,10 +474,8 @@ const IDS_FORMAT_HEADER: &[&str] = &[
     "pubstate",
     "title_latex",
     "title_unicode",
-    "title_simplified",
     "booktitle_latex",
     "booktitle_unicode",
-    "booktitle_simplified",
     "crossref_id",
     "journal_id",
     "volume",
@@ -603,10 +576,8 @@ async fn build_bibitems_ids_csv(
             &opt_display(&bib.pubstate),
             &bib.title_latex,
             &bib.title_unicode,
-            &bib.title_simplified,
             opt_str(&bib.booktitle_latex),
             opt_str(&bib.booktitle_unicode),
-            opt_str(&bib.booktitle_simplified),
             &opt_i64(bib.crossref_id),
             &opt_i64(bib.journal_id),
             opt_str(&bib.volume),
@@ -682,10 +653,8 @@ const EXPANDED_FORMAT_HEADER: &[&str] = &[
     "pubstate",
     "title_latex",
     "title_unicode",
-    "title_simplified",
     "booktitle_latex",
     "booktitle_unicode",
-    "booktitle_simplified",
     "crossref",
     "journal",
     "volume",
@@ -814,31 +783,31 @@ async fn build_bibitems_expanded_csv(
         let journal_name = bib
             .journal_id
             .and_then(|id| journals_map.get(&id))
-            .map(|j| j.name_simplified.as_str())
+            .map(|j| j.name_unicode.as_str())
             .unwrap_or("");
 
         let publisher_name = bib
             .publisher_id
             .and_then(|id| publishers_map.get(&id))
-            .map(|p| p.name_simplified.as_str())
+            .map(|p| p.name_unicode.as_str())
             .unwrap_or("");
 
         let institution_name = bib
             .institution_id
             .and_then(|id| institutions_map.get(&id))
-            .map(|i| i.name_simplified.as_str())
+            .map(|i| i.name_unicode.as_str())
             .unwrap_or("");
 
         let school_name = bib
             .school_id
             .and_then(|id| schools_map.get(&id))
-            .map(|s| s.name_simplified.as_str())
+            .map(|s| s.name_unicode.as_str())
             .unwrap_or("");
 
         let series_name = bib
             .series_id
             .and_then(|id| series_map.get(&id))
-            .map(|s| s.name_simplified.as_str())
+            .map(|s| s.name_unicode.as_str())
             .unwrap_or("");
 
         let crossref_bibkey = bib
@@ -865,10 +834,8 @@ async fn build_bibitems_expanded_csv(
             &opt_display(&bib.pubstate),
             &bib.title_latex,
             &bib.title_unicode,
-            &bib.title_simplified,
             opt_str(&bib.booktitle_latex),
             opt_str(&bib.booktitle_unicode),
-            opt_str(&bib.booktitle_simplified),
             crossref_bibkey,
             journal_name,
             opt_str(&bib.volume),
@@ -908,7 +875,7 @@ async fn build_bibitems_expanded_csv(
 
 /// Format author/editor/guesteditor names for a given role.
 ///
-/// Returns "LastName, FirstName and LastName2, FirstName2" using simplified names,
+/// Returns "LastName, FirstName and LastName2, FirstName2" using unicode names,
 /// ordered by position.
 fn format_role_names(
     bib_authors: Option<&Vec<&BibitemAuthorRow>>,
@@ -929,11 +896,11 @@ fn format_role_names(
                 .iter()
                 .filter_map(|r| {
                     authors_map.get(&r.author_id).map(|a| {
-                        if let Some(ref mononym) = a.mononym_simplified {
+                        if let Some(ref mononym) = a.mononym_unicode {
                             mononym.clone()
                         } else {
-                            let family = a.family_name_simplified.as_deref().unwrap_or("");
-                            let given = a.given_name_simplified.as_deref().unwrap_or("");
+                            let family = a.family_name_unicode.as_deref().unwrap_or("");
+                            let given = a.given_name_unicode.as_deref().unwrap_or("");
                             if given.is_empty() {
                                 family.to_string()
                             } else {

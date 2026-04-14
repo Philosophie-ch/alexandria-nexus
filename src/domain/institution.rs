@@ -18,8 +18,6 @@ pub struct Institution {
     #[crud(required)]
     pub name_latex: String,
     #[crud(required)]
-    pub name_simplified: String,
-    #[crud(required)]
     pub name_unicode: String,
     #[crud(skip)]
     pub created_at: DateTime<Utc>,

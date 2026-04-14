@@ -17,20 +17,15 @@ pub struct Author {
     pub author_key: String,
     pub family_name_latex: Option<String>,
     pub family_name_unicode: Option<String>,
-    pub family_name_simplified: Option<String>,
     pub famous_name_latex: Option<String>,
     pub famous_name_unicode: Option<String>,
-    pub famous_name_simplified: Option<String>,
     pub given_name_latex: Option<String>,
     pub given_name_unicode: Option<String>,
-    pub given_name_simplified: Option<String>,
     pub mononym_latex: Option<String>,
     pub mononym_unicode: Option<String>,
-    pub mononym_simplified: Option<String>,
     pub name_variants: Option<Vec<String>>,
     pub shorthand_latex: Option<String>,
     pub shorthand_unicode: Option<String>,
-    pub shorthand_simplified: Option<String>,
     #[crud(skip)]
     pub created_at: DateTime<Utc>,
     #[crud(skip)]
@@ -40,57 +35,17 @@ pub struct Author {
 use crate::domain::bib_string_normalize;
 
 fn pre_create_author(input: &mut CreateAuthor) {
-    bib_string_normalize(
-        &input.family_name_latex,
-        &mut input.family_name_unicode,
-        &mut input.family_name_simplified,
-    );
-    bib_string_normalize(
-        &input.famous_name_latex,
-        &mut input.famous_name_unicode,
-        &mut input.famous_name_simplified,
-    );
-    bib_string_normalize(
-        &input.given_name_latex,
-        &mut input.given_name_unicode,
-        &mut input.given_name_simplified,
-    );
-    bib_string_normalize(
-        &input.mononym_latex,
-        &mut input.mononym_unicode,
-        &mut input.mononym_simplified,
-    );
-    bib_string_normalize(
-        &input.shorthand_latex,
-        &mut input.shorthand_unicode,
-        &mut input.shorthand_simplified,
-    );
+    bib_string_normalize(&input.family_name_latex, &mut input.family_name_unicode);
+    bib_string_normalize(&input.famous_name_latex, &mut input.famous_name_unicode);
+    bib_string_normalize(&input.given_name_latex, &mut input.given_name_unicode);
+    bib_string_normalize(&input.mononym_latex, &mut input.mononym_unicode);
+    bib_string_normalize(&input.shorthand_latex, &mut input.shorthand_unicode);
 }
 
 fn pre_update_author(input: &mut UpdateAuthor) {
-    bib_string_normalize(
-        &input.family_name_latex,
-        &mut input.family_name_unicode,
-        &mut input.family_name_simplified,
-    );
-    bib_string_normalize(
-        &input.famous_name_latex,
-        &mut input.famous_name_unicode,
-        &mut input.famous_name_simplified,
-    );
-    bib_string_normalize(
-        &input.given_name_latex,
-        &mut input.given_name_unicode,
-        &mut input.given_name_simplified,
-    );
-    bib_string_normalize(
-        &input.mononym_latex,
-        &mut input.mononym_unicode,
-        &mut input.mononym_simplified,
-    );
-    bib_string_normalize(
-        &input.shorthand_latex,
-        &mut input.shorthand_unicode,
-        &mut input.shorthand_simplified,
-    );
+    bib_string_normalize(&input.family_name_latex, &mut input.family_name_unicode);
+    bib_string_normalize(&input.famous_name_latex, &mut input.famous_name_unicode);
+    bib_string_normalize(&input.given_name_latex, &mut input.given_name_unicode);
+    bib_string_normalize(&input.mononym_latex, &mut input.mononym_unicode);
+    bib_string_normalize(&input.shorthand_latex, &mut input.shorthand_unicode);
 }

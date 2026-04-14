@@ -20,10 +20,6 @@ pub fn validate_create_author(input: &CreateAuthor) -> Result<(), ValidationErro
         || input
             .family_name_unicode
             .as_ref()
-            .is_some_and(|s| !s.trim().is_empty())
-        || input
-            .family_name_simplified
-            .as_ref()
             .is_some_and(|s| !s.trim().is_empty());
 
     let has_mononym = input
@@ -32,10 +28,6 @@ pub fn validate_create_author(input: &CreateAuthor) -> Result<(), ValidationErro
         .is_some_and(|s| !s.trim().is_empty())
         || input
             .mononym_unicode
-            .as_ref()
-            .is_some_and(|s| !s.trim().is_empty())
-        || input
-            .mononym_simplified
             .as_ref()
             .is_some_and(|s| !s.trim().is_empty());
 
@@ -67,19 +59,14 @@ mod tests {
             author_key: "kant".to_string(),
             given_name_latex: Some("Immanuel".to_string()),
             given_name_unicode: None,
-            given_name_simplified: None,
             family_name_latex: Some("Kant".to_string()),
             family_name_unicode: None,
-            family_name_simplified: None,
             mononym_latex: None,
             mononym_unicode: None,
-            mononym_simplified: None,
             shorthand_latex: None,
             shorthand_unicode: None,
-            shorthand_simplified: None,
             famous_name_latex: None,
             famous_name_unicode: None,
-            famous_name_simplified: None,
             name_variants: None,
         };
         assert!(validate_create_author(&input).is_ok());
@@ -91,19 +78,14 @@ mod tests {
             author_key: "aristotle".to_string(),
             given_name_latex: None,
             given_name_unicode: None,
-            given_name_simplified: None,
             family_name_latex: None,
             family_name_unicode: None,
-            family_name_simplified: None,
             mononym_latex: Some("Aristotle".to_string()),
             mononym_unicode: None,
-            mononym_simplified: None,
             shorthand_latex: None,
             shorthand_unicode: None,
-            shorthand_simplified: None,
             famous_name_latex: None,
             famous_name_unicode: None,
-            famous_name_simplified: None,
             name_variants: None,
         };
         assert!(validate_create_author(&input).is_ok());
@@ -115,19 +97,14 @@ mod tests {
             author_key: "nobody".to_string(),
             given_name_latex: Some("Just".to_string()),
             given_name_unicode: None,
-            given_name_simplified: None,
             family_name_latex: None,
             family_name_unicode: None,
-            family_name_simplified: None,
             mononym_latex: None,
             mononym_unicode: None,
-            mononym_simplified: None,
             shorthand_latex: None,
             shorthand_unicode: None,
-            shorthand_simplified: None,
             famous_name_latex: None,
             famous_name_unicode: None,
-            famous_name_simplified: None,
             name_variants: None,
         };
         assert!(validate_create_author(&input).is_err());

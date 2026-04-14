@@ -153,6 +153,7 @@ fn require_column(headers: &csv::StringRecord, name: &str) -> Result<usize, Hexf
 pub async fn import_authors_from_csv(
     state: &AppState,
     data: Vec<u8>,
+    auto_assign_ids: bool,
 ) -> Result<ImportResponse, HexforgeError> {
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(true)
@@ -168,19 +169,14 @@ pub async fn import_authors_from_csv(
     let col_author_key = require_column(&headers, "author_key")?;
     let col_given_name_latex = column_index(&headers, "given_name_latex");
     let col_given_name_unicode = column_index(&headers, "given_name_unicode");
-    let col_given_name_simplified = column_index(&headers, "given_name_simplified");
     let col_family_name_latex = column_index(&headers, "family_name_latex");
     let col_family_name_unicode = column_index(&headers, "family_name_unicode");
-    let col_family_name_simplified = column_index(&headers, "family_name_simplified");
     let col_mononym_latex = column_index(&headers, "mononym_latex");
     let col_mononym_unicode = column_index(&headers, "mononym_unicode");
-    let col_mononym_simplified = column_index(&headers, "mononym_simplified");
     let col_shorthand_latex = column_index(&headers, "shorthand_latex");
     let col_shorthand_unicode = column_index(&headers, "shorthand_unicode");
-    let col_shorthand_simplified = column_index(&headers, "shorthand_simplified");
     let col_famous_name_latex = column_index(&headers, "famous_name_latex");
     let col_famous_name_unicode = column_index(&headers, "famous_name_unicode");
-    let col_famous_name_simplified = column_index(&headers, "famous_name_simplified");
     let col_name_variants = column_index(&headers, "name_variants");
 
     let mut imported = 0usize;
@@ -245,28 +241,18 @@ pub async fn import_authors_from_csv(
                         given_name_latex: col_given_name_latex.and_then(|i| get_field(&record, i)),
                         given_name_unicode: col_given_name_unicode
                             .and_then(|i| get_field(&record, i)),
-                        given_name_simplified: col_given_name_simplified
-                            .and_then(|i| get_field(&record, i)),
                         family_name_latex: col_family_name_latex
                             .and_then(|i| get_field(&record, i)),
                         family_name_unicode: col_family_name_unicode
                             .and_then(|i| get_field(&record, i)),
-                        family_name_simplified: col_family_name_simplified
-                            .and_then(|i| get_field(&record, i)),
                         mononym_latex: col_mononym_latex.and_then(|i| get_field(&record, i)),
                         mononym_unicode: col_mononym_unicode.and_then(|i| get_field(&record, i)),
-                        mononym_simplified: col_mononym_simplified
-                            .and_then(|i| get_field(&record, i)),
                         shorthand_latex: col_shorthand_latex.and_then(|i| get_field(&record, i)),
                         shorthand_unicode: col_shorthand_unicode
-                            .and_then(|i| get_field(&record, i)),
-                        shorthand_simplified: col_shorthand_simplified
                             .and_then(|i| get_field(&record, i)),
                         famous_name_latex: col_famous_name_latex
                             .and_then(|i| get_field(&record, i)),
                         famous_name_unicode: col_famous_name_unicode
-                            .and_then(|i| get_field(&record, i)),
-                        famous_name_simplified: col_famous_name_simplified
                             .and_then(|i| get_field(&record, i)),
                         name_variants: name_variants.clone(),
                     };
@@ -296,28 +282,18 @@ pub async fn import_authors_from_csv(
                         given_name_latex: col_given_name_latex.and_then(|i| get_field(&record, i)),
                         given_name_unicode: col_given_name_unicode
                             .and_then(|i| get_field(&record, i)),
-                        given_name_simplified: col_given_name_simplified
-                            .and_then(|i| get_field(&record, i)),
                         family_name_latex: col_family_name_latex
                             .and_then(|i| get_field(&record, i)),
                         family_name_unicode: col_family_name_unicode
                             .and_then(|i| get_field(&record, i)),
-                        family_name_simplified: col_family_name_simplified
-                            .and_then(|i| get_field(&record, i)),
                         mononym_latex: col_mononym_latex.and_then(|i| get_field(&record, i)),
                         mononym_unicode: col_mononym_unicode.and_then(|i| get_field(&record, i)),
-                        mononym_simplified: col_mononym_simplified
-                            .and_then(|i| get_field(&record, i)),
                         shorthand_latex: col_shorthand_latex.and_then(|i| get_field(&record, i)),
                         shorthand_unicode: col_shorthand_unicode
-                            .and_then(|i| get_field(&record, i)),
-                        shorthand_simplified: col_shorthand_simplified
                             .and_then(|i| get_field(&record, i)),
                         famous_name_latex: col_famous_name_latex
                             .and_then(|i| get_field(&record, i)),
                         famous_name_unicode: col_famous_name_unicode
-                            .and_then(|i| get_field(&record, i)),
-                        famous_name_simplified: col_famous_name_simplified
                             .and_then(|i| get_field(&record, i)),
                         name_variants,
                     };
@@ -352,24 +328,28 @@ pub async fn import_authors_from_csv(
             }
         }
 
-        // No ID — create normally
+        // No ID
+        if !auto_assign_ids {
+            errors.push(ImportRowError {
+                row: row_num,
+                identifier: author_key,
+                error: "Missing id (use ?auto_assign_ids=true to auto-assign)".to_string(),
+            });
+            continue;
+        }
+
         let dto = CreateAuthor {
             author_key: author_key.clone(),
             given_name_latex: col_given_name_latex.and_then(|i| get_field(&record, i)),
             given_name_unicode: col_given_name_unicode.and_then(|i| get_field(&record, i)),
-            given_name_simplified: col_given_name_simplified.and_then(|i| get_field(&record, i)),
             family_name_latex: col_family_name_latex.and_then(|i| get_field(&record, i)),
             family_name_unicode: col_family_name_unicode.and_then(|i| get_field(&record, i)),
-            family_name_simplified: col_family_name_simplified.and_then(|i| get_field(&record, i)),
             mononym_latex: col_mononym_latex.and_then(|i| get_field(&record, i)),
             mononym_unicode: col_mononym_unicode.and_then(|i| get_field(&record, i)),
-            mononym_simplified: col_mononym_simplified.and_then(|i| get_field(&record, i)),
             shorthand_latex: col_shorthand_latex.and_then(|i| get_field(&record, i)),
             shorthand_unicode: col_shorthand_unicode.and_then(|i| get_field(&record, i)),
-            shorthand_simplified: col_shorthand_simplified.and_then(|i| get_field(&record, i)),
             famous_name_latex: col_famous_name_latex.and_then(|i| get_field(&record, i)),
             famous_name_unicode: col_famous_name_unicode.and_then(|i| get_field(&record, i)),
-            famous_name_simplified: col_famous_name_simplified.and_then(|i| get_field(&record, i)),
             name_variants,
         };
 
@@ -411,6 +391,7 @@ pub async fn import_authors_from_csv(
 pub async fn import_journals_from_csv(
     state: &AppState,
     data: Vec<u8>,
+    auto_assign_ids: bool,
 ) -> Result<ImportResponse, HexforgeError> {
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(true)
@@ -426,7 +407,6 @@ pub async fn import_journals_from_csv(
     let col_journal_key = require_column(&headers, "journal_key")?;
     let col_name_latex = column_index(&headers, "name_latex");
     let col_name_unicode = column_index(&headers, "name_unicode");
-    let col_name_simplified = column_index(&headers, "name_simplified");
     let col_issn_print = column_index(&headers, "issn_print");
     let col_issn_electronic = column_index(&headers, "issn_electronic");
 
@@ -482,7 +462,6 @@ pub async fn import_journals_from_csv(
                         journal_key: Some(journal_key.clone()),
                         name_latex: col_name_latex.and_then(|i| get_field(&record, i)),
                         name_unicode: col_name_unicode.and_then(|i| get_field(&record, i)),
-                        name_simplified: col_name_simplified.and_then(|i| get_field(&record, i)),
                         issn_print: col_issn_print.and_then(|i| get_field(&record, i)),
                         issn_electronic: col_issn_electronic.and_then(|i| get_field(&record, i)),
                     };
@@ -513,9 +492,6 @@ pub async fn import_journals_from_csv(
                             .and_then(|i| get_field(&record, i))
                             .unwrap_or_default(),
                         name_unicode: col_name_unicode
-                            .and_then(|i| get_field(&record, i))
-                            .unwrap_or_default(),
-                        name_simplified: col_name_simplified
                             .and_then(|i| get_field(&record, i))
                             .unwrap_or_default(),
                         issn_print: col_issn_print.and_then(|i| get_field(&record, i)),
@@ -552,16 +528,22 @@ pub async fn import_journals_from_csv(
             }
         }
 
-        // No ID — create normally
+        // No ID
+        if !auto_assign_ids {
+            errors.push(ImportRowError {
+                row: row_num,
+                identifier: journal_key,
+                error: "Missing id (use ?auto_assign_ids=true to auto-assign)".to_string(),
+            });
+            continue;
+        }
+
         let dto = CreateJournal {
             journal_key: journal_key.clone(),
             name_latex: col_name_latex
                 .and_then(|i| get_field(&record, i))
                 .unwrap_or_default(),
             name_unicode: col_name_unicode
-                .and_then(|i| get_field(&record, i))
-                .unwrap_or_default(),
-            name_simplified: col_name_simplified
                 .and_then(|i| get_field(&record, i))
                 .unwrap_or_default(),
             issn_print: col_issn_print.and_then(|i| get_field(&record, i)),
@@ -606,6 +588,7 @@ pub async fn import_journals_from_csv(
 pub async fn import_publishers_from_csv(
     state: &AppState,
     data: Vec<u8>,
+    auto_assign_ids: bool,
 ) -> Result<ImportResponse, HexforgeError> {
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(true)
@@ -621,7 +604,6 @@ pub async fn import_publishers_from_csv(
     let col_publisher_key = require_column(&headers, "publisher_key")?;
     let col_name_latex = column_index(&headers, "name_latex");
     let col_name_unicode = column_index(&headers, "name_unicode");
-    let col_name_simplified = column_index(&headers, "name_simplified");
     let col_default_address = column_index(&headers, "default_address");
 
     let mut imported = 0usize;
@@ -676,7 +658,6 @@ pub async fn import_publishers_from_csv(
                         publisher_key: Some(publisher_key.clone()),
                         name_latex: col_name_latex.and_then(|i| get_field(&record, i)),
                         name_unicode: col_name_unicode.and_then(|i| get_field(&record, i)),
-                        name_simplified: col_name_simplified.and_then(|i| get_field(&record, i)),
                         default_address: col_default_address.and_then(|i| get_field(&record, i)),
                     };
                     if let Err(e) = validate_update_publisher(&update_dto) {
@@ -706,9 +687,6 @@ pub async fn import_publishers_from_csv(
                             .and_then(|i| get_field(&record, i))
                             .unwrap_or_default(),
                         name_unicode: col_name_unicode
-                            .and_then(|i| get_field(&record, i))
-                            .unwrap_or_default(),
-                        name_simplified: col_name_simplified
                             .and_then(|i| get_field(&record, i))
                             .unwrap_or_default(),
                         default_address: col_default_address.and_then(|i| get_field(&record, i)),
@@ -744,16 +722,22 @@ pub async fn import_publishers_from_csv(
             }
         }
 
-        // No ID — create normally
+        // No ID
+        if !auto_assign_ids {
+            errors.push(ImportRowError {
+                row: row_num,
+                identifier: publisher_key,
+                error: "Missing id (use ?auto_assign_ids=true to auto-assign)".to_string(),
+            });
+            continue;
+        }
+
         let dto = CreatePublisher {
             publisher_key: publisher_key.clone(),
             name_latex: col_name_latex
                 .and_then(|i| get_field(&record, i))
                 .unwrap_or_default(),
             name_unicode: col_name_unicode
-                .and_then(|i| get_field(&record, i))
-                .unwrap_or_default(),
-            name_simplified: col_name_simplified
                 .and_then(|i| get_field(&record, i))
                 .unwrap_or_default(),
             default_address: col_default_address.and_then(|i| get_field(&record, i)),
@@ -812,7 +796,6 @@ pub async fn import_institutions_from_csv(
     let col_institution_key = require_column(&headers, "institution_key")?;
     let col_name_latex = column_index(&headers, "name_latex");
     let col_name_unicode = column_index(&headers, "name_unicode");
-    let col_name_simplified = column_index(&headers, "name_simplified");
     let col_default_address = column_index(&headers, "default_address");
 
     let mut imported = 0usize;
@@ -867,7 +850,6 @@ pub async fn import_institutions_from_csv(
                         institution_key: Some(institution_key.clone()),
                         name_latex: col_name_latex.and_then(|i| get_field(&record, i)),
                         name_unicode: col_name_unicode.and_then(|i| get_field(&record, i)),
-                        name_simplified: col_name_simplified.and_then(|i| get_field(&record, i)),
                         default_address: col_default_address.and_then(|i| get_field(&record, i)),
                     };
                     if let Err(e) = validate_update_institution(&update_dto) {
@@ -897,9 +879,6 @@ pub async fn import_institutions_from_csv(
                             .and_then(|i| get_field(&record, i))
                             .unwrap_or_default(),
                         name_unicode: col_name_unicode
-                            .and_then(|i| get_field(&record, i))
-                            .unwrap_or_default(),
-                        name_simplified: col_name_simplified
                             .and_then(|i| get_field(&record, i))
                             .unwrap_or_default(),
                         default_address: col_default_address.and_then(|i| get_field(&record, i)),
@@ -942,9 +921,6 @@ pub async fn import_institutions_from_csv(
                 .and_then(|i| get_field(&record, i))
                 .unwrap_or_default(),
             name_unicode: col_name_unicode
-                .and_then(|i| get_field(&record, i))
-                .unwrap_or_default(),
-            name_simplified: col_name_simplified
                 .and_then(|i| get_field(&record, i))
                 .unwrap_or_default(),
             default_address: col_default_address.and_then(|i| get_field(&record, i)),
@@ -1003,7 +979,6 @@ pub async fn import_schools_from_csv(
     let col_school_key = require_column(&headers, "school_key")?;
     let col_name_latex = column_index(&headers, "name_latex");
     let col_name_unicode = column_index(&headers, "name_unicode");
-    let col_name_simplified = column_index(&headers, "name_simplified");
     let col_default_address = column_index(&headers, "default_address");
 
     let mut imported = 0usize;
@@ -1058,7 +1033,6 @@ pub async fn import_schools_from_csv(
                         school_key: Some(school_key.clone()),
                         name_latex: col_name_latex.and_then(|i| get_field(&record, i)),
                         name_unicode: col_name_unicode.and_then(|i| get_field(&record, i)),
-                        name_simplified: col_name_simplified.and_then(|i| get_field(&record, i)),
                         default_address: col_default_address.and_then(|i| get_field(&record, i)),
                     };
                     if let Err(e) = validate_update_school(&update_dto) {
@@ -1088,9 +1062,6 @@ pub async fn import_schools_from_csv(
                             .and_then(|i| get_field(&record, i))
                             .unwrap_or_default(),
                         name_unicode: col_name_unicode
-                            .and_then(|i| get_field(&record, i))
-                            .unwrap_or_default(),
-                        name_simplified: col_name_simplified
                             .and_then(|i| get_field(&record, i))
                             .unwrap_or_default(),
                         default_address: col_default_address.and_then(|i| get_field(&record, i)),
@@ -1133,9 +1104,6 @@ pub async fn import_schools_from_csv(
                 .and_then(|i| get_field(&record, i))
                 .unwrap_or_default(),
             name_unicode: col_name_unicode
-                .and_then(|i| get_field(&record, i))
-                .unwrap_or_default(),
-            name_simplified: col_name_simplified
                 .and_then(|i| get_field(&record, i))
                 .unwrap_or_default(),
             default_address: col_default_address.and_then(|i| get_field(&record, i)),
@@ -1194,7 +1162,6 @@ pub async fn import_series_from_csv(
     let col_series_key = require_column(&headers, "series_key")?;
     let col_name_latex = column_index(&headers, "name_latex");
     let col_name_unicode = column_index(&headers, "name_unicode");
-    let col_name_simplified = column_index(&headers, "name_simplified");
 
     let mut imported = 0usize;
     let mut updated = 0usize;
@@ -1248,7 +1215,6 @@ pub async fn import_series_from_csv(
                         series_key: Some(series_key.clone()),
                         name_latex: col_name_latex.and_then(|i| get_field(&record, i)),
                         name_unicode: col_name_unicode.and_then(|i| get_field(&record, i)),
-                        name_simplified: col_name_simplified.and_then(|i| get_field(&record, i)),
                     };
                     if let Err(e) = validate_update_series(&update_dto) {
                         errors.push(ImportRowError {
@@ -1277,9 +1243,6 @@ pub async fn import_series_from_csv(
                             .and_then(|i| get_field(&record, i))
                             .unwrap_or_default(),
                         name_unicode: col_name_unicode
-                            .and_then(|i| get_field(&record, i))
-                            .unwrap_or_default(),
-                        name_simplified: col_name_simplified
                             .and_then(|i| get_field(&record, i))
                             .unwrap_or_default(),
                     };
@@ -1321,9 +1284,6 @@ pub async fn import_series_from_csv(
                 .and_then(|i| get_field(&record, i))
                 .unwrap_or_default(),
             name_unicode: col_name_unicode
-                .and_then(|i| get_field(&record, i))
-                .unwrap_or_default(),
-            name_simplified: col_name_simplified
                 .and_then(|i| get_field(&record, i))
                 .unwrap_or_default(),
         };
@@ -1586,10 +1546,8 @@ pub async fn import_bibitems_from_csv(
     let col_pubstate = column_index(&headers, "pubstate");
     let col_title_latex = column_index(&headers, "title_latex");
     let col_title_unicode = column_index(&headers, "title_unicode");
-    let col_title_simplified = column_index(&headers, "title_simplified");
     let col_booktitle_latex = column_index(&headers, "booktitle_latex");
     let col_booktitle_unicode = column_index(&headers, "booktitle_unicode");
-    let col_booktitle_simplified = column_index(&headers, "booktitle_simplified");
     let col_crossref_id = column_index(&headers, "crossref_id");
     let col_journal_id = column_index(&headers, "journal_id");
     let col_volume = column_index(&headers, "volume");
@@ -1679,9 +1637,6 @@ pub async fn import_bibitems_from_csv(
         let title_unicode = col_title_unicode
             .and_then(|i| get_field(&record, i))
             .unwrap_or_else(|| title_latex.clone());
-        let title_simplified = col_title_simplified
-            .and_then(|i| get_field(&record, i))
-            .unwrap_or_else(|| title_latex.clone());
 
         let author_ids_list = col_author_ids
             .map(|i| parse_id_list(&record, i))
@@ -1761,10 +1716,8 @@ pub async fn import_bibitems_from_csv(
                 .and_then(|s| s.parse().ok()),
             title_latex,
             title_unicode,
-            title_simplified,
             booktitle_latex: col_booktitle_latex.and_then(|i| get_field(&record, i)),
             booktitle_unicode: col_booktitle_unicode.and_then(|i| get_field(&record, i)),
-            booktitle_simplified: col_booktitle_simplified.and_then(|i| get_field(&record, i)),
             journal_id,
             publisher_id,
             address: col_address.and_then(|i| get_field(&record, i)),
@@ -2169,10 +2122,8 @@ fn build_bibitem_update_dto(create: &CreateBibItem) -> UpdateBibItem {
         pubstate: create.pubstate,
         title_latex: Some(create.title_latex.clone()),
         title_unicode: Some(create.title_unicode.clone()),
-        title_simplified: Some(create.title_simplified.clone()),
         booktitle_latex: create.booktitle_latex.clone(),
         booktitle_unicode: create.booktitle_unicode.clone(),
-        booktitle_simplified: create.booktitle_simplified.clone(),
         journal_id: create.journal_id,
         publisher_id: create.publisher_id,
         address: create.address.clone(),

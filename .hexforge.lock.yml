@@ -137,7 +137,6 @@ custom_types:
     expands_to:
       - { suffix: "_latex", type: "Option<String>" }
       - { suffix: "_unicode", type: "Option<String>" }
-      - { suffix: "_simplified", type: "Option<String>" }
 
 # =============================================================================
 # MODELS
@@ -161,14 +160,14 @@ models:
     constraints:
       - either: [family_name_latex, mononym_latex]
     filters:
-      family_name: { op: like, column: "family_name_simplified" }
-      search_term: { op: like_any, columns: "family_name_simplified,given_name_simplified" }
+      family_name: { op: like, column: "family_name_unicode" }
+      search_term: { op: like_any, columns: "family_name_unicode,given_name_unicode" }
     indexes:
-      - { columns: [family_name_simplified] }
-      - { columns: [family_name_simplified, given_name_simplified] }
-      - { columns: [family_name_simplified], type: gin_trgm }
+      - { columns: [family_name_unicode] }
+      - { columns: [family_name_unicode, given_name_unicode] }
+      - { columns: [family_name_unicode], type: gin_trgm }
       - { columns: [name_variants], type: gin }
-      - { columns: [given_name_simplified], type: gin_trgm }
+      - { columns: [given_name_unicode], type: gin_trgm }
 
   # ---------------------------------------------------------------------------
   # Journal
@@ -180,14 +179,13 @@ models:
       journal_key: { type: string, required: true, unique: true }
       name_latex: { type: string, required: true, unique: true }
       name_unicode: { type: string, required: true }
-      name_simplified: { type: string, required: true }
       issn_print: { type: "string?" }
       issn_electronic: { type: "string?" }
     filters:
-      name: { op: like, column: "name_simplified" }
+      name: { op: like, column: "name_unicode" }
     indexes:
-      - { columns: [name_simplified] }
-      - { columns: [name_simplified], type: gin_trgm }
+      - { columns: [name_unicode] }
+      - { columns: [name_unicode], type: gin_trgm }
 
   # ---------------------------------------------------------------------------
   # Publisher
@@ -199,13 +197,12 @@ models:
       publisher_key: { type: string, required: true, unique: true }
       name_latex: { type: string, required: true, unique: true }
       name_unicode: { type: string, required: true }
-      name_simplified: { type: string, required: true }
       default_address: { type: "string?" }
     filters:
-      name: { op: like, column: "name_simplified" }
+      name: { op: like, column: "name_unicode" }
     indexes:
-      - { columns: [name_simplified] }
-      - { columns: [name_simplified], type: gin_trgm }
+      - { columns: [name_unicode] }
+      - { columns: [name_unicode], type: gin_trgm }
 
   # ---------------------------------------------------------------------------
   # Institution
@@ -217,13 +214,12 @@ models:
       institution_key: { type: string, required: true, unique: true }
       name_latex: { type: string, required: true, unique: true }
       name_unicode: { type: string, required: true }
-      name_simplified: { type: string, required: true }
       default_address: { type: "string?" }
     filters:
-      name: { op: like, column: "name_simplified" }
+      name: { op: like, column: "name_unicode" }
     indexes:
-      - { columns: [name_simplified] }
-      - { columns: [name_simplified], type: gin_trgm }
+      - { columns: [name_unicode] }
+      - { columns: [name_unicode], type: gin_trgm }
 
   # ---------------------------------------------------------------------------
   # School
@@ -235,13 +231,12 @@ models:
       school_key: { type: string, required: true, unique: true }
       name_latex: { type: string, required: true, unique: true }
       name_unicode: { type: string, required: true }
-      name_simplified: { type: string, required: true }
       default_address: { type: "string?" }
     filters:
-      name: { op: like, column: "name_simplified" }
+      name: { op: like, column: "name_unicode" }
     indexes:
-      - { columns: [name_simplified] }
-      - { columns: [name_simplified], type: gin_trgm }
+      - { columns: [name_unicode] }
+      - { columns: [name_unicode], type: gin_trgm }
 
   # ---------------------------------------------------------------------------
   # Series
@@ -253,12 +248,11 @@ models:
       series_key: { type: string, required: true, unique: true }
       name_latex: { type: string, required: true, unique: true }
       name_unicode: { type: string, required: true }
-      name_simplified: { type: string, required: true }
     filters:
-      name: { op: like, column: "name_simplified" }
+      name: { op: like, column: "name_unicode" }
     indexes:
-      - { columns: [name_simplified] }
-      - { columns: [name_simplified], type: gin_trgm }
+      - { columns: [name_unicode] }
+      - { columns: [name_unicode], type: gin_trgm }
 
   # ---------------------------------------------------------------------------
   # Keyword
@@ -385,6 +379,8 @@ models:
         extra_columns:
           - { name: role, type: "AuthorRole", default: "'author'", primary_key: true }
           - { name: position, type: "i16" }
+          - { name: name_variant_latex, type: "string?" }
+          - { name: name_variant_unicode, type: "string?" }
       keywords:
         type: many_to_many
         through: bibitem_keywords
@@ -409,7 +405,7 @@ models:
       author_id: { op: raw, sql: "id IN (SELECT bibitem_id FROM bibitem_authors WHERE author_id = $)" }
       journal_id: { op: eq, column: "journal_id" }
       epoch: { op: eq_cast, column: "epoch::epoch" }
-      search_term: { op: like, column: "title_simplified" }
+      search_term: { op: like, column: "title_unicode" }
 
     indexes:
       - { columns: [entry_type] }
@@ -417,14 +413,14 @@ models:
       - { columns: [journal_id] }
       - { columns: [publisher_id] }
       - { columns: [crossref_id] }
-      - { columns: [title_simplified], type: gin_trgm }
+      - { columns: [title_unicode], type: gin_trgm }
       - { columns: [bibkey], type: gin_trgm }
 
     projections:
       summary:
         - bibkey
         - entry_type
-        - title_simplified
+        - title_unicode
         - date_year
         - pubstate
 
@@ -433,50 +429,50 @@ models:
         type: fk
         fk: journal_id
         target: Journal
-        projection: [journal_key, name_unicode, name_simplified]
+        projection: [journal_key, name_unicode]
       publisher:
         type: fk
         fk: publisher_id
         target: Publisher
-        projection: [publisher_key, name_unicode, name_simplified]
+        projection: [publisher_key, name_unicode]
       institution:
         type: fk
         fk: institution_id
         target: Institution
-        projection: [institution_key, name_unicode, name_simplified]
+        projection: [institution_key, name_unicode]
       school:
         type: fk
         fk: school_id
         target: School
-        projection: [school_key, name_unicode, name_simplified]
+        projection: [school_key, name_unicode]
       series:
         type: fk
         fk: series_id
         target: Series
-        projection: [series_key, name_unicode, name_simplified]
+        projection: [series_key, name_unicode]
       crossref:
         type: fk
         fk: crossref_id
         target: BibItem
-        projection: [bibkey, entry_type, title_simplified, date_year]
+        projection: [bibkey, entry_type, title_unicode, date_year]
       authors:
         type: junction
         through: bibitem_authors
         filter: "role = 'author'"
         target: Author
-        projection: [author_key, given_name_unicode, given_name_simplified, family_name_unicode, family_name_simplified, mononym_unicode, mononym_simplified]
+        projection: [author_key, given_name_unicode, family_name_unicode, mononym_unicode]
       editors:
         type: junction
         through: bibitem_authors
         filter: "role = 'editor'"
         target: Author
-        projection: [author_key, given_name_unicode, given_name_simplified, family_name_unicode, family_name_simplified, mononym_unicode, mononym_simplified]
+        projection: [author_key, given_name_unicode, family_name_unicode, mononym_unicode]
       guesteditors:
         type: junction
         through: bibitem_authors
         filter: "role = 'guesteditor'"
         target: Author
-        projection: [author_key, given_name_unicode, given_name_simplified, family_name_unicode, family_name_simplified, mononym_unicode, mononym_simplified]
+        projection: [author_key, given_name_unicode, family_name_unicode, mononym_unicode]
       keywords:
         type: junction
         through: bibitem_keywords

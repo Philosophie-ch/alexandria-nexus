@@ -77,10 +77,8 @@ struct SearchRow {
     pubstate: Option<PubState>,
     title_latex: String,
     title_unicode: String,
-    title_simplified: String,
     booktitle_latex: Option<String>,
     booktitle_unicode: Option<String>,
-    booktitle_simplified: Option<String>,
     journal_id: Option<i64>,
     publisher_id: Option<i64>,
     address: Option<String>,
@@ -136,8 +134,8 @@ pub async fn perform_search(
     if !request.query.is_empty() {
         conditions.push(format!(
             r#"GREATEST(
-                COALESCE(similarity(title_simplified, ${param_idx}), 0),
-                COALESCE(similarity(booktitle_simplified, ${param_idx}), 0)
+                COALESCE(similarity(title_unicode, ${param_idx}), 0),
+                COALESCE(similarity(booktitle_unicode, ${param_idx}), 0)
             ) >= {SIMILARITY_THRESHOLD}"#
         ));
         param_idx += 1;
@@ -187,8 +185,8 @@ pub async fn perform_search(
         "date_year DESC NULLS LAST, id DESC".to_string()
     } else {
         r#"GREATEST(
-                COALESCE(similarity(title_simplified, $1), 0),
-                COALESCE(similarity(booktitle_simplified, $1), 0)
+                COALESCE(similarity(title_unicode, $1), 0),
+                COALESCE(similarity(booktitle_unicode, $1), 0)
             ) DESC,
             date_year DESC NULLS LAST,
             id DESC"#
@@ -274,10 +272,8 @@ fn search_row_to_bibitem(row: SearchRow) -> BibItem {
         pubstate: row.pubstate,
         title_latex: row.title_latex,
         title_unicode: row.title_unicode,
-        title_simplified: row.title_simplified,
         booktitle_latex: row.booktitle_latex,
         booktitle_unicode: row.booktitle_unicode,
-        booktitle_simplified: row.booktitle_simplified,
         journal_id: row.journal_id,
         publisher_id: row.publisher_id,
         address: row.address,

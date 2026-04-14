@@ -17,7 +17,7 @@ pub struct BibItemSummary {
     pub id: i64,
     pub bibkey: String,
     pub entry_type: EntryType,
-    pub title_simplified: String,
+    pub title_unicode: String,
     pub date_year: Option<i16>,
     pub pubstate: Option<PubState>,
 }
@@ -29,11 +29,8 @@ pub struct AuthorExpanded {
     pub id: i64,
     pub author_key: String,
     pub given_name_unicode: Option<String>,
-    pub given_name_simplified: Option<String>,
     pub family_name_unicode: Option<String>,
-    pub family_name_simplified: Option<String>,
     pub mononym_unicode: Option<String>,
-    pub mononym_simplified: Option<String>,
 }
 
 /// Expanded projection of [`BibItem`] for `?expand=` responses.
@@ -43,7 +40,7 @@ pub struct BibItemCrossref {
     pub id: i64,
     pub bibkey: String,
     pub entry_type: EntryType,
-    pub title_simplified: String,
+    pub title_unicode: String,
     pub date_year: Option<i16>,
 }
 
@@ -54,7 +51,6 @@ pub struct InstitutionExpanded {
     pub id: i64,
     pub institution_key: String,
     pub name_unicode: String,
-    pub name_simplified: String,
 }
 
 /// Expanded projection of [`Journal`] for `?expand=` responses.
@@ -64,7 +60,6 @@ pub struct JournalExpanded {
     pub id: i64,
     pub journal_key: String,
     pub name_unicode: String,
-    pub name_simplified: String,
 }
 
 /// Expanded projection of [`Keyword`] for `?expand=` responses.
@@ -83,7 +78,6 @@ pub struct PublisherExpanded {
     pub id: i64,
     pub publisher_key: String,
     pub name_unicode: String,
-    pub name_simplified: String,
 }
 
 /// Expanded projection of [`School`] for `?expand=` responses.
@@ -93,7 +87,6 @@ pub struct SchoolExpanded {
     pub id: i64,
     pub school_key: String,
     pub name_unicode: String,
-    pub name_simplified: String,
 }
 
 /// Expanded projection of [`Series`] for `?expand=` responses.
@@ -103,5 +96,4 @@ pub struct SeriesExpanded {
     pub id: i64,
     pub series_key: String,
     pub name_unicode: String,
-    pub name_simplified: String,
 }

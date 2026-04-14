@@ -15,8 +15,6 @@ pub struct Series {
     #[crud(required)]
     pub name_latex: String,
     #[crud(required)]
-    pub name_simplified: String,
-    #[crud(required)]
     pub name_unicode: String,
     #[crud(required)]
     pub series_key: String,

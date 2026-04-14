@@ -43,20 +43,15 @@ CREATE TABLE authors (
     author_key TEXT NOT NULL UNIQUE,
     family_name_latex TEXT,
     family_name_unicode TEXT,
-    family_name_simplified TEXT,
     famous_name_latex TEXT,
     famous_name_unicode TEXT,
-    famous_name_simplified TEXT,
     given_name_latex TEXT,
     given_name_unicode TEXT,
-    given_name_simplified TEXT,
     mononym_latex TEXT,
     mononym_unicode TEXT,
-    mononym_simplified TEXT,
     name_variants TEXT[],
     shorthand_latex TEXT,
     shorthand_unicode TEXT,
-    shorthand_simplified TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT author_has_name CHECK (family_name_latex IS NOT NULL OR mononym_latex IS NOT NULL)
@@ -67,7 +62,6 @@ CREATE TABLE institutions (
     default_address TEXT,
     institution_key TEXT NOT NULL UNIQUE,
     name_latex TEXT NOT NULL UNIQUE,
-    name_simplified TEXT NOT NULL,
     name_unicode TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -79,7 +73,6 @@ CREATE TABLE journals (
     issn_print TEXT,
     journal_key TEXT NOT NULL UNIQUE,
     name_latex TEXT NOT NULL UNIQUE,
-    name_simplified TEXT NOT NULL,
     name_unicode TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -97,7 +90,6 @@ CREATE TABLE publishers (
     id BIGSERIAL PRIMARY KEY,
     default_address TEXT,
     name_latex TEXT NOT NULL UNIQUE,
-    name_simplified TEXT NOT NULL,
     name_unicode TEXT NOT NULL,
     publisher_key TEXT NOT NULL UNIQUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -108,7 +100,6 @@ CREATE TABLE schools (
     id BIGSERIAL PRIMARY KEY,
     default_address TEXT,
     name_latex TEXT NOT NULL UNIQUE,
-    name_simplified TEXT NOT NULL,
     name_unicode TEXT NOT NULL,
     school_key TEXT NOT NULL UNIQUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -118,7 +109,6 @@ CREATE TABLE schools (
 CREATE TABLE series (
     id BIGSERIAL PRIMARY KEY,
     name_latex TEXT NOT NULL UNIQUE,
-    name_simplified TEXT NOT NULL,
     name_unicode TEXT NOT NULL,
     series_key TEXT NOT NULL UNIQUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -131,7 +121,6 @@ CREATE TABLE bibitems (
     bibkey TEXT NOT NULL UNIQUE,
     booktitle_latex TEXT,
     booktitle_unicode TEXT,
-    booktitle_simplified TEXT,
     crossref_id BIGINT REFERENCES bibitems(id),
     date_day SMALLINT,
     date_is_no_date BOOLEAN NOT NULL DEFAULT FALSE,
@@ -168,7 +157,6 @@ CREATE TABLE bibitems (
     shorthand TEXT,
     title_latex TEXT NOT NULL,
     title_unicode TEXT NOT NULL,
-    title_simplified TEXT NOT NULL,
     type_field TEXT,
     url TEXT,
     urn TEXT,
@@ -195,6 +183,8 @@ CREATE TABLE bibitem_authors (
     author_id BIGINT NOT NULL REFERENCES authors(id) ON DELETE RESTRICT,
     role author_role NOT NULL DEFAULT 'author',
     position SMALLINT NOT NULL,
+    name_variant_latex TEXT,
+    name_variant_unicode TEXT,
     PRIMARY KEY (bibitem_id, author_id, role)
 );
 CREATE INDEX idx_bibitem_authors_author_id ON bibitem_authors(author_id);
@@ -222,27 +212,27 @@ CREATE INDEX idx_bibitem_refs_target_id ON bibitem_refs(target_id);
 
 CREATE INDEX idx_api_keys_key_hash ON api_keys(key_hash);
 CREATE INDEX idx_api_keys_key_hash_partial ON api_keys(key_hash) WHERE revoked_at IS NULL;
-CREATE INDEX idx_authors_family_name_simplified ON authors(family_name_simplified);
-CREATE INDEX idx_authors_family_name_simplified_given_name_simplified ON authors(family_name_simplified, given_name_simplified);
-CREATE INDEX idx_authors_family_name_simplified_trgm ON authors USING gin(family_name_simplified gin_trgm_ops);
+CREATE INDEX idx_authors_family_name_unicode ON authors(family_name_unicode);
+CREATE INDEX idx_authors_family_name_unicode_given_name_unicode ON authors(family_name_unicode, given_name_unicode);
+CREATE INDEX idx_authors_family_name_unicode_trgm ON authors USING gin(family_name_unicode gin_trgm_ops);
 CREATE INDEX idx_authors_name_variants_gin ON authors USING gin(name_variants);
-CREATE INDEX idx_authors_given_name_simplified_trgm ON authors USING gin(given_name_simplified gin_trgm_ops);
+CREATE INDEX idx_authors_given_name_unicode_trgm ON authors USING gin(given_name_unicode gin_trgm_ops);
 CREATE INDEX idx_bibitems_entry_type ON bibitems(entry_type);
 CREATE INDEX idx_bibitems_date_year ON bibitems(date_year);
 CREATE INDEX idx_bibitems_journal_id ON bibitems(journal_id);
 CREATE INDEX idx_bibitems_publisher_id ON bibitems(publisher_id);
 CREATE INDEX idx_bibitems_crossref_id ON bibitems(crossref_id);
-CREATE INDEX idx_bibitems_title_simplified_trgm ON bibitems USING gin(title_simplified gin_trgm_ops);
+CREATE INDEX idx_bibitems_title_unicode_trgm ON bibitems USING gin(title_unicode gin_trgm_ops);
 CREATE INDEX idx_bibitems_bibkey_trgm ON bibitems USING gin(bibkey gin_trgm_ops);
-CREATE INDEX idx_institutions_name_simplified ON institutions(name_simplified);
-CREATE INDEX idx_institutions_name_simplified_trgm ON institutions USING gin(name_simplified gin_trgm_ops);
-CREATE INDEX idx_journals_name_simplified ON journals(name_simplified);
-CREATE INDEX idx_journals_name_simplified_trgm ON journals USING gin(name_simplified gin_trgm_ops);
+CREATE INDEX idx_institutions_name_unicode ON institutions(name_unicode);
+CREATE INDEX idx_institutions_name_unicode_trgm ON institutions USING gin(name_unicode gin_trgm_ops);
+CREATE INDEX idx_journals_name_unicode ON journals(name_unicode);
+CREATE INDEX idx_journals_name_unicode_trgm ON journals USING gin(name_unicode gin_trgm_ops);
 CREATE INDEX idx_keywords_level ON keywords(level);
 CREATE INDEX idx_keywords_name ON keywords(name);
-CREATE INDEX idx_publishers_name_simplified ON publishers(name_simplified);
-CREATE INDEX idx_publishers_name_simplified_trgm ON publishers USING gin(name_simplified gin_trgm_ops);
-CREATE INDEX idx_schools_name_simplified ON schools(name_simplified);
-CREATE INDEX idx_schools_name_simplified_trgm ON schools USING gin(name_simplified gin_trgm_ops);
-CREATE INDEX idx_series_name_simplified ON series(name_simplified);
-CREATE INDEX idx_series_name_simplified_trgm ON series USING gin(name_simplified gin_trgm_ops);
+CREATE INDEX idx_publishers_name_unicode ON publishers(name_unicode);
+CREATE INDEX idx_publishers_name_unicode_trgm ON publishers USING gin(name_unicode gin_trgm_ops);
+CREATE INDEX idx_schools_name_unicode ON schools(name_unicode);
+CREATE INDEX idx_schools_name_unicode_trgm ON schools USING gin(name_unicode gin_trgm_ops);
+CREATE INDEX idx_series_name_unicode ON series(name_unicode);
+CREATE INDEX idx_series_name_unicode_trgm ON series USING gin(name_unicode gin_trgm_ops);

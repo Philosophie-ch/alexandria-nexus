@@ -6,11 +6,18 @@
 //! Requires Admin permission.
 
 use axum::extract::Multipart;
-use hexforge::axum_exports::{IntoResponse, Json, Response, State, StatusCode};
+use hexforge::axum_exports::{IntoResponse, Json, Query, Response, State, StatusCode};
 use hexforge::{HexforgeError, ValidationError};
+use serde::Deserialize;
 
 use crate::logic::import::{self, BibitemImportResult, ImportResponse};
 use crate::state::AppState;
+
+#[derive(Deserialize)]
+pub struct EntityImportParams {
+    #[serde(default)]
+    pub auto_assign_ids: bool,
+}
 
 // =============================================================================
 // CSV extraction helper (HTTP-specific — deals with multipart)
@@ -46,10 +53,11 @@ pub(crate) async fn extract_csv_bytes(mut multipart: Multipart) -> Result<Vec<u8
 /// `POST /api/v1/admin/import/authors`
 pub async fn import_authors(
     State(state): State<AppState>,
+    Query(params): Query<EntityImportParams>,
     multipart: Multipart,
 ) -> Result<Json<ImportResponse>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
-    let result = import::import_authors_from_csv(&state, data).await?;
+    let result = import::import_authors_from_csv(&state, data, params.auto_assign_ids).await?;
     Ok(Json(result))
 }
 
@@ -58,10 +66,11 @@ pub async fn import_authors(
 /// `POST /api/v1/admin/import/journals`
 pub async fn import_journals(
     State(state): State<AppState>,
+    Query(params): Query<EntityImportParams>,
     multipart: Multipart,
 ) -> Result<Json<ImportResponse>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
-    let result = import::import_journals_from_csv(&state, data).await?;
+    let result = import::import_journals_from_csv(&state, data, params.auto_assign_ids).await?;
     Ok(Json(result))
 }
 
@@ -70,10 +79,11 @@ pub async fn import_journals(
 /// `POST /api/v1/admin/import/publishers`
 pub async fn import_publishers(
     State(state): State<AppState>,
+    Query(params): Query<EntityImportParams>,
     multipart: Multipart,
 ) -> Result<Json<ImportResponse>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
-    let result = import::import_publishers_from_csv(&state, data).await?;
+    let result = import::import_publishers_from_csv(&state, data, params.auto_assign_ids).await?;
     Ok(Json(result))
 }
 

@@ -13,11 +13,9 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 use crate::domain::{
-    AuthorRole, CreateAuthor, CreateBibItem, CreateInstitution, CreateJournal, CreateKeyword,
-    CreatePublisher, CreateSchool, CreateSeries, RefType, create_author_transform,
-    create_bib_item_transform, create_institution_transform, create_journal_transform,
-    create_keyword_transform, create_publisher_transform, create_school_transform,
-    create_series_transform,
+    AuthorRole, CreateBibItem, CreateInstitution, CreateKeyword, CreateSchool, CreateSeries,
+    RefType, create_bib_item_transform, create_institution_transform, create_keyword_transform,
+    create_school_transform, create_series_transform,
 };
 use crate::logic::csv_parsing::types::{
     DateRangeSeparator, FieldError, ParsedAuthor, ParsedBibRow, ParsedDate, RowParseResult,
@@ -25,8 +23,7 @@ use crate::logic::csv_parsing::types::{
 use crate::logic::csv_parsing::{CsvHeaders, parse_csv_row};
 use crate::state::AppState;
 use crate::validation::{
-    validate_create_author, validate_create_bibitem, validate_create_institution,
-    validate_create_journal, validate_create_keyword, validate_create_publisher,
+    validate_create_bibitem, validate_create_institution, validate_create_keyword,
     validate_create_school, validate_create_series,
 };
 
@@ -197,10 +194,13 @@ pub async fn validate_full_csv(
         level_3: find_missing_keywords(&collected.keywords_l3, 3, &maps.keywords),
     };
 
-    // 7. Classify bibkey references
-    let missing_crossrefs = find_missing_bibkeys(&collected.crossref_bibkeys, &maps.bibkeys);
-    let missing_further_refs = find_missing_bibkeys(&collected.further_ref_bibkeys, &maps.bibkeys);
-    let missing_depends_on = find_missing_bibkeys(&collected.depends_on_bibkeys, &maps.bibkeys);
+    // 7. Classify bibkey references (check against DB + CSV bibkeys)
+    let all_known_bibkeys: HashSet<String> = maps.bibkeys.union(&csv_bibkeys).cloned().collect();
+    let missing_crossrefs = find_missing_bibkeys(&collected.crossref_bibkeys, &all_known_bibkeys);
+    let missing_further_refs =
+        find_missing_bibkeys(&collected.further_ref_bibkeys, &all_known_bibkeys);
+    let missing_depends_on =
+        find_missing_bibkeys(&collected.depends_on_bibkeys, &all_known_bibkeys);
 
     // 8. Stale bibitems: in DB but not in CSV
     let mut stale_bibitems: Vec<String> = maps.bibkeys.difference(&csv_bibkeys).cloned().collect();
@@ -436,9 +436,6 @@ fn format_author_key(key: &AuthorNameKey) -> String {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct EntityImportReport {
-    pub created_authors: usize,
-    pub created_journals: usize,
-    pub created_publishers: usize,
     pub created_institutions: usize,
     pub created_schools: usize,
     pub created_series: usize,
@@ -470,9 +467,6 @@ pub async fn import_entities_from_full_csv(
     let maps = build_lookup_maps(pool).await?;
 
     let mut report = EntityImportReport {
-        created_authors: 0,
-        created_journals: 0,
-        created_publishers: 0,
         created_institutions: 0,
         created_schools: 0,
         created_series: 0,
@@ -480,34 +474,10 @@ pub async fn import_entities_from_full_csv(
         errors: Vec::new(),
     };
 
-    // Authors
-    for key in &collected.authors {
-        if maps.authors.contains_key(key) {
-            continue;
-        }
-        let name = format_author_key(key);
-        match create_author_from_key(key, state).await {
-            Ok(()) => report.created_authors += 1,
-            Err(e) => report.errors.push(EntityImportError {
-                entity_type: "author".to_string(),
-                name,
-                error: e,
-            }),
-        }
-    }
-
-    // Named entities
+    // Authors, journals, and publishers are NOT created here — they must be
+    // imported from their own CSVs beforehand. Validate reports missing ones.
+    // Only institutions, schools, and series are auto-created from the biblio CSV.
     for (names, map, kind) in [
-        (
-            &collected.journal_names,
-            &maps.journals,
-            NamedEntityKind::Journal,
-        ),
-        (
-            &collected.publisher_names,
-            &maps.publishers,
-            NamedEntityKind::Publisher,
-        ),
         (
             &collected.institution_names,
             &maps.institutions,
@@ -527,8 +497,6 @@ pub async fn import_entities_from_full_csv(
         let count =
             create_missing_named_entities(names, map, kind, state, &mut report.errors).await;
         match kind {
-            NamedEntityKind::Journal => report.created_journals += count,
-            NamedEntityKind::Publisher => report.created_publishers += count,
             NamedEntityKind::Institution => report.created_institutions += count,
             NamedEntityKind::School => report.created_schools += count,
             NamedEntityKind::Series => report.created_series += count,
@@ -768,8 +736,6 @@ impl CollectedNames {
 
 #[derive(Clone, Copy)]
 enum NamedEntityKind {
-    Journal,
-    Publisher,
     Institution,
     School,
     Series,
@@ -778,8 +744,6 @@ enum NamedEntityKind {
 impl NamedEntityKind {
     fn label(&self) -> &'static str {
         match self {
-            Self::Journal => "journals",
-            Self::Publisher => "publishers",
             Self::Institution => "institutions",
             Self::School => "schools",
             Self::Series => "series",
@@ -796,72 +760,6 @@ fn generate_key(name: &str) -> String {
         .to_string()
 }
 
-async fn create_author_from_key(key: &AuthorNameKey, state: &AppState) -> Result<(), String> {
-    let (author_key, dto) = match key {
-        AuthorNameKey::Named {
-            family_name,
-            given_name,
-        } => {
-            let ak = match given_name {
-                Some(g) => format!("{}_{}", generate_key(family_name), generate_key(g)),
-                None => generate_key(family_name),
-            };
-            let dto = CreateAuthor {
-                author_key: ak.clone(),
-                family_name_latex: Some(family_name.clone()),
-                family_name_unicode: Some(family_name.clone()),
-                family_name_simplified: Some(family_name.clone()),
-                given_name_latex: given_name.clone(),
-                given_name_unicode: given_name.clone(),
-                given_name_simplified: given_name.clone(),
-                mononym_latex: None,
-                mononym_unicode: None,
-                mononym_simplified: None,
-                shorthand_latex: None,
-                shorthand_unicode: None,
-                shorthand_simplified: None,
-                famous_name_latex: None,
-                famous_name_unicode: None,
-                famous_name_simplified: None,
-                name_variants: None,
-            };
-            (ak, dto)
-        }
-        AuthorNameKey::Mononym(m) => {
-            let ak = generate_key(m);
-            let dto = CreateAuthor {
-                author_key: ak.clone(),
-                family_name_latex: None,
-                family_name_unicode: None,
-                family_name_simplified: None,
-                given_name_latex: None,
-                given_name_unicode: None,
-                given_name_simplified: None,
-                mononym_latex: Some(m.clone()),
-                mononym_unicode: Some(m.clone()),
-                mononym_simplified: Some(m.clone()),
-                shorthand_latex: None,
-                shorthand_unicode: None,
-                shorthand_simplified: None,
-                famous_name_latex: None,
-                famous_name_unicode: None,
-                famous_name_simplified: None,
-                name_variants: None,
-            };
-            (ak, dto)
-        }
-    };
-
-    validate_create_author(&dto).map_err(|e| e.to_string())?;
-    let entity = create_author_transform(dto);
-    state
-        .author_ds
-        .insert(entity)
-        .await
-        .map_err(|e| format!("failed to create author '{author_key}': {e}"))?;
-    Ok(())
-}
-
 async fn create_missing_named_entities(
     requested: &HashSet<String>,
     existing: &HashMap<String, i64>,
@@ -876,8 +774,6 @@ async fn create_missing_named_entities(
         }
         let key = generate_key(name);
         let result = match kind {
-            NamedEntityKind::Journal => create_named_entity_journal(&key, name, state).await,
-            NamedEntityKind::Publisher => create_named_entity_publisher(&key, name, state).await,
             NamedEntityKind::Institution => {
                 create_named_entity_institution(&key, name, state).await
             }
@@ -896,51 +792,6 @@ async fn create_missing_named_entities(
     created
 }
 
-async fn create_named_entity_journal(
-    key: &str,
-    name: &str,
-    state: &AppState,
-) -> Result<(), String> {
-    let dto = CreateJournal {
-        journal_key: key.to_string(),
-        name_latex: name.to_string(),
-        name_unicode: name.to_string(),
-        name_simplified: name.to_string(),
-        issn_print: None,
-        issn_electronic: None,
-    };
-    validate_create_journal(&dto).map_err(|e| e.to_string())?;
-    let entity = create_journal_transform(dto);
-    state
-        .journal_ds
-        .insert(entity)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-async fn create_named_entity_publisher(
-    key: &str,
-    name: &str,
-    state: &AppState,
-) -> Result<(), String> {
-    let dto = CreatePublisher {
-        publisher_key: key.to_string(),
-        name_latex: name.to_string(),
-        name_unicode: name.to_string(),
-        name_simplified: name.to_string(),
-        default_address: None,
-    };
-    validate_create_publisher(&dto).map_err(|e| e.to_string())?;
-    let entity = create_publisher_transform(dto);
-    state
-        .publisher_ds
-        .insert(entity)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
 async fn create_named_entity_institution(
     key: &str,
     name: &str,
@@ -950,7 +801,6 @@ async fn create_named_entity_institution(
         institution_key: key.to_string(),
         name_latex: name.to_string(),
         name_unicode: name.to_string(),
-        name_simplified: name.to_string(),
         default_address: None,
     };
     validate_create_institution(&dto).map_err(|e| e.to_string())?;
@@ -968,7 +818,6 @@ async fn create_named_entity_school(key: &str, name: &str, state: &AppState) -> 
         school_key: key.to_string(),
         name_latex: name.to_string(),
         name_unicode: name.to_string(),
-        name_simplified: name.to_string(),
         default_address: None,
     };
     validate_create_school(&dto).map_err(|e| e.to_string())?;
@@ -986,7 +835,6 @@ async fn create_named_entity_series(key: &str, name: &str, state: &AppState) -> 
         series_key: key.to_string(),
         name_latex: name.to_string(),
         name_unicode: name.to_string(),
-        name_simplified: name.to_string(),
     };
     validate_create_series(&dto).map_err(|e| e.to_string())?;
     let entity = create_series_transform(dto);
@@ -1158,10 +1006,8 @@ fn build_bibitem_dto(row: &ParsedBibRow, ctx: &ResolutionCtx) -> Result<CreateBi
         pubstate: row.pubstate,
         title_latex: row.title.clone(),
         title_unicode: String::new(),
-        title_simplified: String::new(),
         booktitle_latex: row.booktitle.clone(),
         booktitle_unicode: None,
-        booktitle_simplified: None,
         journal_id: row
             .journal_name
             .as_ref()

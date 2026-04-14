@@ -8,12 +8,12 @@ use serde::Deserialize;
 /// Query parameters for filtering author results.
 ///
 /// Supported filters:
-/// - `family_name` — LIKE on `family_name_simplified`
-/// - `search_term` — LIKE across `family_name_simplified,given_name_simplified`
+/// - `family_name` — LIKE on `family_name_unicode`
+/// - `search_term` — LIKE across `family_name_unicode,given_name_unicode`
 #[derive(Filter, Debug, Default, Deserialize)]
 pub struct AuthorQuery {
-    #[query(like = "family_name_simplified")]
+    #[query(like = "family_name_unicode")]
     pub family_name: Option<String>,
-    #[query(like_any = "family_name_simplified,given_name_simplified")]
+    #[query(like_any = "family_name_unicode,given_name_unicode")]
     pub search_term: Option<String>,
 }

@@ -20,7 +20,6 @@ pub struct BibItem {
     pub bibkey: String,
     pub booktitle_latex: Option<String>,
     pub booktitle_unicode: Option<String>,
-    pub booktitle_simplified: Option<String>,
     pub crossref_id: Option<i64>,
     pub date_day: Option<i16>,
     pub date_is_no_date: bool,
@@ -60,8 +59,6 @@ pub struct BibItem {
     pub title_latex: String,
     #[crud(required)]
     pub title_unicode: String,
-    #[crud(required)]
-    pub title_simplified: String,
     pub type_field: Option<String>,
     pub url: Option<String>,
     pub urn: Option<String>,
@@ -75,27 +72,11 @@ pub struct BibItem {
 use crate::domain::{bib_string_normalize, bib_string_normalize_required};
 
 fn pre_create_bib_item(input: &mut CreateBibItem) {
-    bib_string_normalize(
-        &input.booktitle_latex,
-        &mut input.booktitle_unicode,
-        &mut input.booktitle_simplified,
-    );
-    bib_string_normalize_required(
-        &input.title_latex,
-        &mut input.title_unicode,
-        &mut input.title_simplified,
-    );
+    bib_string_normalize(&input.booktitle_latex, &mut input.booktitle_unicode);
+    bib_string_normalize_required(&input.title_latex, &mut input.title_unicode);
 }
 
 fn pre_update_bib_item(input: &mut UpdateBibItem) {
-    bib_string_normalize(
-        &input.booktitle_latex,
-        &mut input.booktitle_unicode,
-        &mut input.booktitle_simplified,
-    );
-    bib_string_normalize(
-        &input.title_latex,
-        &mut input.title_unicode,
-        &mut input.title_simplified,
-    );
+    bib_string_normalize(&input.booktitle_latex, &mut input.booktitle_unicode);
+    bib_string_normalize(&input.title_latex, &mut input.title_unicode);
 }
