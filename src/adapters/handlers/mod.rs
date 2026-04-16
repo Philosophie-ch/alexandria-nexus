@@ -15,8 +15,8 @@ pub use full_import::{
     export_full_csv, import_entities_from_full_csv, import_full_csv, validate_full_csv,
 };
 pub use import::{
-    import_authors, import_bibitems, import_institutions, import_journals, import_keywords,
-    import_publishers, import_schools, import_series,
+    import_author_name_variants, import_authors, import_bibitems, import_institutions,
+    import_journals, import_keywords, import_publishers, import_schools, import_series,
 };
 pub use keyword_tree::get_keyword_tree;
 pub use render::render_bibitems;

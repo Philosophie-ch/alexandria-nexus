@@ -6,10 +6,14 @@
 
 use std::collections::{HashMap, HashSet};
 
-use hexforge::db_exports::{FromRow, query_as};
+use hexforge::db_exports::query_as;
 use hexforge::{HexforgeError, WhereClause};
 use serde::Deserialize;
 
+use crate::adapters::db::queries::junctions::{
+    fetch_bibitem_authors_batch, fetch_bibitem_keywords_batch,
+};
+use crate::domain::junctions::{BibitemAuthorsRow, BibitemKeywordsRow};
 use crate::domain::{
     Author, AuthorRole, BibItem, Institution, Journal, Keyword, Publisher, School, Series,
 };
@@ -71,27 +75,6 @@ impl From<HexforgeError> for ExportError {
     fn from(e: HexforgeError) -> Self {
         ExportError::Internal(e)
     }
-}
-
-// =============================================================================
-// Junction row types for batch queries
-// =============================================================================
-
-/// A row from bibitem_authors junction table.
-#[derive(Debug, FromRow)]
-pub struct BibitemAuthorRow {
-    pub bibitem_id: i64,
-    pub author_id: i64,
-    pub role: String,
-    pub position: i16,
-}
-
-/// A row from bibitem_keywords junction table.
-#[derive(Debug, FromRow)]
-pub struct BibitemKeywordRow {
-    pub bibitem_id: i64,
-    pub keyword_id: i64,
-    pub keyword_level: i16,
 }
 
 // =============================================================================
@@ -525,11 +508,11 @@ async fn build_bibitems_ids_csv(
     let bibitem_ids: Vec<i64> = bibitems.iter().map(|b| b.id).collect();
 
     // Batch-fetch junction data
-    let author_rows = fetch_bibitem_authors_batch(state, &bibitem_ids).await?;
-    let keyword_rows = fetch_bibitem_keywords_batch(state, &bibitem_ids).await?;
+    let author_rows = fetch_bibitem_authors_batch(state.pool.pool(), &bibitem_ids).await?;
+    let keyword_rows = fetch_bibitem_keywords_batch(state.pool.pool(), &bibitem_ids).await?;
 
     // Group authors by bibitem_id
-    let mut authors_by_bibitem: HashMap<i64, Vec<&BibitemAuthorRow>> = HashMap::new();
+    let mut authors_by_bibitem: HashMap<i64, Vec<&BibitemAuthorsRow>> = HashMap::new();
     for row in &author_rows {
         authors_by_bibitem
             .entry(row.bibitem_id)
@@ -538,7 +521,7 @@ async fn build_bibitems_ids_csv(
     }
 
     // Group keywords by bibitem_id
-    let mut keywords_by_bibitem: HashMap<i64, Vec<&BibitemKeywordRow>> = HashMap::new();
+    let mut keywords_by_bibitem: HashMap<i64, Vec<&BibitemKeywordsRow>> = HashMap::new();
     for row in &keyword_rows {
         keywords_by_bibitem
             .entry(row.bibitem_id)
@@ -617,11 +600,11 @@ async fn build_bibitems_ids_csv(
 }
 
 /// Format author IDs for a given role, sorted by position.
-fn format_role_ids(bib_authors: Option<&Vec<&BibitemAuthorRow>>, role: AuthorRole) -> String {
+fn format_role_ids(bib_authors: Option<&Vec<&BibitemAuthorsRow>>, role: AuthorRole) -> String {
     let role_str = role.to_string();
     bib_authors
         .map(|rows| {
-            let mut filtered: Vec<&BibitemAuthorRow> = rows
+            let mut filtered: Vec<&BibitemAuthorsRow> = rows
                 .iter()
                 .filter(|r| r.role == role_str)
                 .copied()
@@ -740,8 +723,8 @@ async fn build_bibitems_expanded_csv(
     let crossrefs_map = batch_fetch_map(&state.bibitem_ds, &crossref_ids).await?;
 
     // 4. Batch-query junction tables
-    let author_rows = fetch_bibitem_authors_batch(state, &bibitem_ids).await?;
-    let keyword_rows = fetch_bibitem_keywords_batch(state, &bibitem_ids).await?;
+    let author_rows = fetch_bibitem_authors_batch(state.pool.pool(), &bibitem_ids).await?;
+    let keyword_rows = fetch_bibitem_keywords_batch(state.pool.pool(), &bibitem_ids).await?;
 
     // Build author lookup: author_id -> Author
     let all_author_ids: HashSet<i64> = author_rows.iter().map(|r| r.author_id).collect();
@@ -752,7 +735,7 @@ async fn build_bibitems_expanded_csv(
     let keywords_map = batch_fetch_map(&state.keyword_ds, &all_keyword_ids).await?;
 
     // Group junction data by bibitem_id
-    let mut authors_by_bibitem: HashMap<i64, Vec<&BibitemAuthorRow>> = HashMap::new();
+    let mut authors_by_bibitem: HashMap<i64, Vec<&BibitemAuthorsRow>> = HashMap::new();
     for row in &author_rows {
         authors_by_bibitem
             .entry(row.bibitem_id)
@@ -760,7 +743,7 @@ async fn build_bibitems_expanded_csv(
             .push(row);
     }
 
-    let mut keywords_by_bibitem: HashMap<i64, Vec<&BibitemKeywordRow>> = HashMap::new();
+    let mut keywords_by_bibitem: HashMap<i64, Vec<&BibitemKeywordsRow>> = HashMap::new();
     for row in &keyword_rows {
         keywords_by_bibitem
             .entry(row.bibitem_id)
@@ -878,14 +861,14 @@ async fn build_bibitems_expanded_csv(
 /// Returns "LastName, FirstName and LastName2, FirstName2" using unicode names,
 /// ordered by position.
 fn format_role_names(
-    bib_authors: Option<&Vec<&BibitemAuthorRow>>,
+    bib_authors: Option<&Vec<&BibitemAuthorsRow>>,
     role: AuthorRole,
     authors_map: &HashMap<i64, Author>,
 ) -> String {
     let role_str = role.to_string();
     bib_authors
         .map(|rows| {
-            let mut filtered: Vec<&BibitemAuthorRow> = rows
+            let mut filtered: Vec<&BibitemAuthorsRow> = rows
                 .iter()
                 .filter(|r| r.role == role_str)
                 .copied()
@@ -918,7 +901,7 @@ fn format_role_names(
 
 /// Format keyword names at a given level, semicolon-separated.
 fn format_keywords_at_level(
-    bib_keywords: Option<&Vec<&BibitemKeywordRow>>,
+    bib_keywords: Option<&Vec<&BibitemKeywordsRow>>,
     level: i16,
     keywords_map: &HashMap<i64, Keyword>,
 ) -> String {
@@ -1144,52 +1127,4 @@ where
         .fetch_all(pool)
         .await
         .map_err(|e| ExportError::Internal(HexforgeError::data_source(e)))
-}
-
-// =============================================================================
-// Batch junction queries
-// =============================================================================
-
-/// Batch-fetch all bibitem_authors rows for the given bibitem IDs.
-async fn fetch_bibitem_authors_batch(
-    state: &AppState,
-    bibitem_ids: &[i64],
-) -> Result<Vec<BibitemAuthorRow>, ExportError> {
-    if bibitem_ids.is_empty() {
-        return Ok(vec![]);
-    }
-    query_as::<_, BibitemAuthorRow>(
-        r#"
-        SELECT bibitem_id, author_id, role::text as role, position
-        FROM bibitem_authors
-        WHERE bibitem_id = ANY($1)
-        ORDER BY bibitem_id, role, position
-        "#,
-    )
-    .bind(bibitem_ids)
-    .fetch_all(state.pool.pool())
-    .await
-    .map_err(|e| ExportError::Internal(HexforgeError::data_source(e)))
-}
-
-/// Batch-fetch all bibitem_keywords rows for the given bibitem IDs.
-async fn fetch_bibitem_keywords_batch(
-    state: &AppState,
-    bibitem_ids: &[i64],
-) -> Result<Vec<BibitemKeywordRow>, ExportError> {
-    if bibitem_ids.is_empty() {
-        return Ok(vec![]);
-    }
-    query_as::<_, BibitemKeywordRow>(
-        r#"
-        SELECT bibitem_id, keyword_id, keyword_level
-        FROM bibitem_keywords
-        WHERE bibitem_id = ANY($1)
-        ORDER BY bibitem_id, keyword_level
-        "#,
-    )
-    .bind(bibitem_ids)
-    .fetch_all(state.pool.pool())
-    .await
-    .map_err(|e| ExportError::Internal(HexforgeError::data_source(e)))
 }

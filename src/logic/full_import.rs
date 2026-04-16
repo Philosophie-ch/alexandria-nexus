@@ -12,6 +12,10 @@ use hexforge::{DataSource, HexforgeError, ValidationError};
 use serde::Serialize;
 use utoipa::ToSchema;
 
+use crate::adapters::db::queries::junctions::{
+    fetch_bibitem_authors_batch, fetch_bibitem_keywords_batch, fetch_bibitem_refs_batch,
+};
+use crate::domain::junctions::{BibitemAuthorsRow, BibitemKeywordsRow, BibitemRefsRow};
 use crate::domain::{
     AuthorRole, CreateBibItem, CreateInstitution, CreateKeyword, CreateSchool, CreateSeries,
     RefType, create_bib_item_transform, create_institution_transform, create_keyword_transform,
@@ -167,7 +171,7 @@ pub async fn validate_full_csv(
     let mut missing_authors = Vec::new();
     let mut ambiguous_authors = Vec::new();
     for key in &collected.authors {
-        match maps.authors.get(key) {
+        match maps.authors.id_map.get(key) {
             None => missing_authors.push(format_author_key(key)),
             Some(ids) if ids.len() > 1 => {
                 ambiguous_authors.push(AmbiguousAuthor {
@@ -292,9 +296,16 @@ struct AuthorRow {
     name_variants_unicode: Option<Vec<String>>,
 }
 
+struct AuthorLookupResult {
+    /// AuthorNameKey → list of matching author IDs (for validation: detect ambiguous)
+    id_map: HashMap<AuthorNameKey, Vec<i64>>,
+    /// AuthorNameKey → variant info (only for keys matched via a name variant)
+    variant_map: HashMap<AuthorNameKey, VariantInfo>,
+}
+
 async fn batch_lookup_authors(
     pool: &hexforge::db_exports::PgPool,
-) -> Result<HashMap<AuthorNameKey, Vec<i64>>, HexforgeError> {
+) -> Result<AuthorLookupResult, HexforgeError> {
     let rows: Vec<AuthorRow> = query_as(
         "SELECT id, family_name_latex, given_name_latex, mononym_latex, name_variants_latex, name_variants_unicode FROM authors",
     )
@@ -302,7 +313,9 @@ async fn batch_lookup_authors(
     .await
     .map_err(HexforgeError::data_source)?;
 
-    let mut map: HashMap<AuthorNameKey, Vec<i64>> = HashMap::new();
+    let mut id_map: HashMap<AuthorNameKey, Vec<i64>> = HashMap::new();
+    let mut variant_map: HashMap<AuthorNameKey, VariantInfo> = HashMap::new();
+
     for row in &rows {
         // Primary name key
         let key = if let Some(mononym) = &row.mononym_latex {
@@ -315,20 +328,52 @@ async fn batch_lookup_authors(
         } else {
             continue;
         };
-        map.entry(key).or_default().push(row.id);
+        id_map.entry(key).or_default().push(row.id);
 
-        // Name variants — each variant indexed as a Mononym pointing to the same author
-        for variants in [&row.name_variants_latex, &row.name_variants_unicode]
-            .into_iter()
-            .flatten()
-        {
+        // LaTeX name variants
+        if let Some(variants) = &row.name_variants_latex {
             for variant in variants {
-                let variant_key = AuthorNameKey::Mononym(variant.clone());
-                map.entry(variant_key).or_default().push(row.id);
+                let keys = parse_variant_to_keys(variant);
+                for variant_key in keys {
+                    id_map.entry(variant_key.clone()).or_default().push(row.id);
+                    variant_map
+                        .entry(variant_key)
+                        .or_insert_with(|| VariantInfo {
+                            variant_latex: Some(variant.clone()),
+                            variant_unicode: None,
+                        });
+                }
+            }
+        }
+
+        // Unicode name variants
+        if let Some(variants) = &row.name_variants_unicode {
+            for variant in variants {
+                let keys = parse_variant_to_keys(variant);
+                for variant_key in keys {
+                    id_map.entry(variant_key.clone()).or_default().push(row.id);
+                    variant_map
+                        .entry(variant_key)
+                        .or_insert_with(|| VariantInfo {
+                            variant_latex: None,
+                            variant_unicode: Some(variant.clone()),
+                        });
+                }
             }
         }
     }
-    Ok(map)
+    Ok(AuthorLookupResult {
+        id_map,
+        variant_map,
+    })
+}
+
+fn parse_variant_to_keys(variant: &str) -> Vec<AuthorNameKey> {
+    if let Ok(parsed) = crate::logic::csv_parsing::author::parse_authors(variant) {
+        parsed.iter().map(AuthorNameKey::from_parsed).collect()
+    } else {
+        vec![AuthorNameKey::Mononym(variant.to_string())]
+    }
 }
 
 #[derive(FromRow)]
@@ -596,9 +641,11 @@ pub async fn import_full_csv(
         csv_bibkeys.insert(row.bibkey.clone());
     }
     let maps = build_lookup_maps(pool).await?;
+    let author_variants = maps.authors.variant_map;
     let ctx = ResolutionCtx {
         author_resolve: maps
             .authors
+            .id_map
             .into_iter()
             .filter_map(|(k, ids)| {
                 if ids.len() == 1 {
@@ -608,6 +655,7 @@ pub async fn import_full_csv(
                 }
             })
             .collect(),
+        author_variants,
         journal_map: maps.journals,
         publisher_map: maps.publishers,
         institution_map: maps.institutions,
@@ -871,7 +919,7 @@ async fn create_keyword(name: &str, level: i16, state: &AppState) -> Result<(), 
 
 /// All DB lookup maps, built once per import operation.
 struct LookupMaps {
-    authors: HashMap<AuthorNameKey, Vec<i64>>,
+    authors: AuthorLookupResult,
     journals: HashMap<String, i64>,
     publishers: HashMap<String, i64>,
     institutions: HashMap<String, i64>,
@@ -881,9 +929,18 @@ struct LookupMaps {
     bibkeys: HashSet<String>,
 }
 
+/// Variant info for an author matched via name variant.
+#[derive(Clone)]
+struct VariantInfo {
+    variant_latex: Option<String>,
+    variant_unicode: Option<String>,
+}
+
 /// Resolution context for bibitem upsert (single-match authors only).
 struct ResolutionCtx {
     author_resolve: HashMap<AuthorNameKey, i64>,
+    /// For keys that matched via a name variant, stores the variant strings.
+    author_variants: HashMap<AuthorNameKey, VariantInfo>,
     journal_map: HashMap<String, i64>,
     publisher_map: HashMap<String, i64>,
     institution_map: HashMap<String, i64>,
@@ -951,6 +1008,7 @@ async fn upsert_bibitem_row(
         &row.authors,
         AuthorRole::Author,
         &ctx.author_resolve,
+        &ctx.author_variants,
     )
     .await?;
     insert_author_junctions(
@@ -959,6 +1017,7 @@ async fn upsert_bibitem_row(
         &row.editors,
         AuthorRole::Editor,
         &ctx.author_resolve,
+        &ctx.author_variants,
     )
     .await?;
     insert_author_junctions(
@@ -967,6 +1026,7 @@ async fn upsert_bibitem_row(
         &row.guesteditors,
         AuthorRole::Guesteditor,
         &ctx.author_resolve,
+        &ctx.author_variants,
     )
     .await?;
 
@@ -1101,6 +1161,7 @@ async fn insert_author_junctions(
     authors: &[ParsedAuthor],
     role: AuthorRole,
     resolve: &HashMap<AuthorNameKey, i64>,
+    variants: &HashMap<AuthorNameKey, VariantInfo>,
 ) -> Result<(), String> {
     let role_str = role.to_string();
     for (position, author) in authors.iter().enumerate() {
@@ -1109,15 +1170,20 @@ async fn insert_author_junctions(
             .get(&key)
             .ok_or_else(|| format!("could not resolve author: {}", author.display_name()))?;
         let pos = i16::try_from(position).map_err(|_| "too many authors")?;
+        let variant = variants.get(&key);
+        let variant_latex = variant.and_then(|v| v.variant_latex.as_deref());
+        let variant_unicode = variant.and_then(|v| v.variant_unicode.as_deref());
         query(
-            "INSERT INTO bibitem_authors (bibitem_id, author_id, role, position) \
-             VALUES ($1, $2, $3::author_role, $4) \
-             ON CONFLICT (bibitem_id, author_id, role) DO UPDATE SET position = $4",
+            "INSERT INTO bibitem_authors (bibitem_id, author_id, role, position, name_variant_latex, name_variant_unicode) \
+             VALUES ($1, $2, $3::author_role, $4, $5, $6) \
+             ON CONFLICT (bibitem_id, author_id, role) DO UPDATE SET position = $4, name_variant_latex = $5, name_variant_unicode = $6",
         )
         .bind(bibitem_id)
         .bind(author_id)
         .bind(&role_str)
         .bind(pos)
+        .bind(variant_latex)
+        .bind(variant_unicode)
         .execute(pool)
         .await
         .map_err(|e| format!("failed to link author: {e}"))?;
@@ -1268,53 +1334,22 @@ pub async fn export_full_csv(state: &AppState) -> Result<String, HexforgeError> 
     let bibkey_by_id: HashMap<i64, String> =
         bibitems.iter().map(|b| (b.id, b.bibkey.clone())).collect();
 
-    // Junction data
-    #[derive(FromRow)]
-    struct JunctionAuthorRow {
-        bibitem_id: i64,
-        author_id: i64,
-        role: String,
-        position: i16,
-    }
-    let bib_authors: Vec<JunctionAuthorRow> =
-        query_as("SELECT bibitem_id, author_id, role::text, position FROM bibitem_authors ORDER BY bibitem_id, role, position")
-            .fetch_all(pool)
-            .await
-            .map_err(HexforgeError::data_source)?;
-
-    #[derive(FromRow)]
-    struct JunctionKeywordRow {
-        bibitem_id: i64,
-        keyword_id: i64,
-    }
-    let bib_keywords: Vec<JunctionKeywordRow> =
-        query_as("SELECT bibitem_id, keyword_id FROM bibitem_keywords")
-            .fetch_all(pool)
-            .await
-            .map_err(HexforgeError::data_source)?;
-
-    #[derive(FromRow)]
-    struct JunctionRefRow {
-        source_id: i64,
-        target_id: i64,
-        ref_type: String,
-    }
-    let bib_refs: Vec<JunctionRefRow> =
-        query_as("SELECT source_id, target_id, ref_type::text FROM bibitem_refs")
-            .fetch_all(pool)
-            .await
-            .map_err(HexforgeError::data_source)?;
+    // Junction data (using generated batch-fetch functions)
+    let bib_ids: Vec<i64> = bibitems.iter().map(|b| b.id).collect();
+    let bib_authors = fetch_bibitem_authors_batch(pool, &bib_ids).await?;
+    let bib_keywords = fetch_bibitem_keywords_batch(pool, &bib_ids).await?;
+    let bib_refs = fetch_bibitem_refs_batch(pool, &bib_ids).await?;
 
     // Index junction data by bibitem_id
-    let mut authors_by_bib: HashMap<i64, Vec<&JunctionAuthorRow>> = HashMap::new();
+    let mut authors_by_bib: HashMap<i64, Vec<&BibitemAuthorsRow>> = HashMap::new();
     for row in &bib_authors {
         authors_by_bib.entry(row.bibitem_id).or_default().push(row);
     }
-    let mut keywords_by_bib: HashMap<i64, Vec<&JunctionKeywordRow>> = HashMap::new();
+    let mut keywords_by_bib: HashMap<i64, Vec<&BibitemKeywordsRow>> = HashMap::new();
     for row in &bib_keywords {
         keywords_by_bib.entry(row.bibitem_id).or_default().push(row);
     }
-    let mut refs_by_bib: HashMap<i64, Vec<&JunctionRefRow>> = HashMap::new();
+    let mut refs_by_bib: HashMap<i64, Vec<&BibitemRefsRow>> = HashMap::new();
     for row in &bib_refs {
         refs_by_bib.entry(row.source_id).or_default().push(row);
     }
@@ -1330,7 +1365,7 @@ pub async fn export_full_csv(state: &AppState) -> Result<String, HexforgeError> 
             authors_by_bib
                 .get(&bib.id)
                 .map(|rows| {
-                    let mut filtered: Vec<&&JunctionAuthorRow> =
+                    let mut filtered: Vec<&&BibitemAuthorsRow> =
                         rows.iter().filter(|r| r.role == role_str).collect();
                     filtered.sort_by_key(|r| r.position);
                     filtered

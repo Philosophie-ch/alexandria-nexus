@@ -13,6 +13,8 @@ use hexforge::db_exports::{FromRow, query_as};
 use hexforge::{HexforgeError, WhereClause};
 use serde::{Deserialize, Serialize};
 
+use crate::adapters::db::queries::junctions::fetch_bibitem_authors_batch;
+use crate::domain::junctions::BibitemAuthorsRow;
 use crate::domain::{Author, AuthorRole, BibItem};
 use crate::logic::render::{AuthorName, RenderContext, author_sort_key, render_bibliography};
 use crate::state::AppState;
@@ -49,19 +51,6 @@ struct RenderError {
 struct BadRequestError {
     error: &'static str,
     message: &'static str,
-}
-
-// =============================================================================
-// Junction row type
-// =============================================================================
-
-/// A row from bibitem_authors junction table.
-#[derive(Debug, FromRow)]
-struct BibitemAuthorRow {
-    bibitem_id: i64,
-    author_id: i64,
-    role: String,
-    position: i16,
 }
 
 // =============================================================================
@@ -231,14 +220,14 @@ pub async fn render_bibitems(
     let crossrefs_map = batch_fetch_names(&state, "bibitems", "bibkey", &crossref_ids).await?;
 
     // Batch-fetch junction data (authors/editors)
-    let author_rows = fetch_bibitem_authors_batch(&state, &bibitem_ids).await?;
+    let author_rows = fetch_bibitem_authors_batch(state.pool.pool(), &bibitem_ids).await?;
 
     // Build author lookup: author_id -> Author
     let all_author_ids: HashSet<i64> = author_rows.iter().map(|r| r.author_id).collect();
     let authors_map = batch_fetch_authors(&state, &all_author_ids).await?;
 
     // Group junction data by bibitem_id and role
-    let mut authors_by_bibitem: HashMap<i64, Vec<&BibitemAuthorRow>> = HashMap::new();
+    let mut authors_by_bibitem: HashMap<i64, Vec<&BibitemAuthorsRow>> = HashMap::new();
     for row in &author_rows {
         authors_by_bibitem
             .entry(row.bibitem_id)
@@ -311,14 +300,14 @@ fn html_response(body: String) -> Response {
 
 /// Extract AuthorName list for a specific role from junction rows.
 fn extract_role_authors(
-    bib_authors: Option<&Vec<&BibitemAuthorRow>>,
+    bib_authors: Option<&Vec<&BibitemAuthorsRow>>,
     role: AuthorRole,
     authors_map: &HashMap<i64, Author>,
 ) -> Vec<AuthorName> {
     let role_str = role.to_string();
     bib_authors
         .map(|rows| {
-            let mut filtered: Vec<&BibitemAuthorRow> = rows
+            let mut filtered: Vec<&BibitemAuthorsRow> = rows
                 .iter()
                 .filter(|r| r.role == role_str)
                 .copied()
@@ -326,19 +315,17 @@ fn extract_role_authors(
             filtered.sort_by_key(|r| r.position);
             filtered
                 .iter()
-                .filter_map(|r| authors_map.get(&r.author_id).map(author_to_name))
+                .filter_map(|r| {
+                    authors_map.get(&r.author_id).map(|a| AuthorName {
+                        family: a.family_name_unicode.clone(),
+                        given: a.given_name_unicode.clone(),
+                        mononym: a.mononym_unicode.clone(),
+                        variant_unicode: r.name_variant_unicode.clone(),
+                    })
+                })
                 .collect()
         })
         .unwrap_or_default()
-}
-
-/// Convert a domain Author to an AuthorName (using unicode fields).
-fn author_to_name(author: &Author) -> AuthorName {
-    AuthorName {
-        family: author.family_name_unicode.clone(),
-        given: author.given_name_unicode.clone(),
-        mononym: author.mononym_unicode.clone(),
-    }
 }
 
 /// Row type for batch name lookups.
@@ -385,26 +372,4 @@ async fn batch_fetch_authors(
         .await
         .map_err(HexforgeError::data_source)?;
     Ok(authors.into_iter().map(|a| (a.id, a)).collect())
-}
-
-/// Batch-fetch all bibitem_authors rows for the given bibitem IDs.
-async fn fetch_bibitem_authors_batch(
-    state: &AppState,
-    bibitem_ids: &[i64],
-) -> Result<Vec<BibitemAuthorRow>, HexforgeError> {
-    if bibitem_ids.is_empty() {
-        return Ok(vec![]);
-    }
-    query_as::<_, BibitemAuthorRow>(
-        r#"
-        SELECT bibitem_id, author_id, role::text as role, position
-        FROM bibitem_authors
-        WHERE bibitem_id = ANY($1)
-        ORDER BY bibitem_id, role, position
-        "#,
-    )
-    .bind(bibitem_ids)
-    .fetch_all(state.pool.pool())
-    .await
-    .map_err(HexforgeError::data_source)
 }

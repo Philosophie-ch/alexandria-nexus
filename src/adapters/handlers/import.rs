@@ -135,6 +135,18 @@ pub async fn import_keywords(
     Ok(Json(result))
 }
 
+/// Import author name variants from CSV.
+///
+/// `POST /api/v1/admin/import/author-name-variants`
+pub async fn import_author_name_variants(
+    State(state): State<AppState>,
+    multipart: Multipart,
+) -> Result<Json<ImportResponse>, HexforgeError> {
+    let data = extract_csv_bytes(multipart).await?;
+    let result = import::import_author_name_variants_from_csv(&state, data).await?;
+    Ok(Json(result))
+}
+
 /// Import bibitems from CSV (IDs format).
 ///
 /// `POST /api/v1/admin/import/bibitems`

@@ -95,6 +95,34 @@ pub enum BibitemImportResult {
 }
 
 // =============================================================================
+// Name variant type (for author name variant import)
+// =============================================================================
+
+/// The type of author name variant: LaTeX or Unicode.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum NameVariantType {
+    Latex,
+    Unicode,
+}
+
+impl NameVariantType {
+    fn parse(s: &str) -> Option<Self> {
+        match s {
+            "latex" => Some(Self::Latex),
+            "unicode" => Some(Self::Unicode),
+            _ => None,
+        }
+    }
+
+    fn column_name(&self) -> &'static str {
+        match self {
+            Self::Latex => "name_variants_latex",
+            Self::Unicode => "name_variants_unicode",
+        }
+    }
+}
+
+// =============================================================================
 // CSV field helpers (pure functions)
 // =============================================================================
 
@@ -1499,6 +1527,168 @@ pub async fn import_keywords_from_csv(
 
     Ok(ImportResponse {
         imported,
+        updated,
+        failed: errors.len(),
+        errors,
+    })
+}
+
+// =============================================================================
+// Author name variants import
+// =============================================================================
+
+/// Import author name variants from CSV bytes.
+///
+/// CSV format: `name_variant,type,profile_id`
+/// - `type` is `latex` or `unicode`
+/// - `profile_id` is the author's ID
+///
+/// Appends each variant to the author's `name_variants_latex` or
+/// `name_variants_unicode` array. Variants must be unique per author per type.
+pub async fn import_author_name_variants_from_csv(
+    state: &AppState,
+    data: Vec<u8>,
+) -> Result<ImportResponse, HexforgeError> {
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(true)
+        .flexible(true)
+        .from_reader(std::io::Cursor::new(data));
+
+    let headers = reader
+        .headers()
+        .map_err(|e| HexforgeError::Validation(ValidationError::custom(e.to_string())))?
+        .clone();
+
+    let col_name_variant = require_column(&headers, "name_variant")?;
+    let col_type = require_column(&headers, "type")?;
+    let col_profile_id = require_column(&headers, "profile_id")?;
+
+    let mut updated = 0usize;
+    let mut errors = Vec::new();
+    let mut seen: HashSet<(i64, NameVariantType, String)> = HashSet::new();
+
+    for (idx, result) in reader.records().enumerate() {
+        let row_num = idx + 2;
+        let record = match result {
+            Ok(r) => r,
+            Err(e) => {
+                errors.push(ImportRowError {
+                    row: row_num,
+                    identifier: String::new(),
+                    error: format!("CSV parse error: {e}"),
+                });
+                continue;
+            }
+        };
+
+        let variant = match get_field(&record, col_name_variant) {
+            Some(v) => v,
+            None => {
+                errors.push(ImportRowError {
+                    row: row_num,
+                    identifier: String::new(),
+                    error: "Missing name_variant".to_string(),
+                });
+                continue;
+            }
+        };
+
+        let variant_type = match get_field(&record, col_type) {
+            Some(t) => match NameVariantType::parse(&t) {
+                Some(vt) => vt,
+                None => {
+                    errors.push(ImportRowError {
+                        row: row_num,
+                        identifier: variant,
+                        error: format!("Invalid type '{t}', expected 'latex' or 'unicode'"),
+                    });
+                    continue;
+                }
+            },
+            None => {
+                errors.push(ImportRowError {
+                    row: row_num,
+                    identifier: variant,
+                    error: "Missing type".to_string(),
+                });
+                continue;
+            }
+        };
+
+        let profile_id = match parse_i64_field(&record, col_profile_id) {
+            Some(id) => id,
+            None => {
+                errors.push(ImportRowError {
+                    row: row_num,
+                    identifier: variant,
+                    error: "Missing or invalid profile_id".to_string(),
+                });
+                continue;
+            }
+        };
+
+        // Deduplicate within this CSV
+        if !seen.insert((profile_id, variant_type.clone(), variant.clone())) {
+            continue;
+        }
+
+        // Look up the author
+        let existing = match state.author_ds.find_by_id(&profile_id).await {
+            Ok(Some(a)) => a,
+            Ok(None) => {
+                errors.push(ImportRowError {
+                    row: row_num,
+                    identifier: variant,
+                    error: format!("Author with id {profile_id} not found"),
+                });
+                continue;
+            }
+            Err(e) => {
+                errors.push(ImportRowError {
+                    row: row_num,
+                    identifier: variant,
+                    error: format!("DB lookup error: {e}"),
+                });
+                continue;
+            }
+        };
+
+        // Append to the correct variants list (skip if already present)
+        let column = variant_type.column_name();
+        let current = match variant_type {
+            NameVariantType::Latex => &existing.name_variants_latex,
+            NameVariantType::Unicode => &existing.name_variants_unicode,
+        };
+
+        let already_has = current.as_ref().is_some_and(|v| v.contains(&variant));
+
+        if already_has {
+            continue;
+        }
+
+        // Append via SQL (atomic array_append)
+        let sql = format!(
+            "UPDATE authors SET {column} = array_append(COALESCE({column}, ARRAY[]::TEXT[]), $1) WHERE id = $2"
+        );
+        match query(&sql)
+            .bind(&variant)
+            .bind(profile_id)
+            .execute(state.pool.pool())
+            .await
+        {
+            Ok(_) => updated += 1,
+            Err(e) => {
+                errors.push(ImportRowError {
+                    row: row_num,
+                    identifier: variant,
+                    error: format!("Failed to update author {profile_id}: {e}"),
+                });
+            }
+        }
+    }
+
+    Ok(ImportResponse {
+        imported: 0,
         updated,
         failed: errors.len(),
         errors,

@@ -3,6 +3,7 @@
 //! Domain layer -- pure types and entities.
 
 pub mod enums;
+pub mod junctions;
 pub mod projections;
 
 mod api_key;
@@ -17,6 +18,7 @@ mod school;
 mod series;
 
 pub use enums::*;
+pub use junctions::*;
 
 pub use api_key::{
     ApiKey, CreateApiKey, UpdateApiKey, create_api_key_transform, update_api_key_transform,

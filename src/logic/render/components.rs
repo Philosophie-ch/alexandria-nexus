@@ -43,7 +43,12 @@ pub fn render_authors(authors: &[AuthorName], role: AuthorRole, suppress: bool) 
     let parts: Vec<String> = display_authors
         .iter()
         .map(|a| {
-            if let Some(ref mononym) = a.mononym {
+            if let Some(ref variant) = a.variant_unicode {
+                format!(
+                    "<span data-field=\"author-name\">{}</span>",
+                    esc(variant)
+                )
+            } else if let Some(ref mononym) = a.mononym {
                 format!(
                     "<span data-field=\"author-name\">{}</span>",
                     esc(mononym)

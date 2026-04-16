@@ -13,6 +13,8 @@ mod publisher;
 mod school;
 mod series;
 
+pub mod junctions;
+
 pub use api_key::ApiKeyQuery;
 pub use author::AuthorQuery;
 pub use bibitem::BibItemQuery;

@@ -21,11 +21,14 @@ use crate::domain::{BibItem, EntryType};
 ///
 /// Uses unicode name fields. For mononyms, only `mononym` is set.
 /// For regular names, `family` and `given` are set.
+/// If `variant_unicode` is set, it overrides everything (used when the
+/// bibitem references the author by an alternative name).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthorName {
     pub family: Option<String>,
     pub given: Option<String>,
     pub mononym: Option<String>,
+    pub variant_unicode: Option<String>,
 }
 
 // =============================================================================
@@ -125,7 +128,9 @@ pub fn author_sort_key(authors: &[AuthorName]) -> String {
     authors
         .iter()
         .map(|a| {
-            if let Some(ref mononym) = a.mononym {
+            if let Some(ref variant) = a.variant_unicode {
+                variant.to_lowercase()
+            } else if let Some(ref mononym) = a.mononym {
                 mononym.to_lowercase()
             } else {
                 let family = a.family.as_deref().unwrap_or("").to_lowercase();
@@ -216,6 +221,7 @@ mod tests {
             family: Some(family.to_string()),
             given: Some(given.to_string()),
             mononym: None,
+            variant_unicode: None,
         }
     }
 
@@ -225,6 +231,7 @@ mod tests {
             family: None,
             given: None,
             mononym: Some(name.to_string()),
+            variant_unicode: None,
         }
     }
 
