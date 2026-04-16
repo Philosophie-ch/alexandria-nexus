@@ -23,7 +23,8 @@ pub struct Author {
     pub given_name_unicode: Option<String>,
     pub mononym_latex: Option<String>,
     pub mononym_unicode: Option<String>,
-    pub name_variants: Option<Vec<String>>,
+    pub name_variants_latex: Option<Vec<String>>,
+    pub name_variants_unicode: Option<Vec<String>>,
     pub shorthand_latex: Option<String>,
     pub shorthand_unicode: Option<String>,
     #[crud(skip)]

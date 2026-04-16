@@ -156,7 +156,8 @@ models:
       mononym: { type: bib_string }
       shorthand: { type: bib_string }
       famous_name: { type: bib_string }
-      name_variants: { type: "string[]?" }
+      name_variants_latex: { type: "string[]?" }
+      name_variants_unicode: { type: "string[]?" }
     constraints:
       - either: [family_name_latex, mononym_latex]
     filters:
@@ -166,7 +167,8 @@ models:
       - { columns: [family_name_unicode] }
       - { columns: [family_name_unicode, given_name_unicode] }
       - { columns: [family_name_unicode], type: gin_trgm }
-      - { columns: [name_variants], type: gin }
+      - { columns: [name_variants_latex], type: gin }
+      - { columns: [name_variants_unicode], type: gin }
       - { columns: [given_name_unicode], type: gin_trgm }
 
   # ---------------------------------------------------------------------------

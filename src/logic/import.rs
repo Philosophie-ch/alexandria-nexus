@@ -177,7 +177,8 @@ pub async fn import_authors_from_csv(
     let col_shorthand_unicode = column_index(&headers, "shorthand_unicode");
     let col_famous_name_latex = column_index(&headers, "famous_name_latex");
     let col_famous_name_unicode = column_index(&headers, "famous_name_unicode");
-    let col_name_variants = column_index(&headers, "name_variants");
+    let col_name_variants_latex = column_index(&headers, "name_variants_latex");
+    let col_name_variants_unicode = column_index(&headers, "name_variants_unicode");
 
     let mut imported = 0usize;
     let mut updated = 0usize;
@@ -211,14 +212,18 @@ pub async fn import_authors_from_csv(
             }
         };
 
-        let name_variants = col_name_variants.and_then(|i| {
-            get_field(&record, i).map(|s| {
-                s.split(';')
-                    .map(|v| v.trim().to_string())
-                    .filter(|v| !v.is_empty())
-                    .collect::<Vec<_>>()
+        let parse_variants = |col: Option<usize>| -> Option<Vec<String>> {
+            col.and_then(|i| {
+                get_field(&record, i).map(|s| {
+                    s.split(';')
+                        .map(|v| v.trim().to_string())
+                        .filter(|v| !v.is_empty())
+                        .collect::<Vec<_>>()
+                })
             })
-        });
+        };
+        let name_variants_latex = parse_variants(col_name_variants_latex);
+        let name_variants_unicode = parse_variants(col_name_variants_unicode);
 
         // Check if this is an update (CSV has ID that exists in DB)
         if let Some(id) = csv_id {
@@ -254,7 +259,8 @@ pub async fn import_authors_from_csv(
                             .and_then(|i| get_field(&record, i)),
                         famous_name_unicode: col_famous_name_unicode
                             .and_then(|i| get_field(&record, i)),
-                        name_variants: name_variants.clone(),
+                        name_variants_latex: name_variants_latex.clone(),
+                        name_variants_unicode: name_variants_unicode.clone(),
                     };
                     if let Err(e) = validate_update_author(&update_dto) {
                         errors.push(ImportRowError {
@@ -295,7 +301,8 @@ pub async fn import_authors_from_csv(
                             .and_then(|i| get_field(&record, i)),
                         famous_name_unicode: col_famous_name_unicode
                             .and_then(|i| get_field(&record, i)),
-                        name_variants,
+                        name_variants_latex: name_variants_latex.clone(),
+                        name_variants_unicode: name_variants_unicode.clone(),
                     };
                     if let Err(e) = validate_create_author(&dto) {
                         errors.push(ImportRowError {
@@ -350,7 +357,8 @@ pub async fn import_authors_from_csv(
             shorthand_unicode: col_shorthand_unicode.and_then(|i| get_field(&record, i)),
             famous_name_latex: col_famous_name_latex.and_then(|i| get_field(&record, i)),
             famous_name_unicode: col_famous_name_unicode.and_then(|i| get_field(&record, i)),
-            name_variants,
+            name_variants_latex,
+            name_variants_unicode,
         };
 
         if let Err(e) = validate_create_author(&dto) {

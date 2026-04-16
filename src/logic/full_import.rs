@@ -288,14 +288,15 @@ struct AuthorRow {
     family_name_latex: Option<String>,
     given_name_latex: Option<String>,
     mononym_latex: Option<String>,
-    name_variants: Option<Vec<String>>,
+    name_variants_latex: Option<Vec<String>>,
+    name_variants_unicode: Option<Vec<String>>,
 }
 
 async fn batch_lookup_authors(
     pool: &hexforge::db_exports::PgPool,
 ) -> Result<HashMap<AuthorNameKey, Vec<i64>>, HexforgeError> {
     let rows: Vec<AuthorRow> = query_as(
-        "SELECT id, family_name_latex, given_name_latex, mononym_latex, name_variants FROM authors",
+        "SELECT id, family_name_latex, given_name_latex, mononym_latex, name_variants_latex, name_variants_unicode FROM authors",
     )
     .fetch_all(pool)
     .await
@@ -316,8 +317,11 @@ async fn batch_lookup_authors(
         };
         map.entry(key).or_default().push(row.id);
 
-        // Name variants — each variant is indexed as a Mononym pointing to the same author
-        if let Some(variants) = &row.name_variants {
+        // Name variants — each variant indexed as a Mononym pointing to the same author
+        for variants in [&row.name_variants_latex, &row.name_variants_unicode]
+            .into_iter()
+            .flatten()
+        {
             for variant in variants {
                 let variant_key = AuthorNameKey::Mononym(variant.clone());
                 map.entry(variant_key).or_default().push(row.id);
@@ -1223,7 +1227,7 @@ pub async fn export_full_csv(state: &AppState) -> Result<String, HexforgeError> 
 
     // Build reverse lookup maps (ID → name)
     let authors: Vec<AuthorRow> = query_as(
-        "SELECT id, family_name_latex, given_name_latex, mononym_latex, name_variants FROM authors",
+        "SELECT id, family_name_latex, given_name_latex, mononym_latex, name_variants_latex, name_variants_unicode FROM authors",
     )
     .fetch_all(pool)
     .await
