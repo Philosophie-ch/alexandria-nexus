@@ -138,6 +138,9 @@ pub fn format_role_names(
             let names: Vec<String> = filtered
                 .iter()
                 .filter_map(|r| {
+                    if let Some(ref variant) = r.name_variant_latex {
+                        return Some(variant.clone());
+                    }
                     authors_map.get(&r.author_id).map(|a| {
                         if let Some(ref mononym) = a.mononym_unicode {
                             mononym.clone()
@@ -706,4 +709,128 @@ pub fn build_bibitems_expanded_csv(
 
     wtr.into_inner()
         .map_err(|e| ExportError::Internal(HexforgeError::internal(e.to_string())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::Author;
+    use crate::domain::junctions::BibitemAuthorsRow;
+    use chrono::Utc;
+
+    fn make_author(id: i64, family: &str, given: &str) -> Author {
+        Author {
+            id,
+            author_key: format!("key{id}"),
+            family_name_latex: None,
+            family_name_unicode: Some(family.to_string()),
+            famous_name_latex: None,
+            famous_name_unicode: None,
+            given_name_latex: None,
+            given_name_unicode: Some(given.to_string()),
+            mononym_latex: None,
+            mononym_unicode: None,
+            name_variants_latex: None,
+            name_variants_unicode: None,
+            shorthand_latex: None,
+            shorthand_unicode: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    fn make_row(
+        bibitem_id: i64,
+        author_id: i64,
+        role: &str,
+        position: i16,
+        name_variant_latex: Option<&str>,
+    ) -> BibitemAuthorsRow {
+        BibitemAuthorsRow {
+            bibitem_id,
+            author_id,
+            role: role.to_string(),
+            position,
+            name_variant_latex: name_variant_latex.map(str::to_string),
+            name_variant_unicode: None,
+        }
+    }
+
+    #[test]
+    fn uses_name_variant_latex_when_present() {
+        let author = make_author(1, "Smith", "John");
+        let row = make_row(10, 1, "author", 1, Some("Schmidt, Hans"));
+
+        let rows = vec![&row];
+        let mut map = HashMap::new();
+        map.insert(1, author);
+
+        let result = format_role_names(Some(&rows), AuthorRole::Author, &map);
+        assert_eq!(result, "Schmidt, Hans");
+    }
+
+    #[test]
+    fn falls_back_to_canonical_when_no_variant() {
+        let author = make_author(1, "Smith", "John");
+        let row = make_row(10, 1, "author", 1, None);
+
+        let rows = vec![&row];
+        let mut map = HashMap::new();
+        map.insert(1, author);
+
+        let result = format_role_names(Some(&rows), AuthorRole::Author, &map);
+        assert_eq!(result, "Smith, John");
+    }
+
+    #[test]
+    fn mixed_variant_and_canonical() {
+        let a1 = make_author(1, "Smith", "John");
+        let a2 = make_author(2, "Müller", "Hans");
+        let row1 = make_row(10, 1, "author", 1, Some("Schmidt, Johann"));
+        let row2 = make_row(10, 2, "author", 2, None);
+
+        let rows = vec![&row1, &row2];
+        let mut map = HashMap::new();
+        map.insert(1, a1);
+        map.insert(2, a2);
+
+        let result = format_role_names(Some(&rows), AuthorRole::Author, &map);
+        assert_eq!(result, "Schmidt, Johann and Müller, Hans");
+    }
+
+    #[test]
+    fn mononym_used_when_no_variant() {
+        let mut author = make_author(1, "", "");
+        author.mononym_unicode = Some("Aristotle".to_string());
+        let row = make_row(10, 1, "author", 1, None);
+
+        let rows = vec![&row];
+        let mut map = HashMap::new();
+        map.insert(1, author);
+
+        let result = format_role_names(Some(&rows), AuthorRole::Author, &map);
+        assert_eq!(result, "Aristotle");
+    }
+
+    #[test]
+    fn filters_by_role() {
+        let author = make_author(1, "Smith", "John");
+        let row = make_row(10, 1, "editor", 1, Some("Smith, J."));
+
+        let rows = vec![&row];
+        let mut map = HashMap::new();
+        map.insert(1, author);
+
+        let author_result = format_role_names(Some(&rows), AuthorRole::Author, &map);
+        let editor_result = format_role_names(Some(&rows), AuthorRole::Editor, &map);
+        assert_eq!(author_result, "");
+        assert_eq!(editor_result, "Smith, J.");
+    }
+
+    #[test]
+    fn empty_when_no_rows() {
+        let map: HashMap<i64, Author> = HashMap::new();
+        let result = format_role_names(None, AuthorRole::Author, &map);
+        assert_eq!(result, "");
+    }
 }
