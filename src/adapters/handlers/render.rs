@@ -10,7 +10,7 @@ use hexforge::HexforgeError;
 use hexforge::axum_exports::{IntoResponse, Json, Response, State, StatusCode, header};
 use serde::{Deserialize, Serialize};
 
-use crate::adapters::render::{PgBibitemResolver, PgRenderAuthorFetcher, PgRenderNameFetcher};
+use crate::adapters::render::{PgBibitemResolver, PgRenderAuthorFetcher, PgRenderEntityFetcher};
 use crate::process::render::{
     ResolveResult, render_bibitems_to_html, resolve_by_bibkeys, resolve_by_ids,
 };
@@ -98,7 +98,7 @@ pub async fn render_bibitems(
     }
 
     // Resolve bibitems
-    let resolver = PgBibitemResolver::new(&state);
+    let resolver = PgBibitemResolver::new(&state.bibitem_ds);
     let bibitems = if let Some(ref id_list) = req.ids {
         match resolve_by_ids(&resolver, id_list).await? {
             ResolveResult::Ok(items) => items,
@@ -145,9 +145,10 @@ pub async fn render_bibitems(
     };
 
     // Render
-    let name_fetcher = PgRenderNameFetcher::new(state.pool.pool());
-    let author_fetcher = PgRenderAuthorFetcher::new(&state);
-    let html = render_bibitems_to_html(&name_fetcher, &author_fetcher, bibitems).await?;
+    let pool = state.pool.pool();
+    let entity_fetcher = PgRenderEntityFetcher::new(pool);
+    let author_fetcher = PgRenderAuthorFetcher::new(pool, &state.author_ds);
+    let html = render_bibitems_to_html(&entity_fetcher, &author_fetcher, bibitems).await?;
 
     Ok(html_response(html))
 }

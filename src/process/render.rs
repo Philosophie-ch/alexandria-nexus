@@ -32,12 +32,38 @@ pub trait BibitemResolver: Send + Sync {
     ) -> impl Future<Output = Result<Vec<BibItem>, HexforgeError>> + Send;
 }
 
-/// Contract for batch-fetching related entity names.
-pub trait RenderNameFetcher: Send + Sync {
-    fn fetch_names(
+/// Contract for batch-fetching related entity names for rendering.
+///
+/// Each method returns a map of entity ID → display name (unicode).
+/// The crossref method returns ID → bibkey instead.
+pub trait RenderEntityFetcher: Send + Sync {
+    fn fetch_journal_names(
         &self,
-        table: &str,
-        name_column: &str,
+        ids: &[i64],
+    ) -> impl Future<Output = Result<HashMap<i64, String>, HexforgeError>> + Send;
+
+    fn fetch_publisher_names(
+        &self,
+        ids: &[i64],
+    ) -> impl Future<Output = Result<HashMap<i64, String>, HexforgeError>> + Send;
+
+    fn fetch_institution_names(
+        &self,
+        ids: &[i64],
+    ) -> impl Future<Output = Result<HashMap<i64, String>, HexforgeError>> + Send;
+
+    fn fetch_school_names(
+        &self,
+        ids: &[i64],
+    ) -> impl Future<Output = Result<HashMap<i64, String>, HexforgeError>> + Send;
+
+    fn fetch_series_names(
+        &self,
+        ids: &[i64],
+    ) -> impl Future<Output = Result<HashMap<i64, String>, HexforgeError>> + Send;
+
+    fn fetch_crossref_bibkeys(
+        &self,
         ids: &[i64],
     ) -> impl Future<Output = Result<HashMap<i64, String>, HexforgeError>> + Send;
 }
@@ -111,7 +137,7 @@ pub async fn resolve_by_bibkeys(
 
 /// Fetch all related data, build RenderContexts, sort, and render to HTML.
 pub async fn render_bibitems_to_html(
-    name_fetcher: &impl RenderNameFetcher,
+    entity_fetcher: &impl RenderEntityFetcher,
     author_fetcher: &impl RenderAuthorFetcher,
     bibitems: Vec<BibItem>,
 ) -> Result<String, HexforgeError> {
@@ -151,24 +177,14 @@ pub async fn render_bibitems_to_html(
     }
 
     // Batch-fetch related entity names
-    let journals_map = name_fetcher
-        .fetch_names("journals", "name_unicode", &journal_ids)
+    let journals_map = entity_fetcher.fetch_journal_names(&journal_ids).await?;
+    let publishers_map = entity_fetcher.fetch_publisher_names(&publisher_ids).await?;
+    let institutions_map = entity_fetcher
+        .fetch_institution_names(&institution_ids)
         .await?;
-    let publishers_map = name_fetcher
-        .fetch_names("publishers", "name_unicode", &publisher_ids)
-        .await?;
-    let institutions_map = name_fetcher
-        .fetch_names("institutions", "name_unicode", &institution_ids)
-        .await?;
-    let schools_map = name_fetcher
-        .fetch_names("schools", "name_unicode", &school_ids)
-        .await?;
-    let series_map = name_fetcher
-        .fetch_names("series", "name_unicode", &series_ids)
-        .await?;
-    let crossrefs_map = name_fetcher
-        .fetch_names("bibitems", "bibkey", &crossref_ids)
-        .await?;
+    let schools_map = entity_fetcher.fetch_school_names(&school_ids).await?;
+    let series_map = entity_fetcher.fetch_series_names(&series_ids).await?;
+    let crossrefs_map = entity_fetcher.fetch_crossref_bibkeys(&crossref_ids).await?;
 
     // Batch-fetch author junction data
     let author_rows = author_fetcher.fetch_bibitem_authors(&bibitem_ids).await?;
