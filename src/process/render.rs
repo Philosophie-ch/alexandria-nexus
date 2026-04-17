@@ -82,69 +82,111 @@ pub trait RenderAuthorFetcher: Send + Sync {
 }
 
 // =============================================================================
-// Render request resolution result
+// Render request — what the process layer receives
 // =============================================================================
 
-/// Result of resolving a render request — either resolved bibitems or an error
-/// indicating which items were not found.
-pub enum ResolveResult {
-    Ok(Vec<BibItem>),
+/// Selection criteria for bibitems to render.
+pub enum RenderSelection {
+    ByIds(Vec<i64>),
+    ByBibkeys(Vec<String>),
+}
+
+/// Maximum number of items per render request.
+pub const MAX_RENDER_ITEMS: usize = 1000;
+
+// =============================================================================
+// Render errors — typed errors for the handler to map to HTTP
+// =============================================================================
+
+/// Errors from the render pipeline.
+///
+/// The handler maps these to HTTP status codes and response bodies.
+pub enum RenderPipelineError {
+    TooManyItems { requested: usize, max: usize },
     MissingIds(Vec<i64>),
     MissingBibkeys(Vec<String>),
+    Internal(HexforgeError),
+}
+
+impl From<HexforgeError> for RenderPipelineError {
+    fn from(e: HexforgeError) -> Self {
+        RenderPipelineError::Internal(e)
+    }
 }
 
 // =============================================================================
 // Orchestration
 // =============================================================================
 
-/// Resolve bibitems by IDs, returning resolved items or missing IDs.
-pub async fn resolve_by_ids(
+/// Full render pipeline: validate → resolve → fetch → build contexts → sort → render.
+///
+/// Returns rendered HTML or a typed error for the handler to map to HTTP.
+pub async fn render_pipeline(
     resolver: &impl BibitemResolver,
-    ids: &[i64],
-) -> Result<ResolveResult, HexforgeError> {
-    let found = resolver.find_by_ids(ids).await?;
-    let found_ids: HashSet<i64> = found.iter().map(|b| b.id).collect();
-    let missing: Vec<i64> = ids
-        .iter()
-        .filter(|id| !found_ids.contains(id))
-        .copied()
-        .collect();
-    if missing.is_empty() {
-        Ok(ResolveResult::Ok(found))
-    } else {
-        Ok(ResolveResult::MissingIds(missing))
+    entity_fetcher: &impl RenderEntityFetcher,
+    author_fetcher: &impl RenderAuthorFetcher,
+    selection: RenderSelection,
+) -> Result<String, RenderPipelineError> {
+    // Validate count
+    let count = match &selection {
+        RenderSelection::ByIds(ids) => ids.len(),
+        RenderSelection::ByBibkeys(keys) => keys.len(),
+    };
+    if count > MAX_RENDER_ITEMS {
+        return Err(RenderPipelineError::TooManyItems {
+            requested: count,
+            max: MAX_RENDER_ITEMS,
+        });
     }
+    if count == 0 {
+        return Ok(String::new());
+    }
+
+    // Resolve bibitems
+    let bibitems = match selection {
+        RenderSelection::ByIds(ids) => {
+            let found = resolver.find_by_ids(&ids).await?;
+            let found_ids: HashSet<i64> = found.iter().map(|b| b.id).collect();
+            let missing: Vec<i64> = ids
+                .iter()
+                .filter(|id| !found_ids.contains(id))
+                .copied()
+                .collect();
+            if !missing.is_empty() {
+                return Err(RenderPipelineError::MissingIds(missing));
+            }
+            found
+        }
+        RenderSelection::ByBibkeys(bibkeys) => {
+            let found = resolver.find_by_bibkeys(&bibkeys).await?;
+            let found_keys: HashSet<&str> = found.iter().map(|b| b.bibkey.as_str()).collect();
+            let missing: Vec<String> = bibkeys
+                .iter()
+                .filter(|k| !found_keys.contains(k.as_str()))
+                .cloned()
+                .collect();
+            if !missing.is_empty() {
+                return Err(RenderPipelineError::MissingBibkeys(missing));
+            }
+            found
+        }
+    };
+
+    // Fetch related data, build contexts, sort, render
+    let html = fetch_and_render(entity_fetcher, author_fetcher, bibitems).await?;
+    Ok(html)
 }
 
-/// Resolve bibitems by bibkeys, returning resolved items or missing bibkeys.
-pub async fn resolve_by_bibkeys(
-    resolver: &impl BibitemResolver,
-    bibkeys: &[String],
-) -> Result<ResolveResult, HexforgeError> {
-    let found = resolver.find_by_bibkeys(bibkeys).await?;
-    let found_keys: HashSet<&str> = found.iter().map(|b| b.bibkey.as_str()).collect();
-    let missing: Vec<String> = bibkeys
-        .iter()
-        .filter(|k| !found_keys.contains(k.as_str()))
-        .cloned()
-        .collect();
-    if missing.is_empty() {
-        Ok(ResolveResult::Ok(found))
-    } else {
-        Ok(ResolveResult::MissingBibkeys(missing))
-    }
-}
+// =============================================================================
+// Internal helpers
+// =============================================================================
 
 /// Fetch all related data, build RenderContexts, sort, and render to HTML.
-pub async fn render_bibitems_to_html(
+async fn fetch_and_render(
     entity_fetcher: &impl RenderEntityFetcher,
     author_fetcher: &impl RenderAuthorFetcher,
     bibitems: Vec<BibItem>,
 ) -> Result<String, HexforgeError> {
-    if bibitems.is_empty() {
-        return Ok(String::new());
-    }
-
     let bibitem_ids: Vec<i64> = bibitems.iter().map(|b| b.id).collect();
 
     // Collect unique FK IDs
