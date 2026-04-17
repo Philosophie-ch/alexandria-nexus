@@ -55,7 +55,11 @@ async fn health() -> &'static str {
 ///
 /// CORS configuration is passed in from main.rs where environment
 /// variables are read. The library layer doesn't read env vars.
-pub fn build_app(pool: hexforge::DatabasePool, cors: CorsConfig) -> Router {
+pub fn build_app(
+    pool: hexforge::DatabasePool,
+    cors: CorsConfig,
+    max_body_size_mb: usize,
+) -> Router {
     let state = AppState::new(pool.clone());
     let validator = ApiKeyValidator::new(pool);
 
@@ -308,5 +312,5 @@ pub fn build_app(pool: hexforge::DatabasePool, cors: CorsConfig) -> Router {
     Router::new()
         .route("/health", get(health))
         .merge(api)
-        .layer(DefaultBodyLimit::max(100 * 1024 * 1024))
+        .layer(DefaultBodyLimit::max(max_body_size_mb * 1024 * 1024))
 }

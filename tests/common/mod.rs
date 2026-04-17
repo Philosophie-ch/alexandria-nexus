@@ -74,7 +74,7 @@ impl TestApp {
 
         // 4. Build app
         let db_pool: DatabasePool = pool.into();
-        let app = build_app(db_pool, CorsConfig::permissive());
+        let app = build_app(db_pool, CorsConfig::permissive(), 100);
 
         // 5. Bind to random port and spawn
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

@@ -13,6 +13,8 @@ struct Config {
     host: String,
     port: String,
     allowed_origins: String,
+    /// Maximum request body size in megabytes (default: 100)
+    max_body_size_mb: usize,
     /// Optional: seed an admin API key on startup
     seed_api_key: Option<String>,
     /// Required when seed_api_key is set
@@ -66,11 +68,17 @@ impl Config {
             ));
         }
 
+        let max_body_size_mb = std::env::var("MAX_BODY_SIZE_MB")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(100);
+
         Ok(Self {
             database_url: std::env::var("DATABASE_URL").expect("validated above"),
             host: std::env::var("HOST").expect("validated above"),
             port: std::env::var("PORT").expect("validated above"),
             allowed_origins: std::env::var("ALLOWED_ORIGINS").expect("validated above"),
+            max_body_size_mb,
             seed_api_key: seed_key,
             seed_api_key_name: seed_name,
             seed_read_key,
@@ -161,7 +169,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Build and serve
-    let app = alexandria_nexus::build_app(pool, config.cors());
+    let app = alexandria_nexus::build_app(pool, config.cors(), config.max_body_size_mb);
 
     hexforge::serve(app, &config.addr()).await?;
 
