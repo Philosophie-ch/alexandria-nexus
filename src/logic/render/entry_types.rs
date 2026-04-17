@@ -198,7 +198,7 @@ pub fn render_chapter(item: &BibItem, ctx: &RenderContext) -> String {
     }
 
     // pp. PAGES
-    let pages_or_eid = if item.pages.is_some() && !item.pages.as_ref().unwrap().is_empty() {
+    let pages_or_eid = if item.pages.as_deref().is_some_and(|p| !p.is_empty()) {
         let pages_html = render_pages(item.pages.as_deref().unwrap_or(""));
         if !pages_html.is_empty() {
             format!("pp. {pages_html}")
