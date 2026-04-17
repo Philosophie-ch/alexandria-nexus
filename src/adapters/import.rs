@@ -10,7 +10,9 @@ use hexforge::db_exports::{FromRow, PgPool, query, query_as, query_scalar};
 
 use crate::domain::AuthorRole;
 use crate::logic::import::NameVariantType;
-use crate::process::import::{BibitemJunctionStore, NameVariantStore, ReferenceStore};
+use crate::process::import::{
+    BibitemJunctionStore, NameVariantStore, ReferenceStore, SequenceSyncer,
+};
 
 // =============================================================================
 // PgNameVariantStore
@@ -43,6 +45,65 @@ impl NameVariantStore for PgNameVariantStore<'_> {
         query(&sql)
             .bind(variant)
             .bind(author_id)
+            .execute(self.pool)
+            .await
+            .map_err(HexforgeError::data_source)?;
+        Ok(())
+    }
+}
+
+// =============================================================================
+// PgSequenceSyncer
+// =============================================================================
+
+/// Postgres implementation of [`SequenceSyncer`].
+///
+/// Advances the sequence for a given table to at least `MAX(id)`, preventing
+/// ID collisions after bulk inserts with explicit IDs.
+pub struct PgSequenceSyncer<'a> {
+    pool: &'a PgPool,
+}
+
+impl<'a> PgSequenceSyncer<'a> {
+    pub fn new(pool: &'a PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+impl SequenceSyncer for PgSequenceSyncer<'_> {
+    async fn sync_sequence(&self, table: &'static str) -> Result<(), HexforgeError> {
+        let sql = match table {
+            "authors" => {
+                "SELECT setval(pg_get_serial_sequence('authors', 'id'), COALESCE(MAX(id), 1)) FROM authors"
+            }
+            "journals" => {
+                "SELECT setval(pg_get_serial_sequence('journals', 'id'), COALESCE(MAX(id), 1)) FROM journals"
+            }
+            "publishers" => {
+                "SELECT setval(pg_get_serial_sequence('publishers', 'id'), COALESCE(MAX(id), 1)) FROM publishers"
+            }
+            "institutions" => {
+                "SELECT setval(pg_get_serial_sequence('institutions', 'id'), COALESCE(MAX(id), 1)) FROM institutions"
+            }
+            "schools" => {
+                "SELECT setval(pg_get_serial_sequence('schools', 'id'), COALESCE(MAX(id), 1)) FROM schools"
+            }
+            "series" => {
+                "SELECT setval(pg_get_serial_sequence('series', 'id'), COALESCE(MAX(id), 1)) FROM series"
+            }
+            "keywords" => {
+                "SELECT setval(pg_get_serial_sequence('keywords', 'id'), COALESCE(MAX(id), 1)) FROM keywords"
+            }
+            "bibitems" => {
+                "SELECT setval(pg_get_serial_sequence('bibitems', 'id'), COALESCE(MAX(id), 1)) FROM bibitems"
+            }
+            _ => {
+                return Err(HexforgeError::internal(format!(
+                    "Unknown table for sequence sync: {table}"
+                )));
+            }
+        };
+        query(sql)
             .execute(self.pool)
             .await
             .map_err(HexforgeError::data_source)?;

@@ -38,6 +38,15 @@ use hexforge::{DataSource, HexforgeError, ValidationError};
 // Traits — contracts for I/O operations that adapters implement
 // =============================================================================
 
+/// Contract for syncing a PostgreSQL sequence to the current max ID after bulk insert.
+pub trait SequenceSyncer: Send + Sync {
+    /// Advance the sequence for `table` to at least MAX(id).
+    fn sync_sequence(
+        &self,
+        table: &'static str,
+    ) -> impl Future<Output = Result<(), HexforgeError>> + Send;
+}
+
 /// Contract for author name variant operations.
 pub trait NameVariantStore: Send + Sync {
     /// Append a name variant to an author's variant array.
@@ -126,6 +135,7 @@ pub trait ReferenceStore: Send + Sync {
 /// Import authors from CSV bytes.
 pub async fn import_authors_from_csv(
     author_ds: &impl DataSource<crate::domain::Author, Id = i64, Error = hexforge::DataSourceError>,
+    syncer: &impl SequenceSyncer,
     data: Vec<u8>,
     auto_assign_ids: bool,
 ) -> Result<ImportResponse, HexforgeError> {
@@ -357,6 +367,7 @@ pub async fn import_authors_from_csv(
         }
     }
 
+    syncer.sync_sequence("authors").await?;
     Ok(ImportResponse {
         imported,
         updated,
@@ -372,6 +383,7 @@ pub async fn import_authors_from_csv(
 /// Import journals from CSV bytes.
 pub async fn import_journals_from_csv(
     journal_ds: &impl DataSource<crate::domain::Journal, Id = i64, Error = hexforge::DataSourceError>,
+    syncer: &impl SequenceSyncer,
     data: Vec<u8>,
     auto_assign_ids: bool,
 ) -> Result<ImportResponse, HexforgeError> {
@@ -554,6 +566,7 @@ pub async fn import_journals_from_csv(
         }
     }
 
+    syncer.sync_sequence("journals").await?;
     Ok(ImportResponse {
         imported,
         updated,
@@ -573,6 +586,7 @@ pub async fn import_publishers_from_csv(
         Id = i64,
         Error = hexforge::DataSourceError,
     >,
+    syncer: &impl SequenceSyncer,
     data: Vec<u8>,
     auto_assign_ids: bool,
 ) -> Result<ImportResponse, HexforgeError> {
@@ -751,6 +765,7 @@ pub async fn import_publishers_from_csv(
         }
     }
 
+    syncer.sync_sequence("publishers").await?;
     Ok(ImportResponse {
         imported,
         updated,
@@ -770,6 +785,7 @@ pub async fn import_institutions_from_csv(
         Id = i64,
         Error = hexforge::DataSourceError,
     >,
+    syncer: &impl SequenceSyncer,
     data: Vec<u8>,
 ) -> Result<ImportResponse, HexforgeError> {
     let mut reader = csv::ReaderBuilder::new()
@@ -938,6 +954,7 @@ pub async fn import_institutions_from_csv(
         }
     }
 
+    syncer.sync_sequence("institutions").await?;
     Ok(ImportResponse {
         imported,
         updated,
@@ -953,6 +970,7 @@ pub async fn import_institutions_from_csv(
 /// Import schools from CSV bytes.
 pub async fn import_schools_from_csv(
     school_ds: &impl DataSource<crate::domain::School, Id = i64, Error = hexforge::DataSourceError>,
+    syncer: &impl SequenceSyncer,
     data: Vec<u8>,
 ) -> Result<ImportResponse, HexforgeError> {
     let mut reader = csv::ReaderBuilder::new()
@@ -1121,6 +1139,7 @@ pub async fn import_schools_from_csv(
         }
     }
 
+    syncer.sync_sequence("schools").await?;
     Ok(ImportResponse {
         imported,
         updated,
@@ -1136,6 +1155,7 @@ pub async fn import_schools_from_csv(
 /// Import series from CSV bytes.
 pub async fn import_series_from_csv(
     series_ds: &impl DataSource<crate::domain::Series, Id = i64, Error = hexforge::DataSourceError>,
+    syncer: &impl SequenceSyncer,
     data: Vec<u8>,
 ) -> Result<ImportResponse, HexforgeError> {
     let mut reader = csv::ReaderBuilder::new()
@@ -1300,6 +1320,7 @@ pub async fn import_series_from_csv(
         }
     }
 
+    syncer.sync_sequence("series").await?;
     Ok(ImportResponse {
         imported,
         updated,
@@ -1315,6 +1336,7 @@ pub async fn import_series_from_csv(
 /// Import keywords from CSV bytes.
 pub async fn import_keywords_from_csv(
     keyword_ds: &impl DataSource<crate::domain::Keyword, Id = i64, Error = hexforge::DataSourceError>,
+    syncer: &impl SequenceSyncer,
     data: Vec<u8>,
 ) -> Result<ImportResponse, HexforgeError> {
     let mut reader = csv::ReaderBuilder::new()
@@ -1479,6 +1501,7 @@ pub async fn import_keywords_from_csv(
         }
     }
 
+    syncer.sync_sequence("keywords").await?;
     Ok(ImportResponse {
         imported,
         updated,
@@ -1668,6 +1691,7 @@ pub async fn import_bibitems_from_csv(
     bibitem_ds: &impl DataSource<crate::domain::BibItem, Id = i64, Error = hexforge::DataSourceError>,
     junction_store: &impl BibitemJunctionStore,
     ref_store: &impl ReferenceStore,
+    syncer: &impl SequenceSyncer,
     data: Vec<u8>,
 ) -> Result<BibitemImportResult, HexforgeError> {
     let mut reader = csv::ReaderBuilder::new()
@@ -2111,6 +2135,7 @@ pub async fn import_bibitems_from_csv(
         }
     }
 
+    syncer.sync_sequence("bibitems").await?;
     Ok(BibitemImportResult::Success(ImportResponse {
         imported,
         updated,

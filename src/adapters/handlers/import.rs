@@ -9,7 +9,9 @@ use hexforge::axum_exports::{IntoResponse, Json, Multipart, Query, Response, Sta
 use hexforge::{HexforgeError, ValidationError};
 use serde::Deserialize;
 
-use crate::adapters::import::{PgBibitemJunctionStore, PgNameVariantStore, PgReferenceStore};
+use crate::adapters::import::{
+    PgBibitemJunctionStore, PgNameVariantStore, PgReferenceStore, PgSequenceSyncer,
+};
 use crate::logic::import::{BibitemImportResult, ImportResponse};
 use crate::process::import;
 use crate::state::AppState;
@@ -58,8 +60,10 @@ pub async fn import_authors(
     multipart: Multipart,
 ) -> Result<Json<ImportResponse>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
+    let syncer = PgSequenceSyncer::new(state.pool.pool());
     let result =
-        import::import_authors_from_csv(&state.author_ds, data, params.auto_assign_ids).await?;
+        import::import_authors_from_csv(&state.author_ds, &syncer, data, params.auto_assign_ids)
+            .await?;
     Ok(Json(result))
 }
 
@@ -72,8 +76,10 @@ pub async fn import_journals(
     multipart: Multipart,
 ) -> Result<Json<ImportResponse>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
+    let syncer = PgSequenceSyncer::new(state.pool.pool());
     let result =
-        import::import_journals_from_csv(&state.journal_ds, data, params.auto_assign_ids).await?;
+        import::import_journals_from_csv(&state.journal_ds, &syncer, data, params.auto_assign_ids)
+            .await?;
     Ok(Json(result))
 }
 
@@ -86,9 +92,14 @@ pub async fn import_publishers(
     multipart: Multipart,
 ) -> Result<Json<ImportResponse>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
-    let result =
-        import::import_publishers_from_csv(&state.publisher_ds, data, params.auto_assign_ids)
-            .await?;
+    let syncer = PgSequenceSyncer::new(state.pool.pool());
+    let result = import::import_publishers_from_csv(
+        &state.publisher_ds,
+        &syncer,
+        data,
+        params.auto_assign_ids,
+    )
+    .await?;
     Ok(Json(result))
 }
 
@@ -100,7 +111,8 @@ pub async fn import_institutions(
     multipart: Multipart,
 ) -> Result<Json<ImportResponse>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
-    let result = import::import_institutions_from_csv(&state.institution_ds, data).await?;
+    let syncer = PgSequenceSyncer::new(state.pool.pool());
+    let result = import::import_institutions_from_csv(&state.institution_ds, &syncer, data).await?;
     Ok(Json(result))
 }
 
@@ -112,7 +124,8 @@ pub async fn import_schools(
     multipart: Multipart,
 ) -> Result<Json<ImportResponse>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
-    let result = import::import_schools_from_csv(&state.school_ds, data).await?;
+    let syncer = PgSequenceSyncer::new(state.pool.pool());
+    let result = import::import_schools_from_csv(&state.school_ds, &syncer, data).await?;
     Ok(Json(result))
 }
 
@@ -124,7 +137,8 @@ pub async fn import_series(
     multipart: Multipart,
 ) -> Result<Json<ImportResponse>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
-    let result = import::import_series_from_csv(&state.series_ds, data).await?;
+    let syncer = PgSequenceSyncer::new(state.pool.pool());
+    let result = import::import_series_from_csv(&state.series_ds, &syncer, data).await?;
     Ok(Json(result))
 }
 
@@ -136,7 +150,8 @@ pub async fn import_keywords(
     multipart: Multipart,
 ) -> Result<Json<ImportResponse>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
-    let result = import::import_keywords_from_csv(&state.keyword_ds, data).await?;
+    let syncer = PgSequenceSyncer::new(state.pool.pool());
+    let result = import::import_keywords_from_csv(&state.keyword_ds, &syncer, data).await?;
     Ok(Json(result))
 }
 
@@ -168,9 +183,15 @@ pub async fn import_bibitems(
     let data = extract_csv_bytes(multipart).await?;
     let junction_store = PgBibitemJunctionStore::new(state.pool.pool());
     let ref_store = PgReferenceStore::new(state.pool.pool());
-    let result =
-        import::import_bibitems_from_csv(&state.bibitem_ds, &junction_store, &ref_store, data)
-            .await?;
+    let syncer = PgSequenceSyncer::new(state.pool.pool());
+    let result = import::import_bibitems_from_csv(
+        &state.bibitem_ds,
+        &junction_store,
+        &ref_store,
+        &syncer,
+        data,
+    )
+    .await?;
 
     match result {
         BibitemImportResult::Success(resp) => Ok(Json(resp).into_response()),
