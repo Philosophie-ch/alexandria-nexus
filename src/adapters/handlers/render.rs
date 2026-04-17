@@ -1,4 +1,4 @@
-//! Render handler — builds HTML bibliography from database data.
+//! Render handler — thin HTTP wrapper for bibliography rendering.
 //!
 //! `POST /api/v1/render`
 //!
@@ -6,17 +6,14 @@
 //! Returns rendered HTML bibliography sorted by author, year, bibkey.
 //! Capped at 1000 items per request.
 
-use std::collections::{HashMap, HashSet};
-
+use hexforge::HexforgeError;
 use hexforge::axum_exports::{IntoResponse, Json, Response, State, StatusCode, header};
-use hexforge::db_exports::{FromRow, query_as};
-use hexforge::{HexforgeError, WhereClause};
 use serde::{Deserialize, Serialize};
 
-use crate::adapters::db::queries::junctions::fetch_bibitem_authors_batch;
-use crate::domain::junctions::BibitemAuthorsRow;
-use crate::domain::{Author, AuthorRole, BibItem};
-use crate::logic::render::{AuthorName, RenderContext, author_sort_key, render_bibliography};
+use crate::adapters::render::{PgBibitemResolver, PgRenderAuthorFetcher, PgRenderNameFetcher};
+use crate::process::render::{
+    ResolveResult, render_bibitems_to_html, resolve_by_bibkeys, resolve_by_ids,
+};
 use crate::state::AppState;
 
 // =============================================================================
@@ -66,7 +63,7 @@ pub async fn render_bibitems(
     State(state): State<AppState>,
     Json(req): Json<RenderRequest>,
 ) -> Result<Response, HexforgeError> {
-    // 1. Validate request
+    // Validate request
     let requested_count = req
         .ids
         .as_ref()
@@ -84,6 +81,7 @@ pub async fn render_bibitems(
             )
                 .into_response());
         }
+        Some(0) => return Ok(html_response(String::new())),
         Some(count) if count > MAX_RENDER_ITEMS => {
             return Ok((
                 StatusCode::UNPROCESSABLE_ENTITY,
@@ -99,69 +97,42 @@ pub async fn render_bibitems(
         _ => {}
     }
 
-    // 2. Resolve bibitems
-    let bibitems: Vec<BibItem> = if let Some(ref id_list) = req.ids {
-        if id_list.is_empty() {
-            return Ok(html_response(String::new()));
-        }
-        let found = state
-            .bibitem_ds
-            .find_by_ids(id_list)
-            .await
-            .map_err(HexforgeError::data_source)?;
-        let found_ids: HashSet<i64> = found.iter().map(|b| b.id).collect();
-        let missing: Vec<i64> = id_list
-            .iter()
-            .filter(|id| !found_ids.contains(id))
-            .copied()
-            .collect();
-        if !missing.is_empty() {
-            return Ok((
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Json(RenderError {
-                    error: "not_found",
-                    message: format!("{} requested ID(s) not found", missing.len()),
-                    missing_ids: Some(missing),
-                    missing_bibkeys: None,
-                }),
-            )
-                .into_response());
-        }
-        found
-    } else if let Some(ref bibkey_list) = req.bibkeys {
-        if bibkey_list.is_empty() {
-            return Ok(html_response(String::new()));
-        }
-        let mut all = Vec::new();
-        for bibkey in bibkey_list {
-            let found = state
-                .bibitem_ds
-                .find_one(WhereClause::new("bibkey = $1").bind(bibkey.clone()))
-                .await
-                .map_err(HexforgeError::data_source)?;
-            if let Some(item) = found {
-                all.push(item);
+    // Resolve bibitems
+    let resolver = PgBibitemResolver::new(&state);
+    let bibitems = if let Some(ref id_list) = req.ids {
+        match resolve_by_ids(&resolver, id_list).await? {
+            ResolveResult::Ok(items) => items,
+            ResolveResult::MissingIds(missing) => {
+                return Ok((
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(RenderError {
+                        error: "not_found",
+                        message: format!("{} requested ID(s) not found", missing.len()),
+                        missing_ids: Some(missing),
+                        missing_bibkeys: None,
+                    }),
+                )
+                    .into_response());
             }
+            ResolveResult::MissingBibkeys(_) => unreachable!(),
         }
-        let found_keys: HashSet<&str> = all.iter().map(|b| b.bibkey.as_str()).collect();
-        let missing: Vec<String> = bibkey_list
-            .iter()
-            .filter(|k| !found_keys.contains(k.as_str()))
-            .cloned()
-            .collect();
-        if !missing.is_empty() {
-            return Ok((
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Json(RenderError {
-                    error: "not_found",
-                    message: format!("{} requested bibkey(s) not found", missing.len()),
-                    missing_ids: None,
-                    missing_bibkeys: Some(missing),
-                }),
-            )
-                .into_response());
+    } else if let Some(ref bibkey_list) = req.bibkeys {
+        match resolve_by_bibkeys(&resolver, bibkey_list).await? {
+            ResolveResult::Ok(items) => items,
+            ResolveResult::MissingBibkeys(missing) => {
+                return Ok((
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(RenderError {
+                        error: "not_found",
+                        message: format!("{} requested bibkey(s) not found", missing.len()),
+                        missing_ids: None,
+                        missing_bibkeys: Some(missing),
+                    }),
+                )
+                    .into_response());
+            }
+            ResolveResult::MissingIds(_) => unreachable!(),
         }
-        all
     } else {
         return Ok((
             StatusCode::BAD_REQUEST,
@@ -173,113 +144,10 @@ pub async fn render_bibitems(
             .into_response());
     };
 
-    if bibitems.is_empty() {
-        return Ok(html_response(String::new()));
-    }
-
-    // 3. Batch-fetch all related data
-    let bibitem_ids: Vec<i64> = bibitems.iter().map(|b| b.id).collect();
-
-    // Collect unique FK IDs
-    let mut journal_ids = HashSet::new();
-    let mut publisher_ids = HashSet::new();
-    let mut institution_ids = HashSet::new();
-    let mut school_ids = HashSet::new();
-    let mut series_ids = HashSet::new();
-    let mut crossref_ids = HashSet::new();
-
-    for bib in &bibitems {
-        if let Some(id) = bib.journal_id {
-            journal_ids.insert(id);
-        }
-        if let Some(id) = bib.publisher_id {
-            publisher_ids.insert(id);
-        }
-        if let Some(id) = bib.institution_id {
-            institution_ids.insert(id);
-        }
-        if let Some(id) = bib.school_id {
-            school_ids.insert(id);
-        }
-        if let Some(id) = bib.series_id {
-            series_ids.insert(id);
-        }
-        if let Some(id) = bib.crossref_id {
-            crossref_ids.insert(id);
-        }
-    }
-
-    // Batch-fetch related entities
-    let journals_map = batch_fetch_names(&state, "journals", "name_unicode", &journal_ids).await?;
-    let publishers_map =
-        batch_fetch_names(&state, "publishers", "name_unicode", &publisher_ids).await?;
-    let institutions_map =
-        batch_fetch_names(&state, "institutions", "name_unicode", &institution_ids).await?;
-    let schools_map = batch_fetch_names(&state, "schools", "name_unicode", &school_ids).await?;
-    let series_map = batch_fetch_names(&state, "series", "name_unicode", &series_ids).await?;
-    let crossrefs_map = batch_fetch_names(&state, "bibitems", "bibkey", &crossref_ids).await?;
-
-    // Batch-fetch junction data (authors/editors)
-    let author_rows = fetch_bibitem_authors_batch(state.pool.pool(), &bibitem_ids).await?;
-
-    // Build author lookup: author_id -> Author
-    let all_author_ids: HashSet<i64> = author_rows.iter().map(|r| r.author_id).collect();
-    let authors_map = batch_fetch_authors(&state, &all_author_ids).await?;
-
-    // Group junction data by bibitem_id and role
-    let mut authors_by_bibitem: HashMap<i64, Vec<&BibitemAuthorsRow>> = HashMap::new();
-    for row in &author_rows {
-        authors_by_bibitem
-            .entry(row.bibitem_id)
-            .or_default()
-            .push(row);
-    }
-
-    // 4. Build RenderContext for each bibitem and sort
-    let mut items_with_ctx: Vec<(BibItem, RenderContext)> = bibitems
-        .into_iter()
-        .map(|bib| {
-            let bib_authors = authors_by_bibitem.get(&bib.id);
-
-            let authors = extract_role_authors(bib_authors, AuthorRole::Author, &authors_map);
-            let editors = extract_role_authors(bib_authors, AuthorRole::Editor, &authors_map);
-            let guesteditors =
-                extract_role_authors(bib_authors, AuthorRole::Guesteditor, &authors_map);
-
-            let ctx = RenderContext {
-                authors,
-                editors,
-                guesteditors,
-                journal_name: bib.journal_id.and_then(|id| journals_map.get(&id).cloned()),
-                publisher_name: bib
-                    .publisher_id
-                    .and_then(|id| publishers_map.get(&id).cloned()),
-                series_name: bib.series_id.and_then(|id| series_map.get(&id).cloned()),
-                institution_name: bib
-                    .institution_id
-                    .and_then(|id| institutions_map.get(&id).cloned()),
-                school_name: bib.school_id.and_then(|id| schools_map.get(&id).cloned()),
-                crossref_bibkey: bib
-                    .crossref_id
-                    .and_then(|id| crossrefs_map.get(&id).cloned()),
-                suppress_author: false,
-            };
-            (bib, ctx)
-        })
-        .collect();
-
-    // Sort by author family name -> year -> bibkey
-    items_with_ctx.sort_by(|(a, ctx_a), (b, ctx_b)| {
-        let key_a = author_sort_key(&ctx_a.authors);
-        let key_b = author_sort_key(&ctx_b.authors);
-        key_a
-            .cmp(&key_b)
-            .then_with(|| a.date_year.cmp(&b.date_year))
-            .then_with(|| a.bibkey.cmp(&b.bibkey))
-    });
-
-    // 5. Render bibliography
-    let html = render_bibliography(&items_with_ctx);
+    // Render
+    let name_fetcher = PgRenderNameFetcher::new(state.pool.pool());
+    let author_fetcher = PgRenderAuthorFetcher::new(&state);
+    let html = render_bibitems_to_html(&name_fetcher, &author_fetcher, bibitems).await?;
 
     Ok(html_response(html))
 }
@@ -296,80 +164,4 @@ fn html_response(body: String) -> Response {
         body,
     )
         .into_response()
-}
-
-/// Extract AuthorName list for a specific role from junction rows.
-fn extract_role_authors(
-    bib_authors: Option<&Vec<&BibitemAuthorsRow>>,
-    role: AuthorRole,
-    authors_map: &HashMap<i64, Author>,
-) -> Vec<AuthorName> {
-    let role_str = role.to_string();
-    bib_authors
-        .map(|rows| {
-            let mut filtered: Vec<&BibitemAuthorsRow> = rows
-                .iter()
-                .filter(|r| r.role == role_str)
-                .copied()
-                .collect();
-            filtered.sort_by_key(|r| r.position);
-            filtered
-                .iter()
-                .filter_map(|r| {
-                    authors_map.get(&r.author_id).map(|a| AuthorName {
-                        family: a.family_name_unicode.clone(),
-                        given: a.given_name_unicode.clone(),
-                        mononym: a.mononym_unicode.clone(),
-                        variant_unicode: r.name_variant_unicode.clone(),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// Row type for batch name lookups.
-#[derive(Debug, FromRow)]
-struct IdNameRow {
-    id: i64,
-    name: String,
-}
-
-/// Batch-fetch a single name column from a table for a set of IDs.
-///
-/// Returns a HashMap of id -> name_value.
-async fn batch_fetch_names(
-    state: &AppState,
-    table: &str,
-    name_column: &str,
-    ids: &HashSet<i64>,
-) -> Result<HashMap<i64, String>, HexforgeError> {
-    if ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-    let id_vec: Vec<i64> = ids.iter().copied().collect();
-    let sql = format!("SELECT id, {name_column} AS name FROM {table} WHERE id = ANY($1)");
-    let rows: Vec<IdNameRow> = query_as(&sql)
-        .bind(&id_vec)
-        .fetch_all(state.pool.pool())
-        .await
-        .map_err(HexforgeError::data_source)?;
-    Ok(rows.into_iter().map(|r| (r.id, r.name)).collect())
-}
-
-/// Batch-fetch authors by IDs into a HashMap.
-async fn batch_fetch_authors(
-    state: &AppState,
-    ids: &HashSet<i64>,
-) -> Result<HashMap<i64, Author>, HexforgeError> {
-    if ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-    let id_vec: Vec<i64> = ids.iter().copied().collect();
-    let authors = state
-        .author_ds
-        .find_by_ids(&id_vec)
-        .await
-        .map_err(HexforgeError::data_source)?;
-    Ok(authors.into_iter().map(|a| (a.id, a)).collect())
 }

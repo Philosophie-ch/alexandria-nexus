@@ -11,7 +11,10 @@
 pub mod components;
 pub mod entry_types;
 
-use crate::domain::{BibItem, EntryType};
+use std::collections::HashMap;
+
+use crate::domain::junctions::BibitemAuthorsRow;
+use crate::domain::{Author, AuthorRole, BibItem, EntryType};
 
 // =============================================================================
 // AuthorName — lightweight name struct for the renderer
@@ -140,6 +143,40 @@ pub fn author_sort_key(authors: &[AuthorName]) -> String {
         })
         .collect::<Vec<_>>()
         .join("|")
+}
+
+// =============================================================================
+// Helpers
+// =============================================================================
+
+/// Extract AuthorName list for a specific role from junction rows.
+pub fn extract_role_authors(
+    bib_authors: Option<&Vec<&BibitemAuthorsRow>>,
+    role: AuthorRole,
+    authors_map: &HashMap<i64, Author>,
+) -> Vec<AuthorName> {
+    let role_str = role.to_string();
+    bib_authors
+        .map(|rows| {
+            let mut filtered: Vec<&BibitemAuthorsRow> = rows
+                .iter()
+                .filter(|r| r.role == role_str)
+                .copied()
+                .collect();
+            filtered.sort_by_key(|r| r.position);
+            filtered
+                .iter()
+                .filter_map(|r| {
+                    authors_map.get(&r.author_id).map(|a| AuthorName {
+                        family: a.family_name_unicode.clone(),
+                        given: a.given_name_unicode.clone(),
+                        mononym: a.mononym_unicode.clone(),
+                        variant_unicode: r.name_variant_unicode.clone(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 // =============================================================================
