@@ -31,6 +31,9 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
+    python3 \
+    python3-pip \
+    && pip3 install --no-cache-dir --break-system-packages pylatexenc \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/alexandria-nexus /app/alexandria-nexus
