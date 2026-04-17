@@ -1,35 +1,19 @@
-//! Full CSV import — validate, create missing entities, and import bibitems.
+//! Full CSV import — pure types, helpers, and CSV parsing for human-readable CSVs.
 //!
-//! Three operations for human-readable CSVs:
-//! 1. **validate** — parse CSV, check all references, report issues
-//! 2. **import entities** — create missing authors/journals/etc. from the CSV
-//! 3. **import bibitems** — resolve names to IDs, upsert bibitems, delete stale
+//! This module contains ZERO async, ZERO database access, ZERO AppState.
+//! All I/O orchestration lives in `crate::process::full_import`.
 
 use std::collections::{HashMap, HashSet};
 
-use hexforge::db_exports::{FromRow, query, query_as, query_scalar};
-use hexforge::{DataSource, HexforgeError, ValidationError};
+use hexforge::{HexforgeError, ValidationError};
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use crate::adapters::db::queries::junctions::{
-    fetch_bibitem_authors_batch, fetch_bibitem_keywords_batch, fetch_bibitem_refs_batch,
-};
-use crate::domain::junctions::{BibitemAuthorsRow, BibitemKeywordsRow, BibitemRefsRow};
-use crate::domain::{
-    AuthorRole, CreateBibItem, CreateInstitution, CreateKeyword, CreateSchool, CreateSeries,
-    RefType, create_bib_item_transform, create_institution_transform, create_keyword_transform,
-    create_school_transform, create_series_transform,
-};
+use crate::domain::{AuthorRole, CreateBibItem, RefType};
 use crate::logic::csv_parsing::types::{
     DateRangeSeparator, FieldError, ParsedAuthor, ParsedBibRow, ParsedDate, RowParseResult,
 };
 use crate::logic::csv_parsing::{CsvHeaders, parse_csv_row};
-use crate::state::AppState;
-use crate::validation::{
-    validate_create_bibitem, validate_create_institution, validate_create_keyword,
-    validate_create_school, validate_create_series,
-};
 
 // =============================================================================
 // Response types
@@ -102,11 +86,50 @@ impl ValidationReport {
 }
 
 // =============================================================================
+// Entity import report types
+// =============================================================================
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct EntityImportReport {
+    pub created_institutions: usize,
+    pub created_schools: usize,
+    pub created_series: usize,
+    pub created_keywords: usize,
+    pub errors: Vec<EntityImportError>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct EntityImportError {
+    pub entity_type: String,
+    pub name: String,
+    pub error: String,
+}
+
+// =============================================================================
+// Full import report types
+// =============================================================================
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct FullImportReport {
+    pub imported: usize,
+    pub updated: usize,
+    pub deleted: usize,
+    pub failed: usize,
+    pub errors: Vec<RowError>,
+}
+
+pub enum FullImportResult {
+    Success(FullImportReport),
+    /// Validation failed -- return the full report so the caller sees everything at once.
+    ValidationFailed(Box<ValidationReport>),
+}
+
+// =============================================================================
 // Author lookup key
 // =============================================================================
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum AuthorNameKey {
+pub enum AuthorNameKey {
     Named {
         family_name: String,
         given_name: Option<String>,
@@ -115,7 +138,7 @@ enum AuthorNameKey {
 }
 
 impl AuthorNameKey {
-    fn from_parsed(author: &ParsedAuthor) -> Self {
+    pub fn from_parsed(author: &ParsedAuthor) -> Self {
         match author {
             ParsedAuthor::Named {
                 family_name,
@@ -129,112 +152,194 @@ impl AuthorNameKey {
     }
 }
 
-// =============================================================================
-// Validate endpoint logic
-// =============================================================================
-
-/// Parse and validate a full CSV, checking all references against the database.
-/// Returns a validation report. Does NOT modify anything.
-pub async fn validate_full_csv(
-    state: &AppState,
-    data: &[u8],
-) -> Result<ValidationReport, HexforgeError> {
-    let pool = state.pool.pool();
-
-    // 1. Parse all rows
-    let (parsed_rows, row_errors) = parse_all_rows(data)?;
-    let total_rows = parsed_rows.len() + row_errors.len();
-
-    // 2. Collect all unique names and detect duplicate bibkeys
-    let mut collected = CollectedNames::default();
-    let mut csv_bibkeys: HashSet<String> = HashSet::new();
-    let mut bibkey_rows: HashMap<String, Vec<usize>> = HashMap::new();
-    for (idx, row) in parsed_rows.iter().enumerate() {
-        bibkey_rows
-            .entry(row.bibkey.clone())
-            .or_default()
-            .push(idx + 2); // 1-indexed, skip header
-        csv_bibkeys.insert(row.bibkey.clone());
-        collected.collect_from_row(row);
+pub fn format_author_key(key: &AuthorNameKey) -> String {
+    match key {
+        AuthorNameKey::Mononym(m) => m.clone(),
+        AuthorNameKey::Named {
+            family_name,
+            given_name,
+        } => match given_name {
+            Some(g) => format!("{family_name}, {g}"),
+            None => family_name.clone(),
+        },
     }
-    let mut duplicate_bibkeys: Vec<DuplicateBibkey> = bibkey_rows
-        .into_iter()
-        .filter(|(_, rows)| rows.len() > 1)
-        .map(|(bibkey, rows)| DuplicateBibkey { bibkey, rows })
-        .collect();
-    duplicate_bibkeys.sort_by(|a, b| a.bibkey.cmp(&b.bibkey));
-
-    // 3. Batch DB lookups
-    let maps = build_lookup_maps(pool).await?;
-
-    // 4. Classify authors
-    let mut missing_authors = Vec::new();
-    let mut ambiguous_authors = Vec::new();
-    for key in &collected.authors {
-        match maps.authors.id_map.get(key) {
-            None => missing_authors.push(format_author_key(key)),
-            Some(ids) if ids.len() > 1 => {
-                ambiguous_authors.push(AmbiguousAuthor {
-                    name: format_author_key(key),
-                    matching_ids: ids.clone(),
-                });
-            }
-            _ => {}
-        }
-    }
-    missing_authors.sort();
-
-    // 5. Classify entities
-    let missing_journals = find_missing_names(&collected.journal_names, &maps.journals);
-    let missing_publishers = find_missing_names(&collected.publisher_names, &maps.publishers);
-    let missing_institutions = find_missing_names(&collected.institution_names, &maps.institutions);
-    let missing_schools = find_missing_names(&collected.school_names, &maps.schools);
-    let missing_series = find_missing_names(&collected.series_names, &maps.series);
-
-    // 6. Classify keywords
-    let missing_keywords = MissingKeywords {
-        level_1: find_missing_keywords(&collected.keywords_l1, 1, &maps.keywords),
-        level_2: find_missing_keywords(&collected.keywords_l2, 2, &maps.keywords),
-        level_3: find_missing_keywords(&collected.keywords_l3, 3, &maps.keywords),
-    };
-
-    // 7. Classify bibkey references (check against DB + CSV bibkeys)
-    let all_known_bibkeys: HashSet<String> = maps.bibkeys.union(&csv_bibkeys).cloned().collect();
-    let missing_crossrefs = find_missing_bibkeys(&collected.crossref_bibkeys, &all_known_bibkeys);
-    let missing_further_refs =
-        find_missing_bibkeys(&collected.further_ref_bibkeys, &all_known_bibkeys);
-    let missing_depends_on =
-        find_missing_bibkeys(&collected.depends_on_bibkeys, &all_known_bibkeys);
-
-    // 8. Stale bibitems: in DB but not in CSV
-    let mut stale_bibitems: Vec<String> = maps.bibkeys.difference(&csv_bibkeys).cloned().collect();
-    stale_bibitems.sort();
-
-    Ok(ValidationReport {
-        total_rows,
-        valid_rows: parsed_rows.len(),
-        errors: row_errors,
-        duplicate_bibkeys,
-        missing_authors,
-        ambiguous_authors,
-        missing_journals,
-        missing_publishers,
-        missing_institutions,
-        missing_schools,
-        missing_series,
-        missing_keywords,
-        missing_crossrefs,
-        missing_further_refs,
-        missing_depends_on,
-        stale_bibitems,
-    })
 }
 
 // =============================================================================
-// CSV parsing orchestration
+// Variant info
 // =============================================================================
 
-fn parse_all_rows(data: &[u8]) -> Result<(Vec<ParsedBibRow>, Vec<RowError>), HexforgeError> {
+/// Variant info for an author matched via name variant.
+#[derive(Clone)]
+pub struct VariantInfo {
+    pub variant_latex: Option<String>,
+    pub variant_unicode: Option<String>,
+}
+
+// =============================================================================
+// Author lookup result
+// =============================================================================
+
+pub struct AuthorLookupResult {
+    /// AuthorNameKey -> list of matching author IDs (for validation: detect ambiguous)
+    pub id_map: HashMap<AuthorNameKey, Vec<i64>>,
+    /// AuthorNameKey -> variant info (only for keys matched via a name variant)
+    pub variant_map: HashMap<AuthorNameKey, VariantInfo>,
+}
+
+// =============================================================================
+// Lookup maps (bundles all lookup data to avoid too-many-args)
+// =============================================================================
+
+/// All DB lookup maps, built once per import operation.
+pub struct LookupMaps {
+    pub authors: AuthorLookupResult,
+    pub journals: HashMap<String, i64>,
+    pub publishers: HashMap<String, i64>,
+    pub institutions: HashMap<String, i64>,
+    pub schools: HashMap<String, i64>,
+    pub series: HashMap<String, i64>,
+    pub keywords: HashMap<(String, i16), i64>,
+    pub bibkeys: HashSet<String>,
+}
+
+// =============================================================================
+// Resolution context (bundles all lookup maps to avoid too-many-args)
+// =============================================================================
+
+/// Resolution context for bibitem upsert (single-match authors only).
+pub struct ResolutionCtx {
+    pub author_resolve: HashMap<AuthorNameKey, i64>,
+    /// For keys that matched via a name variant, stores the variant strings.
+    pub author_variants: HashMap<AuthorNameKey, VariantInfo>,
+    pub journal_map: HashMap<String, i64>,
+    pub publisher_map: HashMap<String, i64>,
+    pub institution_map: HashMap<String, i64>,
+    pub school_map: HashMap<String, i64>,
+    pub series_map: HashMap<String, i64>,
+    pub keyword_map: HashMap<(String, i16), i64>,
+    pub existing_bibkeys: HashSet<String>,
+}
+
+impl ResolutionCtx {
+    /// Build a ResolutionCtx from LookupMaps (consumes the maps).
+    pub fn from_lookup_maps(maps: LookupMaps) -> Self {
+        let author_variants = maps.authors.variant_map;
+        ResolutionCtx {
+            author_resolve: maps
+                .authors
+                .id_map
+                .into_iter()
+                .filter_map(|(k, ids)| {
+                    if ids.len() == 1 {
+                        Some((k, ids[0]))
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+            author_variants,
+            journal_map: maps.journals,
+            publisher_map: maps.publishers,
+            institution_map: maps.institutions,
+            school_map: maps.schools,
+            series_map: maps.series,
+            keyword_map: maps.keywords,
+            existing_bibkeys: maps.bibkeys,
+        }
+    }
+}
+
+// =============================================================================
+// Named entity kind
+// =============================================================================
+
+#[derive(Clone, Copy)]
+pub enum NamedEntityKind {
+    Institution,
+    School,
+    Series,
+}
+
+impl NamedEntityKind {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Institution => "institutions",
+            Self::School => "schools",
+            Self::Series => "series",
+        }
+    }
+}
+
+// =============================================================================
+// Collected names helper
+// =============================================================================
+
+#[derive(Default)]
+pub struct CollectedNames {
+    pub authors: HashSet<AuthorNameKey>,
+    pub journal_names: HashSet<String>,
+    pub publisher_names: HashSet<String>,
+    pub institution_names: HashSet<String>,
+    pub school_names: HashSet<String>,
+    pub series_names: HashSet<String>,
+    pub keywords_l1: HashSet<String>,
+    pub keywords_l2: HashSet<String>,
+    pub keywords_l3: HashSet<String>,
+    pub crossref_bibkeys: HashSet<String>,
+    pub further_ref_bibkeys: HashSet<String>,
+    pub depends_on_bibkeys: HashSet<String>,
+}
+
+impl CollectedNames {
+    pub fn collect_from_row(&mut self, row: &ParsedBibRow) {
+        for a in row
+            .authors
+            .iter()
+            .chain(&row.editors)
+            .chain(&row.guesteditors)
+        {
+            self.authors.insert(AuthorNameKey::from_parsed(a));
+        }
+        if let Some(p) = &row.person {
+            self.authors.insert(AuthorNameKey::from_parsed(p));
+        }
+        if let Some(n) = &row.journal_name {
+            self.journal_names.insert(n.clone());
+        }
+        if let Some(n) = &row.publisher_name {
+            self.publisher_names.insert(n.clone());
+        }
+        if let Some(n) = &row.institution_name {
+            self.institution_names.insert(n.clone());
+        }
+        if let Some(n) = &row.school_name {
+            self.school_names.insert(n.clone());
+        }
+        if let Some(n) = &row.series_name {
+            self.series_names.insert(n.clone());
+        }
+        self.keywords_l1
+            .extend(row.keywords.level_1.iter().cloned());
+        self.keywords_l2
+            .extend(row.keywords.level_2.iter().cloned());
+        self.keywords_l3
+            .extend(row.keywords.level_3.iter().cloned());
+        if let Some(cr) = &row.crossref_bibkey {
+            self.crossref_bibkeys.insert(cr.clone());
+        }
+        self.further_ref_bibkeys
+            .extend(row.further_ref_bibkeys.iter().cloned());
+        self.depends_on_bibkeys
+            .extend(row.depends_on_bibkeys.iter().cloned());
+    }
+}
+
+// =============================================================================
+// CSV parsing orchestration (pure)
+// =============================================================================
+
+pub fn parse_all_rows(data: &[u8]) -> Result<(Vec<ParsedBibRow>, Vec<RowError>), HexforgeError> {
     let mut rdr = csv::ReaderBuilder::new()
         .has_headers(true)
         .flexible(true)
@@ -283,160 +388,13 @@ fn parse_all_rows(data: &[u8]) -> Result<(Vec<ParsedBibRow>, Vec<RowError>), Hex
 }
 
 // =============================================================================
-// Batch DB lookups
+// Classification helpers (pure)
 // =============================================================================
 
-#[derive(FromRow)]
-struct AuthorRow {
-    id: i64,
-    family_name_latex: Option<String>,
-    given_name_latex: Option<String>,
-    mononym_latex: Option<String>,
-    name_variants_latex: Option<Vec<String>>,
-    name_variants_unicode: Option<Vec<String>>,
-}
-
-struct AuthorLookupResult {
-    /// AuthorNameKey → list of matching author IDs (for validation: detect ambiguous)
-    id_map: HashMap<AuthorNameKey, Vec<i64>>,
-    /// AuthorNameKey → variant info (only for keys matched via a name variant)
-    variant_map: HashMap<AuthorNameKey, VariantInfo>,
-}
-
-async fn batch_lookup_authors(
-    pool: &hexforge::db_exports::PgPool,
-) -> Result<AuthorLookupResult, HexforgeError> {
-    let rows: Vec<AuthorRow> = query_as(
-        "SELECT id, family_name_latex, given_name_latex, mononym_latex, name_variants_latex, name_variants_unicode FROM authors",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(HexforgeError::data_source)?;
-
-    let mut id_map: HashMap<AuthorNameKey, Vec<i64>> = HashMap::new();
-    let mut variant_map: HashMap<AuthorNameKey, VariantInfo> = HashMap::new();
-
-    for row in &rows {
-        // Primary name key
-        let key = if let Some(mononym) = &row.mononym_latex {
-            AuthorNameKey::Mononym(mononym.clone())
-        } else if let Some(family) = &row.family_name_latex {
-            AuthorNameKey::Named {
-                family_name: family.clone(),
-                given_name: row.given_name_latex.clone(),
-            }
-        } else {
-            continue;
-        };
-        id_map.entry(key).or_default().push(row.id);
-
-        // LaTeX name variants
-        if let Some(variants) = &row.name_variants_latex {
-            for variant in variants {
-                let keys = parse_variant_to_keys(variant);
-                for variant_key in keys {
-                    id_map.entry(variant_key.clone()).or_default().push(row.id);
-                    variant_map
-                        .entry(variant_key)
-                        .or_insert_with(|| VariantInfo {
-                            variant_latex: Some(variant.clone()),
-                            variant_unicode: None,
-                        });
-                }
-            }
-        }
-
-        // Unicode name variants
-        if let Some(variants) = &row.name_variants_unicode {
-            for variant in variants {
-                let keys = parse_variant_to_keys(variant);
-                for variant_key in keys {
-                    id_map.entry(variant_key.clone()).or_default().push(row.id);
-                    variant_map
-                        .entry(variant_key)
-                        .or_insert_with(|| VariantInfo {
-                            variant_latex: None,
-                            variant_unicode: Some(variant.clone()),
-                        });
-                }
-            }
-        }
-    }
-    Ok(AuthorLookupResult {
-        id_map,
-        variant_map,
-    })
-}
-
-fn parse_variant_to_keys(variant: &str) -> Vec<AuthorNameKey> {
-    if let Ok(parsed) = crate::logic::csv_parsing::author::parse_authors(variant) {
-        parsed.iter().map(AuthorNameKey::from_parsed).collect()
-    } else {
-        vec![AuthorNameKey::Mononym(variant.to_string())]
-    }
-}
-
-#[derive(FromRow)]
-struct NameIdRow {
-    id: i64,
-    name_latex: String,
-}
-
-async fn batch_lookup_by_name_latex(
-    pool: &hexforge::db_exports::PgPool,
-    table: &str,
-) -> Result<HashMap<String, i64>, HexforgeError> {
-    let sql = format!("SELECT id, name_latex FROM {table}");
-    let rows: Vec<NameIdRow> = query_as(&sql)
-        .fetch_all(pool)
-        .await
-        .map_err(HexforgeError::data_source)?;
-
-    Ok(rows.into_iter().map(|r| (r.name_latex, r.id)).collect())
-}
-
-#[derive(FromRow)]
-struct KeywordRow {
-    id: i64,
-    name: String,
-    level: i16,
-}
-
-async fn batch_lookup_keywords(
-    pool: &hexforge::db_exports::PgPool,
-) -> Result<HashMap<(String, i16), i64>, HexforgeError> {
-    let rows: Vec<KeywordRow> = query_as("SELECT id, name, level FROM keywords")
-        .fetch_all(pool)
-        .await
-        .map_err(HexforgeError::data_source)?;
-
-    Ok(rows
-        .into_iter()
-        .map(|r| ((r.name, r.level), r.id))
-        .collect())
-}
-
-#[derive(FromRow)]
-struct BibkeyRow {
-    bibkey: String,
-}
-
-async fn fetch_all_bibkeys(
-    pool: &hexforge::db_exports::PgPool,
-) -> Result<HashSet<String>, HexforgeError> {
-    let rows: Vec<BibkeyRow> = query_as("SELECT bibkey FROM bibitems")
-        .fetch_all(pool)
-        .await
-        .map_err(HexforgeError::data_source)?;
-
-    Ok(rows.into_iter().map(|r| r.bibkey).collect())
-}
-
-// =============================================================================
-// Classification helpers
-// =============================================================================
-
-fn find_missing_names(requested: &HashSet<String>, existing: &HashMap<String, i64>) -> Vec<String> {
+pub fn find_missing_names(
+    requested: &HashSet<String>,
+    existing: &HashMap<String, i64>,
+) -> Vec<String> {
     let mut missing: Vec<String> = requested
         .iter()
         .filter(|name| !existing.contains_key(*name))
@@ -446,7 +404,7 @@ fn find_missing_names(requested: &HashSet<String>, existing: &HashMap<String, i6
     missing
 }
 
-fn find_missing_keywords(
+pub fn find_missing_keywords(
     requested: &HashSet<String>,
     level: i16,
     existing: &HashMap<(String, i16), i64>,
@@ -460,350 +418,20 @@ fn find_missing_keywords(
     missing
 }
 
-fn find_missing_bibkeys(requested: &HashSet<String>, existing: &HashSet<String>) -> Vec<String> {
+pub fn find_missing_bibkeys(
+    requested: &HashSet<String>,
+    existing: &HashSet<String>,
+) -> Vec<String> {
     let mut missing: Vec<String> = requested.difference(existing).cloned().collect();
     missing.sort();
     missing
 }
 
-fn format_author_key(key: &AuthorNameKey) -> String {
-    match key {
-        AuthorNameKey::Mononym(m) => m.clone(),
-        AuthorNameKey::Named {
-            family_name,
-            given_name,
-        } => match given_name {
-            Some(g) => format!("{family_name}, {g}"),
-            None => family_name.clone(),
-        },
-    }
-}
-
 // =============================================================================
-// Import entities (create missing from CSV)
+// Entity creation helpers (pure)
 // =============================================================================
 
-#[derive(Debug, Serialize, ToSchema)]
-pub struct EntityImportReport {
-    pub created_institutions: usize,
-    pub created_schools: usize,
-    pub created_series: usize,
-    pub created_keywords: usize,
-    pub errors: Vec<EntityImportError>,
-}
-
-#[derive(Debug, Serialize, ToSchema)]
-pub struct EntityImportError {
-    pub entity_type: String,
-    pub name: String,
-    pub error: String,
-}
-
-/// Parse CSV, find entities referenced but not in DB, and create them.
-/// Authors with exact duplicate names (same family+given or mononym) produce an error.
-pub async fn import_entities_from_full_csv(
-    state: &AppState,
-    data: &[u8],
-) -> Result<EntityImportReport, HexforgeError> {
-    let pool = state.pool.pool();
-    let (parsed_rows, _) = parse_all_rows(data)?;
-
-    let mut collected = CollectedNames::default();
-    for row in &parsed_rows {
-        collected.collect_from_row(row);
-    }
-
-    let maps = build_lookup_maps(pool).await?;
-
-    let mut report = EntityImportReport {
-        created_institutions: 0,
-        created_schools: 0,
-        created_series: 0,
-        created_keywords: 0,
-        errors: Vec::new(),
-    };
-
-    // Authors, journals, and publishers are NOT created here — they must be
-    // imported from their own CSVs beforehand. Validate reports missing ones.
-    // Only institutions, schools, and series are auto-created from the biblio CSV.
-    for (names, map, kind) in [
-        (
-            &collected.institution_names,
-            &maps.institutions,
-            NamedEntityKind::Institution,
-        ),
-        (
-            &collected.school_names,
-            &maps.schools,
-            NamedEntityKind::School,
-        ),
-        (
-            &collected.series_names,
-            &maps.series,
-            NamedEntityKind::Series,
-        ),
-    ] {
-        let count =
-            create_missing_named_entities(names, map, kind, state, &mut report.errors).await;
-        match kind {
-            NamedEntityKind::Institution => report.created_institutions += count,
-            NamedEntityKind::School => report.created_schools += count,
-            NamedEntityKind::Series => report.created_series += count,
-        }
-    }
-
-    // Keywords
-    for kw in &collected.keywords_l1 {
-        if !maps.keywords.contains_key(&(kw.clone(), 1)) {
-            match create_keyword(kw, 1, state).await {
-                Ok(()) => report.created_keywords += 1,
-                Err(e) => report.errors.push(EntityImportError {
-                    entity_type: "keyword".to_string(),
-                    name: format!("{kw} (level 1)"),
-                    error: e,
-                }),
-            }
-        }
-    }
-    for kw in &collected.keywords_l2 {
-        if !maps.keywords.contains_key(&(kw.clone(), 2)) {
-            match create_keyword(kw, 2, state).await {
-                Ok(()) => report.created_keywords += 1,
-                Err(e) => report.errors.push(EntityImportError {
-                    entity_type: "keyword".to_string(),
-                    name: format!("{kw} (level 2)"),
-                    error: e,
-                }),
-            }
-        }
-    }
-    for kw in &collected.keywords_l3 {
-        if !maps.keywords.contains_key(&(kw.clone(), 3)) {
-            match create_keyword(kw, 3, state).await {
-                Ok(()) => report.created_keywords += 1,
-                Err(e) => report.errors.push(EntityImportError {
-                    entity_type: "keyword".to_string(),
-                    name: format!("{kw} (level 3)"),
-                    error: e,
-                }),
-            }
-        }
-    }
-
-    Ok(report)
-}
-
-// =============================================================================
-// Import bibitems (full source-of-truth import)
-// =============================================================================
-
-#[derive(Debug, Serialize, ToSchema)]
-pub struct FullImportReport {
-    pub imported: usize,
-    pub updated: usize,
-    pub deleted: usize,
-    pub failed: usize,
-    pub errors: Vec<RowError>,
-}
-
-pub enum FullImportResult {
-    Success(FullImportReport),
-    /// Validation failed — return the full report so the caller sees everything at once.
-    ValidationFailed(Box<ValidationReport>),
-}
-
-/// Parse CSV, resolve all names to IDs, upsert bibitems + junctions.
-/// CSV is source of truth: bibitems in DB but not in CSV get deleted.
-///
-/// Runs full validation first — if any issues exist, returns the complete
-/// `ValidationReport` so the caller sees everything in one response.
-pub async fn import_full_csv(
-    state: &AppState,
-    data: &[u8],
-    delete_stale: bool,
-) -> Result<FullImportResult, HexforgeError> {
-    let pool = state.pool.pool();
-
-    // 1. Validate — return full report if anything is wrong
-    let report = validate_full_csv(state, data).await?;
-    if report.has_issues() {
-        return Ok(FullImportResult::ValidationFailed(Box::new(report)));
-    }
-
-    // 2. Parse (validated, so no errors expected)
-    let (parsed_rows, _) = parse_all_rows(data)?;
-
-    // 3. Build resolution context
-    let mut collected = CollectedNames::default();
-    let mut csv_bibkeys = HashSet::new();
-    for row in &parsed_rows {
-        collected.collect_from_row(row);
-        csv_bibkeys.insert(row.bibkey.clone());
-    }
-    let maps = build_lookup_maps(pool).await?;
-    let author_variants = maps.authors.variant_map;
-    let ctx = ResolutionCtx {
-        author_resolve: maps
-            .authors
-            .id_map
-            .into_iter()
-            .filter_map(|(k, ids)| {
-                if ids.len() == 1 {
-                    Some((k, ids[0]))
-                } else {
-                    None
-                }
-            })
-            .collect(),
-        author_variants,
-        journal_map: maps.journals,
-        publisher_map: maps.publishers,
-        institution_map: maps.institutions,
-        school_map: maps.schools,
-        series_map: maps.series,
-        keyword_map: maps.keywords,
-        existing_bibkeys: maps.bibkeys,
-    };
-
-    // 4. Delete stale bibitems (only if explicitly requested)
-    let deleted = if delete_stale {
-        let stale: Vec<String> = ctx
-            .existing_bibkeys
-            .difference(&csv_bibkeys)
-            .cloned()
-            .collect();
-        if stale.is_empty() {
-            0
-        } else {
-            delete_bibitems_by_bibkeys(pool, &stale).await?
-        }
-    } else {
-        0
-    };
-
-    // 6. Upsert each bibitem
-    let mut imported = 0usize;
-    let mut updated = 0usize;
-    let mut errors = Vec::new();
-
-    for (idx, row) in parsed_rows.iter().enumerate() {
-        let row_num = idx + 2;
-        match upsert_bibitem_row(row, state, &ctx).await {
-            Ok(was_update) => {
-                if was_update {
-                    updated += 1;
-                } else {
-                    imported += 1;
-                }
-            }
-            Err(e) => {
-                errors.push(RowError {
-                    row: row_num,
-                    bibkey: Some(row.bibkey.clone()),
-                    errors: vec![FieldError {
-                        field: "_insert".to_string(),
-                        error: e,
-                    }],
-                });
-            }
-        }
-    }
-
-    Ok(FullImportResult::Success(FullImportReport {
-        imported,
-        updated,
-        deleted,
-        failed: errors.len(),
-        errors,
-    }))
-}
-
-// =============================================================================
-// Collected names helper
-// =============================================================================
-
-#[derive(Default)]
-struct CollectedNames {
-    authors: HashSet<AuthorNameKey>,
-    journal_names: HashSet<String>,
-    publisher_names: HashSet<String>,
-    institution_names: HashSet<String>,
-    school_names: HashSet<String>,
-    series_names: HashSet<String>,
-    keywords_l1: HashSet<String>,
-    keywords_l2: HashSet<String>,
-    keywords_l3: HashSet<String>,
-    crossref_bibkeys: HashSet<String>,
-    further_ref_bibkeys: HashSet<String>,
-    depends_on_bibkeys: HashSet<String>,
-}
-
-impl CollectedNames {
-    fn collect_from_row(&mut self, row: &ParsedBibRow) {
-        for a in row
-            .authors
-            .iter()
-            .chain(&row.editors)
-            .chain(&row.guesteditors)
-        {
-            self.authors.insert(AuthorNameKey::from_parsed(a));
-        }
-        if let Some(p) = &row.person {
-            self.authors.insert(AuthorNameKey::from_parsed(p));
-        }
-        if let Some(n) = &row.journal_name {
-            self.journal_names.insert(n.clone());
-        }
-        if let Some(n) = &row.publisher_name {
-            self.publisher_names.insert(n.clone());
-        }
-        if let Some(n) = &row.institution_name {
-            self.institution_names.insert(n.clone());
-        }
-        if let Some(n) = &row.school_name {
-            self.school_names.insert(n.clone());
-        }
-        if let Some(n) = &row.series_name {
-            self.series_names.insert(n.clone());
-        }
-        self.keywords_l1
-            .extend(row.keywords.level_1.iter().cloned());
-        self.keywords_l2
-            .extend(row.keywords.level_2.iter().cloned());
-        self.keywords_l3
-            .extend(row.keywords.level_3.iter().cloned());
-        if let Some(cr) = &row.crossref_bibkey {
-            self.crossref_bibkeys.insert(cr.clone());
-        }
-        self.further_ref_bibkeys
-            .extend(row.further_ref_bibkeys.iter().cloned());
-        self.depends_on_bibkeys
-            .extend(row.depends_on_bibkeys.iter().cloned());
-    }
-}
-
-// =============================================================================
-// Entity creation helpers
-// =============================================================================
-
-#[derive(Clone, Copy)]
-enum NamedEntityKind {
-    Institution,
-    School,
-    Series,
-}
-
-impl NamedEntityKind {
-    fn label(&self) -> &'static str {
-        match self {
-            Self::Institution => "institutions",
-            Self::School => "schools",
-            Self::Series => "series",
-        }
-    }
-}
-
-fn generate_key(name: &str) -> String {
+pub fn generate_key(name: &str) -> String {
     name.to_lowercase()
         .chars()
         .map(|c| if c.is_alphanumeric() { c } else { '_' })
@@ -812,247 +440,11 @@ fn generate_key(name: &str) -> String {
         .to_string()
 }
 
-async fn create_missing_named_entities(
-    requested: &HashSet<String>,
-    existing: &HashMap<String, i64>,
-    kind: NamedEntityKind,
-    state: &AppState,
-    errors: &mut Vec<EntityImportError>,
-) -> usize {
-    let mut created = 0;
-    for name in requested {
-        if existing.contains_key(name) {
-            continue;
-        }
-        let key = generate_key(name);
-        let result = match kind {
-            NamedEntityKind::Institution => {
-                create_named_entity_institution(&key, name, state).await
-            }
-            NamedEntityKind::School => create_named_entity_school(&key, name, state).await,
-            NamedEntityKind::Series => create_named_entity_series(&key, name, state).await,
-        };
-        match result {
-            Ok(()) => created += 1,
-            Err(e) => errors.push(EntityImportError {
-                entity_type: kind.label().to_string(),
-                name: name.clone(),
-                error: e,
-            }),
-        }
-    }
-    created
-}
-
-async fn create_named_entity_institution(
-    key: &str,
-    name: &str,
-    state: &AppState,
-) -> Result<(), String> {
-    let dto = CreateInstitution {
-        institution_key: key.to_string(),
-        name_latex: name.to_string(),
-        name_unicode: name.to_string(),
-        default_address: None,
-    };
-    validate_create_institution(&dto).map_err(|e| e.to_string())?;
-    let entity = create_institution_transform(dto);
-    state
-        .institution_ds
-        .insert(entity)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-async fn create_named_entity_school(key: &str, name: &str, state: &AppState) -> Result<(), String> {
-    let dto = CreateSchool {
-        school_key: key.to_string(),
-        name_latex: name.to_string(),
-        name_unicode: name.to_string(),
-        default_address: None,
-    };
-    validate_create_school(&dto).map_err(|e| e.to_string())?;
-    let entity = create_school_transform(dto);
-    state
-        .school_ds
-        .insert(entity)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-async fn create_named_entity_series(key: &str, name: &str, state: &AppState) -> Result<(), String> {
-    let dto = CreateSeries {
-        series_key: key.to_string(),
-        name_latex: name.to_string(),
-        name_unicode: name.to_string(),
-    };
-    validate_create_series(&dto).map_err(|e| e.to_string())?;
-    let entity = create_series_transform(dto);
-    state
-        .series_ds
-        .insert(entity)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-async fn create_keyword(name: &str, level: i16, state: &AppState) -> Result<(), String> {
-    let dto = CreateKeyword {
-        name: name.to_string(),
-        level,
-    };
-    validate_create_keyword(&dto).map_err(|e| e.to_string())?;
-    let entity = create_keyword_transform(dto);
-    state
-        .keyword_ds
-        .insert(entity)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
 // =============================================================================
-// Resolution context (bundles all lookup maps to avoid too-many-args)
+// Bibitem DTO building (pure)
 // =============================================================================
 
-/// All DB lookup maps, built once per import operation.
-struct LookupMaps {
-    authors: AuthorLookupResult,
-    journals: HashMap<String, i64>,
-    publishers: HashMap<String, i64>,
-    institutions: HashMap<String, i64>,
-    schools: HashMap<String, i64>,
-    series: HashMap<String, i64>,
-    keywords: HashMap<(String, i16), i64>,
-    bibkeys: HashSet<String>,
-}
-
-/// Variant info for an author matched via name variant.
-#[derive(Clone)]
-struct VariantInfo {
-    variant_latex: Option<String>,
-    variant_unicode: Option<String>,
-}
-
-/// Resolution context for bibitem upsert (single-match authors only).
-struct ResolutionCtx {
-    author_resolve: HashMap<AuthorNameKey, i64>,
-    /// For keys that matched via a name variant, stores the variant strings.
-    author_variants: HashMap<AuthorNameKey, VariantInfo>,
-    journal_map: HashMap<String, i64>,
-    publisher_map: HashMap<String, i64>,
-    institution_map: HashMap<String, i64>,
-    school_map: HashMap<String, i64>,
-    series_map: HashMap<String, i64>,
-    keyword_map: HashMap<(String, i16), i64>,
-    existing_bibkeys: HashSet<String>,
-}
-
-async fn build_lookup_maps(
-    pool: &hexforge::db_exports::PgPool,
-) -> Result<LookupMaps, HexforgeError> {
-    Ok(LookupMaps {
-        authors: batch_lookup_authors(pool).await?,
-        journals: batch_lookup_by_name_latex(pool, "journals").await?,
-        publishers: batch_lookup_by_name_latex(pool, "publishers").await?,
-        institutions: batch_lookup_by_name_latex(pool, "institutions").await?,
-        schools: batch_lookup_by_name_latex(pool, "schools").await?,
-        series: batch_lookup_by_name_latex(pool, "series").await?,
-        keywords: batch_lookup_keywords(pool).await?,
-        bibkeys: fetch_all_bibkeys(pool).await?,
-    })
-}
-
-// =============================================================================
-// Bibitem upsert
-// =============================================================================
-
-/// Resolve a parsed row to IDs and upsert the bibitem + junctions.
-/// Returns Ok(true) if updated, Ok(false) if inserted.
-async fn upsert_bibitem_row(
-    row: &ParsedBibRow,
-    state: &AppState,
-    ctx: &ResolutionCtx,
-) -> Result<bool, String> {
-    let pool = state.pool.pool();
-    let was_update = ctx.existing_bibkeys.contains(&row.bibkey);
-
-    // Build CreateBibItem DTO
-    let dto = build_bibitem_dto(row, ctx)?;
-    validate_create_bibitem(&dto).map_err(|e| e.to_string())?;
-
-    if was_update {
-        // Delete existing bibitem (cascade deletes junctions), then re-insert
-        query("DELETE FROM bibitems WHERE bibkey = $1")
-            .bind(&row.bibkey)
-            .execute(pool)
-            .await
-            .map_err(|e| format!("failed to delete old bibitem: {e}"))?;
-    }
-
-    let entity = create_bib_item_transform(dto);
-    let inserted = state
-        .bibitem_ds
-        .insert(entity)
-        .await
-        .map_err(|e| format!("failed to insert bibitem: {e}"))?;
-
-    let bibitem_id: i64 = inserted.id;
-
-    // Insert author junctions
-    insert_author_junctions(
-        pool,
-        bibitem_id,
-        &row.authors,
-        AuthorRole::Author,
-        &ctx.author_resolve,
-        &ctx.author_variants,
-    )
-    .await?;
-    insert_author_junctions(
-        pool,
-        bibitem_id,
-        &row.editors,
-        AuthorRole::Editor,
-        &ctx.author_resolve,
-        &ctx.author_variants,
-    )
-    .await?;
-    insert_author_junctions(
-        pool,
-        bibitem_id,
-        &row.guesteditors,
-        AuthorRole::Guesteditor,
-        &ctx.author_resolve,
-        &ctx.author_variants,
-    )
-    .await?;
-
-    // Insert keyword junctions
-    insert_keyword_junctions(pool, bibitem_id, row, &ctx.keyword_map).await?;
-
-    // Insert bibitem refs (further_refs, depends_on)
-    insert_bibitem_refs(
-        pool,
-        bibitem_id,
-        &row.further_ref_bibkeys,
-        RefType::FurtherRef,
-    )
-    .await?;
-    insert_bibitem_refs(
-        pool,
-        bibitem_id,
-        &row.depends_on_bibkeys,
-        RefType::DependsOn,
-    )
-    .await?;
-
-    Ok(was_update)
-}
-
-fn build_bibitem_dto(row: &ParsedBibRow, ctx: &ResolutionCtx) -> Result<CreateBibItem, String> {
+pub fn build_bibitem_dto(row: &ParsedBibRow, ctx: &ResolutionCtx) -> Result<CreateBibItem, String> {
     let person_id = row.person.as_ref().and_then(|p| {
         let key = AuthorNameKey::from_parsed(p);
         ctx.author_resolve.get(&key).copied()
@@ -1103,7 +495,7 @@ fn build_bibitem_dto(row: &ParsedBibRow, ctx: &ResolutionCtx) -> Result<CreateBi
         url: row.url.clone(),
         eprint: row.eprint.clone(),
         urn: row.urn.clone(),
-        crossref_id: None, // resolved after all bibitems inserted — skip for now
+        crossref_id: None, // resolved after all bibitems inserted -- skip for now
         issuetitle_latex: row.issuetitle.clone(),
         issuetitle_unicode: None,
         note_latex: row.note.clone(),
@@ -1124,7 +516,7 @@ fn build_bibitem_dto(row: &ParsedBibRow, ctx: &ResolutionCtx) -> Result<CreateBi
     Ok(dto)
 }
 
-fn apply_date_to_dto(date: &ParsedDate, dto: &mut CreateBibItem) {
+pub fn apply_date_to_dto(date: &ParsedDate, dto: &mut CreateBibItem) {
     match date {
         ParsedDate::NoDate => {
             dto.date_is_no_date = true;
@@ -1152,369 +544,276 @@ fn apply_date_to_dto(date: &ParsedDate, dto: &mut CreateBibItem) {
 }
 
 // =============================================================================
-// Junction insertion helpers
+// Name variant parsing (pure)
 // =============================================================================
 
-async fn insert_author_junctions(
-    pool: &hexforge::db_exports::PgPool,
-    bibitem_id: i64,
-    authors: &[ParsedAuthor],
-    role: AuthorRole,
-    resolve: &HashMap<AuthorNameKey, i64>,
-    variants: &HashMap<AuthorNameKey, VariantInfo>,
-) -> Result<(), String> {
-    let role_str = role.to_string();
-    for (position, author) in authors.iter().enumerate() {
-        let key = AuthorNameKey::from_parsed(author);
-        let author_id = resolve
-            .get(&key)
-            .ok_or_else(|| format!("could not resolve author: {}", author.display_name()))?;
-        let pos = i16::try_from(position).map_err(|_| "too many authors")?;
-        let variant = variants.get(&key);
-        let variant_latex = variant.and_then(|v| v.variant_latex.as_deref());
-        let variant_unicode = variant.and_then(|v| v.variant_unicode.as_deref());
-        query(
-            "INSERT INTO bibitem_authors (bibitem_id, author_id, role, position, name_variant_latex, name_variant_unicode) \
-             VALUES ($1, $2, $3::author_role, $4, $5, $6) \
-             ON CONFLICT (bibitem_id, author_id, role) DO UPDATE SET position = $4, name_variant_latex = $5, name_variant_unicode = $6",
-        )
-        .bind(bibitem_id)
-        .bind(author_id)
-        .bind(&role_str)
-        .bind(pos)
-        .bind(variant_latex)
-        .bind(variant_unicode)
-        .execute(pool)
-        .await
-        .map_err(|e| format!("failed to link author: {e}"))?;
+pub fn parse_variant_to_keys(variant: &str) -> Vec<AuthorNameKey> {
+    if let Ok(parsed) = crate::logic::csv_parsing::author::parse_authors(variant) {
+        parsed.iter().map(AuthorNameKey::from_parsed).collect()
+    } else {
+        vec![AuthorNameKey::Mononym(variant.to_string())]
     }
-    Ok(())
 }
 
-async fn insert_keyword_junctions(
-    pool: &hexforge::db_exports::PgPool,
-    bibitem_id: i64,
-    row: &ParsedBibRow,
-    keyword_map: &HashMap<(String, i16), i64>,
-) -> Result<(), String> {
-    let all_keywords: Vec<(&String, i16)> = row
-        .keywords
-        .level_1
-        .iter()
-        .map(|k| (k, 1i16))
-        .chain(row.keywords.level_2.iter().map(|k| (k, 2i16)))
-        .chain(row.keywords.level_3.iter().map(|k| (k, 3i16)))
+// =============================================================================
+// Validation assembly (pure — given lookup data, produce report)
+// =============================================================================
+
+/// Assemble a ValidationReport from parsed rows and lookup maps.
+/// This is pure: no I/O, just data transformation.
+pub fn assemble_validation_report(
+    parsed_rows: &[ParsedBibRow],
+    row_errors: Vec<RowError>,
+    maps: &LookupMaps,
+) -> ValidationReport {
+    let total_rows = parsed_rows.len() + row_errors.len();
+
+    // Collect all unique names and detect duplicate bibkeys
+    let mut collected = CollectedNames::default();
+    let mut csv_bibkeys: HashSet<String> = HashSet::new();
+    let mut bibkey_rows: HashMap<String, Vec<usize>> = HashMap::new();
+    for (idx, row) in parsed_rows.iter().enumerate() {
+        bibkey_rows
+            .entry(row.bibkey.clone())
+            .or_default()
+            .push(idx + 2); // 1-indexed, skip header
+        csv_bibkeys.insert(row.bibkey.clone());
+        collected.collect_from_row(row);
+    }
+    let mut duplicate_bibkeys: Vec<DuplicateBibkey> = bibkey_rows
+        .into_iter()
+        .filter(|(_, rows)| rows.len() > 1)
+        .map(|(bibkey, rows)| DuplicateBibkey { bibkey, rows })
         .collect();
+    duplicate_bibkeys.sort_by(|a, b| a.bibkey.cmp(&b.bibkey));
 
-    for (name, level) in all_keywords {
-        let keyword_id = keyword_map
-            .get(&(name.clone(), level))
-            .ok_or_else(|| format!("could not resolve keyword: {name} (level {level})"))?;
-        query(
-            "INSERT INTO bibitem_keywords (bibitem_id, keyword_id, keyword_level) \
-             VALUES ($1, $2, $3) \
-             ON CONFLICT (bibitem_id, keyword_id) DO NOTHING",
-        )
-        .bind(bibitem_id)
-        .bind(keyword_id)
-        .bind(level)
-        .execute(pool)
-        .await
-        .map_err(|e| format!("failed to link keyword: {e}"))?;
+    // Classify authors
+    let mut missing_authors = Vec::new();
+    let mut ambiguous_authors = Vec::new();
+    for key in &collected.authors {
+        match maps.authors.id_map.get(key) {
+            None => missing_authors.push(format_author_key(key)),
+            Some(ids) if ids.len() > 1 => {
+                ambiguous_authors.push(AmbiguousAuthor {
+                    name: format_author_key(key),
+                    matching_ids: ids.clone(),
+                });
+            }
+            _ => {}
+        }
     }
-    Ok(())
-}
+    missing_authors.sort();
 
-async fn insert_bibitem_refs(
-    pool: &hexforge::db_exports::PgPool,
-    source_id: i64,
-    target_bibkeys: &[String],
-    ref_type: RefType,
-) -> Result<(), String> {
-    let ref_type_str = ref_type.to_string();
-    for bibkey in target_bibkeys {
-        let target_id: Option<i64> = query_scalar("SELECT id FROM bibitems WHERE bibkey = $1")
-            .bind(bibkey)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| format!("failed to resolve bibkey '{bibkey}': {e}"))?;
+    // Classify entities
+    let missing_journals = find_missing_names(&collected.journal_names, &maps.journals);
+    let missing_publishers = find_missing_names(&collected.publisher_names, &maps.publishers);
+    let missing_institutions = find_missing_names(&collected.institution_names, &maps.institutions);
+    let missing_schools = find_missing_names(&collected.school_names, &maps.schools);
+    let missing_series = find_missing_names(&collected.series_names, &maps.series);
 
-        let target_id = match target_id {
-            Some(id) => id,
-            None => continue,
-        };
+    // Classify keywords
+    let missing_keywords = MissingKeywords {
+        level_1: find_missing_keywords(&collected.keywords_l1, 1, &maps.keywords),
+        level_2: find_missing_keywords(&collected.keywords_l2, 2, &maps.keywords),
+        level_3: find_missing_keywords(&collected.keywords_l3, 3, &maps.keywords),
+    };
 
-        query(
-            "INSERT INTO bibitem_refs (source_id, target_id, ref_type) \
-             VALUES ($1, $2, $3::ref_type) \
-             ON CONFLICT (source_id, target_id, ref_type) DO NOTHING",
-        )
-        .bind(source_id)
-        .bind(target_id)
-        .bind(&ref_type_str)
-        .execute(pool)
-        .await
-        .map_err(|e| format!("failed to insert ref: {e}"))?;
+    // Classify bibkey references (check against DB + CSV bibkeys)
+    let all_known_bibkeys: HashSet<String> = maps.bibkeys.union(&csv_bibkeys).cloned().collect();
+    let missing_crossrefs = find_missing_bibkeys(&collected.crossref_bibkeys, &all_known_bibkeys);
+    let missing_further_refs =
+        find_missing_bibkeys(&collected.further_ref_bibkeys, &all_known_bibkeys);
+    let missing_depends_on =
+        find_missing_bibkeys(&collected.depends_on_bibkeys, &all_known_bibkeys);
+
+    // Stale bibitems: in DB but not in CSV
+    let mut stale_bibitems: Vec<String> = maps.bibkeys.difference(&csv_bibkeys).cloned().collect();
+    stale_bibitems.sort();
+
+    ValidationReport {
+        total_rows,
+        valid_rows: parsed_rows.len(),
+        errors: row_errors,
+        duplicate_bibkeys,
+        missing_authors,
+        ambiguous_authors,
+        missing_journals,
+        missing_publishers,
+        missing_institutions,
+        missing_schools,
+        missing_series,
+        missing_keywords,
+        missing_crossrefs,
+        missing_further_refs,
+        missing_depends_on,
+        stale_bibitems,
     }
-    Ok(())
-}
-
-async fn delete_bibitems_by_bibkeys(
-    pool: &hexforge::db_exports::PgPool,
-    bibkeys: &[String],
-) -> Result<usize, HexforgeError> {
-    let result = query("DELETE FROM bibitems WHERE bibkey = ANY($1)")
-        .bind(bibkeys)
-        .execute(pool)
-        .await
-        .map_err(HexforgeError::data_source)?;
-    Ok(usize::try_from(result.rows_affected()).unwrap_or(0))
 }
 
 // =============================================================================
-// Full CSV export (human-readable, matches import format)
+// Full CSV export helpers (pure)
 // =============================================================================
 
-const FULL_CSV_HEADERS: &str = "entry_type,bibkey,author,editor,_guesteditor,date,pubstate,title,\
+pub const FULL_CSV_HEADERS: &str = "entry_type,bibkey,author,editor,_guesteditor,date,pubstate,title,\
 booktitle,journal,publisher,institution,school,series,volume,number,pages,eid,address,type,edition,\
 note,_issuetitle,_extra_note,crossref,_further_refs,_depends_on,\
 _kw_level1,_kw_level2,_kw_level3,_epoch,_langid,_lang_der,_person,\
 _has_link_to_full_text,shorthand,options,doi,url,eprint,urn";
 
-/// Export all bibitems as a human-readable CSV matching the full import format.
-pub async fn export_full_csv(state: &AppState) -> Result<String, HexforgeError> {
-    let pool = state.pool.pool();
+/// Pre-resolved lookup data for building CSV export records.
+pub struct ExportContext<'a> {
+    pub author_names: &'a HashMap<i64, String>,
+    pub journal_names: &'a HashMap<i64, String>,
+    pub publisher_names: &'a HashMap<i64, String>,
+    pub institution_names: &'a HashMap<i64, String>,
+    pub school_names: &'a HashMap<i64, String>,
+    pub series_names: &'a HashMap<i64, String>,
+    pub keyword_names: &'a HashMap<i64, (String, i16)>,
+    pub bibkey_by_id: &'a HashMap<i64, String>,
+    pub authors_by_bib: &'a HashMap<i64, Vec<&'a crate::domain::junctions::BibitemAuthorsRow>>,
+    pub keywords_by_bib: &'a HashMap<i64, Vec<&'a crate::domain::junctions::BibitemKeywordsRow>>,
+    pub refs_by_bib: &'a HashMap<i64, Vec<&'a crate::domain::junctions::BibitemRefsRow>>,
+}
 
-    // Fetch all bibitems via raw SQL (orchestration layer — allowed to use db_exports)
-    let bibitems: Vec<crate::domain::BibItem> = query_as("SELECT * FROM bibitems ORDER BY bibkey")
-        .fetch_all(pool)
-        .await
-        .map_err(HexforgeError::data_source)?;
+/// Build the CSV record for a single bibitem.
+///
+/// Takes pre-resolved data (name maps, junction data indexed by bibitem ID)
+/// and produces a `Vec<String>` of CSV field values.
+pub fn build_export_record(bib: &crate::domain::BibItem, ctx: &ExportContext<'_>) -> Vec<String> {
+    let authors_for_role = |role: AuthorRole| -> String {
+        let role_str = role.to_string();
+        ctx.authors_by_bib
+            .get(&bib.id)
+            .map(|rows| {
+                let mut filtered: Vec<&&crate::domain::junctions::BibitemAuthorsRow> =
+                    rows.iter().filter(|r| r.role == role_str).collect();
+                filtered.sort_by_key(|r| r.position);
+                filtered
+                    .iter()
+                    .filter_map(|r| ctx.author_names.get(&r.author_id))
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(" and ")
+            })
+            .unwrap_or_default()
+    };
 
-    // Build reverse lookup maps (ID → name)
-    let authors: Vec<AuthorRow> = query_as(
-        "SELECT id, family_name_latex, given_name_latex, mononym_latex, name_variants_latex, name_variants_unicode FROM authors",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(HexforgeError::data_source)?;
-    let author_names: HashMap<i64, String> = authors
-        .into_iter()
-        .map(|a| {
-            let name = if let Some(m) = a.mononym_latex {
-                m
-            } else {
-                match (a.family_name_latex, a.given_name_latex) {
-                    (Some(f), Some(g)) => format!("{f}, {g}"),
-                    (Some(f), None) => f,
-                    _ => String::new(),
-                }
-            };
-            (a.id, name)
-        })
-        .collect();
-
-    let journal_names = reverse_name_map(pool, "journals").await?;
-    let publisher_names = reverse_name_map(pool, "publishers").await?;
-    let institution_names = reverse_name_map(pool, "institutions").await?;
-    let school_names = reverse_name_map(pool, "schools").await?;
-    let series_names = reverse_name_map(pool, "series").await?;
-
-    // Keywords by ID
-    let kw_rows: Vec<KeywordRow> = query_as("SELECT id, name, level FROM keywords")
-        .fetch_all(pool)
-        .await
-        .map_err(HexforgeError::data_source)?;
-    let keyword_names: HashMap<i64, (String, i16)> = kw_rows
-        .into_iter()
-        .map(|k| (k.id, (k.name, k.level)))
-        .collect();
-
-    // Bibkey by ID (for crossref/refs resolution)
-    let bibkey_by_id: HashMap<i64, String> =
-        bibitems.iter().map(|b| (b.id, b.bibkey.clone())).collect();
-
-    // Junction data (using generated batch-fetch functions)
-    let bib_ids: Vec<i64> = bibitems.iter().map(|b| b.id).collect();
-    let bib_authors = fetch_bibitem_authors_batch(pool, &bib_ids).await?;
-    let bib_keywords = fetch_bibitem_keywords_batch(pool, &bib_ids).await?;
-    let bib_refs = fetch_bibitem_refs_batch(pool, &bib_ids).await?;
-
-    // Index junction data by bibitem_id
-    let mut authors_by_bib: HashMap<i64, Vec<&BibitemAuthorsRow>> = HashMap::new();
-    for row in &bib_authors {
-        authors_by_bib.entry(row.bibitem_id).or_default().push(row);
-    }
-    let mut keywords_by_bib: HashMap<i64, Vec<&BibitemKeywordsRow>> = HashMap::new();
-    for row in &bib_keywords {
-        keywords_by_bib.entry(row.bibitem_id).or_default().push(row);
-    }
-    let mut refs_by_bib: HashMap<i64, Vec<&BibitemRefsRow>> = HashMap::new();
-    for row in &bib_refs {
-        refs_by_bib.entry(row.source_id).or_default().push(row);
-    }
-
-    // Build CSV
-    let mut wtr = csv::Writer::from_writer(Vec::new());
-    wtr.write_record(FULL_CSV_HEADERS.split(','))
-        .map_err(|e| HexforgeError::Internal(format!("CSV header error: {e}")))?;
-
-    for bib in &bibitems {
-        let authors_for_role = |role: AuthorRole| -> String {
-            let role_str = role.to_string();
-            authors_by_bib
-                .get(&bib.id)
-                .map(|rows| {
-                    let mut filtered: Vec<&&BibitemAuthorsRow> =
-                        rows.iter().filter(|r| r.role == role_str).collect();
-                    filtered.sort_by_key(|r| r.position);
-                    filtered
-                        .iter()
-                        .filter_map(|r| author_names.get(&r.author_id))
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join(" and ")
-                })
-                .unwrap_or_default()
-        };
-
-        let keywords_for_level = |level: i16| -> String {
-            keywords_by_bib
-                .get(&bib.id)
-                .map(|rows| {
-                    rows.iter()
-                        .filter_map(|r| {
-                            keyword_names.get(&r.keyword_id).and_then(|(name, lv)| {
-                                if *lv == level {
-                                    Some(name.as_str())
-                                } else {
-                                    None
-                                }
-                            })
+    let keywords_for_level = |level: i16| -> String {
+        ctx.keywords_by_bib
+            .get(&bib.id)
+            .map(|rows| {
+                rows.iter()
+                    .filter_map(|r| {
+                        ctx.keyword_names.get(&r.keyword_id).and_then(|(name, lv)| {
+                            if *lv == level {
+                                Some(name.as_str())
+                            } else {
+                                None
+                            }
                         })
-                        .collect::<Vec<_>>()
-                        .join("; ")
-                })
-                .unwrap_or_default()
-        };
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            })
+            .unwrap_or_default()
+    };
 
-        let refs_for_type = |rt: RefType| -> String {
-            let rt_str = rt.to_string();
-            refs_by_bib
-                .get(&bib.id)
-                .map(|rows| {
-                    rows.iter()
-                        .filter(|r| r.ref_type == rt_str)
-                        .filter_map(|r| bibkey_by_id.get(&r.target_id))
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                })
-                .unwrap_or_default()
-        };
+    let refs_for_type = |rt: RefType| -> String {
+        let rt_str = rt.to_string();
+        ctx.refs_by_bib
+            .get(&bib.id)
+            .map(|rows| {
+                rows.iter()
+                    .filter(|r| r.ref_type == rt_str)
+                    .filter_map(|r| ctx.bibkey_by_id.get(&r.target_id))
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default()
+    };
 
-        let date = format_date_for_export(bib);
-        let crossref = bib
-            .crossref_id
-            .and_then(|id| bibkey_by_id.get(&id))
+    let date = format_date_for_export(bib);
+    let crossref = bib
+        .crossref_id
+        .and_then(|id| ctx.bibkey_by_id.get(&id))
+        .cloned()
+        .unwrap_or_default();
+    let person = bib
+        .person_id
+        .and_then(|id| ctx.author_names.get(&id))
+        .map(|n| format!("{n};"))
+        .unwrap_or_default();
+
+    vec![
+        bib.entry_type.to_string(),
+        bib.bibkey.clone(),
+        authors_for_role(AuthorRole::Author),
+        authors_for_role(AuthorRole::Editor),
+        authors_for_role(AuthorRole::Guesteditor),
+        date,
+        bib.pubstate.map(|p| p.to_string()).unwrap_or_default(),
+        bib.title_latex.clone(),
+        bib.booktitle_latex.clone().unwrap_or_default(),
+        bib.journal_id
+            .and_then(|id| ctx.journal_names.get(&id))
             .cloned()
-            .unwrap_or_default();
-        let person = bib
-            .person_id
-            .and_then(|id| author_names.get(&id))
-            .map(|n| format!("{n};"))
-            .unwrap_or_default();
-
-        let record = vec![
-            bib.entry_type.to_string(),
-            bib.bibkey.clone(),
-            authors_for_role(AuthorRole::Author),
-            authors_for_role(AuthorRole::Editor),
-            authors_for_role(AuthorRole::Guesteditor),
-            date,
-            bib.pubstate.map(|p| p.to_string()).unwrap_or_default(),
-            bib.title_latex.clone(),
-            bib.booktitle_latex.clone().unwrap_or_default(),
-            bib.journal_id
-                .and_then(|id| journal_names.get(&id))
-                .cloned()
-                .unwrap_or_default(),
-            bib.publisher_id
-                .and_then(|id| publisher_names.get(&id))
-                .cloned()
-                .unwrap_or_default(),
-            bib.institution_id
-                .and_then(|id| institution_names.get(&id))
-                .cloned()
-                .unwrap_or_default(),
-            bib.school_id
-                .and_then(|id| school_names.get(&id))
-                .cloned()
-                .unwrap_or_default(),
-            bib.series_id
-                .and_then(|id| series_names.get(&id))
-                .cloned()
-                .unwrap_or_default(),
-            bib.volume.clone().unwrap_or_default(),
-            bib.number.clone().unwrap_or_default(),
-            bib.pages.clone().unwrap_or_default(),
-            bib.eid.clone().unwrap_or_default(),
-            bib.address.clone().unwrap_or_default(),
-            bib.type_field.clone().unwrap_or_default(),
-            bib.edition.clone().unwrap_or_default(),
-            bib.note_latex.clone().unwrap_or_default(),
-            bib.issuetitle_latex.clone().unwrap_or_default(),
-            bib.extra_note_latex.clone().unwrap_or_default(),
-            crossref,
-            refs_for_type(RefType::FurtherRef),
-            refs_for_type(RefType::DependsOn),
-            keywords_for_level(1),
-            keywords_for_level(2),
-            keywords_for_level(3),
-            bib.epoch.map(|e| e.to_string()).unwrap_or_default(),
-            bib.langid.map(|l| l.to_string()).unwrap_or_default(),
-            if bib.is_translation {
-                "x".to_string()
-            } else {
-                String::new()
-            },
-            person,
-            if bib.has_fulltext {
-                "x".to_string()
-            } else {
-                String::new()
-            },
-            bib.shorthand.clone().unwrap_or_default(),
-            bib.options.clone().unwrap_or_default(),
-            bib.doi.clone().unwrap_or_default(),
-            bib.url.clone().unwrap_or_default(),
-            bib.eprint.clone().unwrap_or_default(),
-            bib.urn.clone().unwrap_or_default(),
-        ];
-
-        wtr.write_record(&record)
-            .map_err(|e| HexforgeError::Internal(format!("CSV write error: {e}")))?;
-    }
-
-    let bytes = wtr
-        .into_inner()
-        .map_err(|e| HexforgeError::Internal(format!("CSV flush error: {e}")))?;
-    String::from_utf8(bytes).map_err(|e| HexforgeError::Internal(format!("CSV UTF-8 error: {e}")))
+            .unwrap_or_default(),
+        bib.publisher_id
+            .and_then(|id| ctx.publisher_names.get(&id))
+            .cloned()
+            .unwrap_or_default(),
+        bib.institution_id
+            .and_then(|id| ctx.institution_names.get(&id))
+            .cloned()
+            .unwrap_or_default(),
+        bib.school_id
+            .and_then(|id| ctx.school_names.get(&id))
+            .cloned()
+            .unwrap_or_default(),
+        bib.series_id
+            .and_then(|id| ctx.series_names.get(&id))
+            .cloned()
+            .unwrap_or_default(),
+        bib.volume.clone().unwrap_or_default(),
+        bib.number.clone().unwrap_or_default(),
+        bib.pages.clone().unwrap_or_default(),
+        bib.eid.clone().unwrap_or_default(),
+        bib.address.clone().unwrap_or_default(),
+        bib.type_field.clone().unwrap_or_default(),
+        bib.edition.clone().unwrap_or_default(),
+        bib.note_latex.clone().unwrap_or_default(),
+        bib.issuetitle_latex.clone().unwrap_or_default(),
+        bib.extra_note_latex.clone().unwrap_or_default(),
+        crossref,
+        refs_for_type(RefType::FurtherRef),
+        refs_for_type(RefType::DependsOn),
+        keywords_for_level(1),
+        keywords_for_level(2),
+        keywords_for_level(3),
+        bib.epoch.map(|e| e.to_string()).unwrap_or_default(),
+        bib.langid.map(|l| l.to_string()).unwrap_or_default(),
+        if bib.is_translation {
+            "x".to_string()
+        } else {
+            String::new()
+        },
+        person,
+        if bib.has_fulltext {
+            "x".to_string()
+        } else {
+            String::new()
+        },
+        bib.shorthand.clone().unwrap_or_default(),
+        bib.options.clone().unwrap_or_default(),
+        bib.doi.clone().unwrap_or_default(),
+        bib.url.clone().unwrap_or_default(),
+        bib.eprint.clone().unwrap_or_default(),
+        bib.urn.clone().unwrap_or_default(),
+    ]
 }
 
-async fn reverse_name_map(
-    pool: &hexforge::db_exports::PgPool,
-    table: &str,
-) -> Result<HashMap<i64, String>, HexforgeError> {
-    let sql = format!("SELECT id, name_latex FROM {table}");
-    let rows: Vec<NameIdRow> = query_as(&sql)
-        .fetch_all(pool)
-        .await
-        .map_err(HexforgeError::data_source)?;
-    Ok(rows.into_iter().map(|r| (r.id, r.name_latex)).collect())
-}
-
-fn format_date_for_export(bib: &crate::domain::BibItem) -> String {
+pub fn format_date_for_export(bib: &crate::domain::BibItem) -> String {
     if bib.date_is_no_date {
         return "no date".to_string();
     }

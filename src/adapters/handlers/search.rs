@@ -5,19 +5,19 @@
 use hexforge::HexforgeError;
 use hexforge::axum_exports::{Json, State};
 
-use crate::logic::search::{self, SearchRequest, SearchResponse};
+use crate::adapters::search::PgBibitemSearcher;
+use crate::logic::search::{SearchRequest, SearchResponse};
+use crate::process::search::perform_search;
 use crate::state::AppState;
 
 /// Search bibitems with full-text search and filters.
 ///
 /// `POST /api/v1/search`
-///
-/// Parses the JSON request, delegates to the search logic, and returns the
-/// JSON response.
 pub async fn search_bibitems(
     State(state): State<AppState>,
     Json(request): Json<SearchRequest>,
 ) -> Result<Json<SearchResponse>, HexforgeError> {
-    let response = search::perform_search(&state, request).await?;
+    let searcher = PgBibitemSearcher::new(state.pool.pool());
+    let response = perform_search(&searcher, request).await?;
     Ok(Json(response))
 }

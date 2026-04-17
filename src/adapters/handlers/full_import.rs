@@ -1,4 +1,6 @@
-//! Full CSV import handlers — thin HTTP adapters for human-readable CSV endpoints.
+//! Full CSV import handlers -- thin HTTP adapters for human-readable CSV endpoints.
+//!
+//! Constructs Postgres adapters and calls process-layer functions.
 
 use axum::extract::Multipart;
 use hexforge::HexforgeError;
@@ -13,7 +15,10 @@ pub struct ImportFullCsvParams {
     #[serde(default)]
     pub delete_stale: bool,
 }
-use crate::logic::full_import::{self, EntityImportReport, FullImportResult, ValidationReport};
+
+use crate::adapters::full_import::PgFullImportStore;
+use crate::logic::full_import::{EntityImportReport, FullImportResult, ValidationReport};
+use crate::process::full_import;
 use crate::state::AppState;
 
 /// Validate a human-readable CSV without importing.
@@ -23,7 +28,8 @@ pub async fn validate_full_csv(
     multipart: Multipart,
 ) -> Result<Json<ValidationReport>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
-    let report = full_import::validate_full_csv(&state, &data).await?;
+    let store = PgFullImportStore::new(state.pool.pool());
+    let report = full_import::validate_full_csv(&store, &store, &store, &store, &data).await?;
     Ok(Json(report))
 }
 
@@ -34,7 +40,19 @@ pub async fn import_entities_from_full_csv(
     multipart: Multipart,
 ) -> Result<Json<EntityImportReport>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
-    let report = full_import::import_entities_from_full_csv(&state, &data).await?;
+    let store = PgFullImportStore::new(state.pool.pool());
+    let report = full_import::import_entities_from_full_csv(
+        &store,
+        &store,
+        &store,
+        &store,
+        &state.institution_ds,
+        &state.school_ds,
+        &state.series_ds,
+        &state.keyword_ds,
+        &data,
+    )
+    .await?;
     Ok(Json(report))
 }
 
@@ -49,7 +67,22 @@ pub async fn import_full_csv(
     multipart: Multipart,
 ) -> Result<Response, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
-    let result = full_import::import_full_csv(&state, &data, params.delete_stale).await?;
+    let store = PgFullImportStore::new(state.pool.pool());
+    let result = full_import::import_full_csv(
+        &store,
+        &store,
+        &store,
+        &store,
+        &state.bibitem_ds,
+        &store,
+        &store,
+        &store,
+        &store,
+        &store,
+        &data,
+        params.delete_stale,
+    )
+    .await?;
     match result {
         FullImportResult::Success(report) => Ok(Json(report).into_response()),
         FullImportResult::ValidationFailed(report) => {
@@ -61,7 +94,8 @@ pub async fn import_full_csv(
 /// Export all bibitems as a human-readable CSV matching the full import format.
 /// `POST /api/v1/admin/export-full-csv`
 pub async fn export_full_csv(State(state): State<AppState>) -> Result<Response, HexforgeError> {
-    let csv = full_import::export_full_csv(&state).await?;
+    let store = PgFullImportStore::new(state.pool.pool());
+    let csv = full_import::export_full_csv(&store, &store, &store, &store, &store).await?;
     Ok((
         StatusCode::OK,
         [

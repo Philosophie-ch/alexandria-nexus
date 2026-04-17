@@ -8,7 +8,12 @@ use hexforge::HexforgeError;
 use hexforge::axum_exports::{IntoResponse, Json, Response, State, StatusCode, header};
 use serde::Serialize;
 
-use crate::logic::export::{self, BibitemExportRequest, EntityExportRequest, ExportError};
+use crate::adapters::export::{
+    PgBibitemFetcher, PgEntityBatchFetcher, PgExportJunctionFetcher, PgKeyedEntityFetcher,
+    PgKeywordFetcher,
+};
+use crate::logic::export::{BibitemExportRequest, EntityExportRequest, ExportError};
+use crate::process::export;
 use crate::state::AppState;
 
 // =============================================================================
@@ -128,7 +133,9 @@ pub async fn export_authors(
     State(state): State<AppState>,
     Json(req): Json<EntityExportRequest>,
 ) -> Result<Response, HexforgeError> {
-    let result = export::export_authors_csv(&state, req.all, req.ids, req.keys).await;
+    let pool = state.pool.pool();
+    let fetcher = PgKeyedEntityFetcher::new(&state.author_ds, "author_key", "authors", pool);
+    let result = export::export_authors_csv(&fetcher, req.all, req.ids, req.keys).await;
     csv_result_to_response(result, "authors.csv")
 }
 
@@ -139,7 +146,9 @@ pub async fn export_journals(
     State(state): State<AppState>,
     Json(req): Json<EntityExportRequest>,
 ) -> Result<Response, HexforgeError> {
-    let result = export::export_journals_csv(&state, req.all, req.ids, req.keys).await;
+    let pool = state.pool.pool();
+    let fetcher = PgKeyedEntityFetcher::new(&state.journal_ds, "journal_key", "journals", pool);
+    let result = export::export_journals_csv(&fetcher, req.all, req.ids, req.keys).await;
     csv_result_to_response(result, "journals.csv")
 }
 
@@ -150,7 +159,10 @@ pub async fn export_publishers(
     State(state): State<AppState>,
     Json(req): Json<EntityExportRequest>,
 ) -> Result<Response, HexforgeError> {
-    let result = export::export_publishers_csv(&state, req.all, req.ids, req.keys).await;
+    let pool = state.pool.pool();
+    let fetcher =
+        PgKeyedEntityFetcher::new(&state.publisher_ds, "publisher_key", "publishers", pool);
+    let result = export::export_publishers_csv(&fetcher, req.all, req.ids, req.keys).await;
     csv_result_to_response(result, "publishers.csv")
 }
 
@@ -161,7 +173,14 @@ pub async fn export_institutions(
     State(state): State<AppState>,
     Json(req): Json<EntityExportRequest>,
 ) -> Result<Response, HexforgeError> {
-    let result = export::export_institutions_csv(&state, req.all, req.ids, req.keys).await;
+    let pool = state.pool.pool();
+    let fetcher = PgKeyedEntityFetcher::new(
+        &state.institution_ds,
+        "institution_key",
+        "institutions",
+        pool,
+    );
+    let result = export::export_institutions_csv(&fetcher, req.all, req.ids, req.keys).await;
     csv_result_to_response(result, "institutions.csv")
 }
 
@@ -172,7 +191,9 @@ pub async fn export_schools(
     State(state): State<AppState>,
     Json(req): Json<EntityExportRequest>,
 ) -> Result<Response, HexforgeError> {
-    let result = export::export_schools_csv(&state, req.all, req.ids, req.keys).await;
+    let pool = state.pool.pool();
+    let fetcher = PgKeyedEntityFetcher::new(&state.school_ds, "school_key", "schools", pool);
+    let result = export::export_schools_csv(&fetcher, req.all, req.ids, req.keys).await;
     csv_result_to_response(result, "schools.csv")
 }
 
@@ -183,7 +204,9 @@ pub async fn export_series(
     State(state): State<AppState>,
     Json(req): Json<EntityExportRequest>,
 ) -> Result<Response, HexforgeError> {
-    let result = export::export_series_csv(&state, req.all, req.ids, req.keys).await;
+    let pool = state.pool.pool();
+    let fetcher = PgKeyedEntityFetcher::new(&state.series_ds, "series_key", "series", pool);
+    let result = export::export_series_csv(&fetcher, req.all, req.ids, req.keys).await;
     csv_result_to_response(result, "series.csv")
 }
 
@@ -194,7 +217,9 @@ pub async fn export_keywords(
     State(state): State<AppState>,
     Json(req): Json<EntityExportRequest>,
 ) -> Result<Response, HexforgeError> {
-    let result = export::export_keywords_csv(&state, req.all, req.ids, req.keys).await;
+    let pool = state.pool.pool();
+    let fetcher = PgKeywordFetcher::new(&state.keyword_ds, pool);
+    let result = export::export_keywords_csv(&fetcher, req.all, req.ids, req.keys).await;
     csv_result_to_response(result, "keywords.csv")
 }
 
@@ -209,6 +234,31 @@ pub async fn export_bibitems(
     State(state): State<AppState>,
     Json(req): Json<BibitemExportRequest>,
 ) -> Result<Response, HexforgeError> {
-    let result = export::export_bibitems_csv(&state, req).await;
+    let pool = state.pool.pool();
+    let bibitem_fetcher = PgBibitemFetcher::new(&state.bibitem_ds, pool);
+    let junction_fetcher = PgExportJunctionFetcher::new(pool);
+    let author_batch = PgEntityBatchFetcher::new(&state.author_ds);
+    let journal_batch = PgEntityBatchFetcher::new(&state.journal_ds);
+    let publisher_batch = PgEntityBatchFetcher::new(&state.publisher_ds);
+    let institution_batch = PgEntityBatchFetcher::new(&state.institution_ds);
+    let school_batch = PgEntityBatchFetcher::new(&state.school_ds);
+    let series_batch = PgEntityBatchFetcher::new(&state.series_ds);
+    let bibitem_batch = PgEntityBatchFetcher::new(&state.bibitem_ds);
+    let keyword_batch = PgEntityBatchFetcher::new(&state.keyword_ds);
+
+    let result = export::export_bibitems_csv(
+        &bibitem_fetcher,
+        &junction_fetcher,
+        &author_batch,
+        &journal_batch,
+        &publisher_batch,
+        &institution_batch,
+        &school_batch,
+        &series_batch,
+        &bibitem_batch,
+        &keyword_batch,
+        req,
+    )
+    .await;
     csv_result_to_response(result, "bibitems.csv")
 }

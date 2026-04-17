@@ -4,6 +4,7 @@ pub mod adapters;
 pub mod composition;
 pub mod domain;
 pub mod logic;
+pub mod process;
 
 // Re-export key types for external use (tests, main.rs)
 pub use composition::{AppState, build_app};

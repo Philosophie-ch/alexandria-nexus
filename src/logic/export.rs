@@ -1,23 +1,18 @@
-//! Export logic — CSV generation and entity resolution for exports.
+//! Export logic — pure types and CSV formatting helpers.
 //!
-//! Contains data types, CSV formatting helpers, entity fetch helpers,
-//! and the core export logic for all entity types and bibitems.
-//! No HTTP types — returns raw CSV bytes or structured error data.
+//! Contains request/response types, CSV header constants, and pure
+//! formatting functions used by the export process layer.
+//! No async, no database, no I/O — only pure transformations.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-use hexforge::db_exports::query_as;
-use hexforge::{HexforgeError, WhereClause};
+use hexforge::HexforgeError;
 use serde::Deserialize;
 
-use crate::adapters::db::queries::junctions::{
-    fetch_bibitem_authors_batch, fetch_bibitem_keywords_batch,
-};
 use crate::domain::junctions::{BibitemAuthorsRow, BibitemKeywordsRow};
 use crate::domain::{
     Author, AuthorRole, BibItem, Institution, Journal, Keyword, Publisher, School, Series,
 };
-use crate::state::AppState;
 
 // =============================================================================
 // Request types (no HTTP, just data)
@@ -98,356 +93,96 @@ pub fn opt_display<T: std::fmt::Display>(v: &Option<T>) -> String {
 }
 
 // =============================================================================
-// Entity export logic
+// Role/keyword formatting helpers (pure functions)
 // =============================================================================
 
-/// Export authors as CSV bytes.
-pub async fn export_authors_csv(
-    state: &AppState,
-    all: bool,
-    ids: Option<Vec<i64>>,
-    keys: Option<Vec<String>>,
-) -> Result<Vec<u8>, ExportError> {
-    let authors = fetch_entities_by_request(&state.author_ds, "author_key", all, ids, keys).await?;
-
-    let mut wtr = csv::Writer::from_writer(vec![]);
-    wtr.write_record([
-        "id",
-        "author_key",
-        "given_name_latex",
-        "given_name_unicode",
-        "family_name_latex",
-        "family_name_unicode",
-        "mononym_latex",
-        "mononym_unicode",
-        "shorthand_latex",
-        "shorthand_unicode",
-        "famous_name_latex",
-        "famous_name_unicode",
-    ])
-    .map_err(|e| HexforgeError::internal(e.to_string()))?;
-
-    for a in &authors {
-        wtr.write_record([
-            &a.id.to_string(),
-            &a.author_key,
-            opt_str(&a.given_name_latex),
-            opt_str(&a.given_name_unicode),
-            opt_str(&a.family_name_latex),
-            opt_str(&a.family_name_unicode),
-            opt_str(&a.mononym_latex),
-            opt_str(&a.mononym_unicode),
-            opt_str(&a.shorthand_latex),
-            opt_str(&a.shorthand_unicode),
-            opt_str(&a.famous_name_latex),
-            opt_str(&a.famous_name_unicode),
-        ])
-        .map_err(|e| HexforgeError::internal(e.to_string()))?;
-    }
-
-    wtr.into_inner()
-        .map_err(|e| ExportError::Internal(HexforgeError::internal(e.to_string())))
+/// Format author IDs for a given role, sorted by position.
+pub fn format_role_ids(bib_authors: Option<&Vec<&BibitemAuthorsRow>>, role: AuthorRole) -> String {
+    let role_str = role.to_string();
+    bib_authors
+        .map(|rows| {
+            let mut filtered: Vec<&BibitemAuthorsRow> = rows
+                .iter()
+                .filter(|r| r.role == role_str)
+                .copied()
+                .collect();
+            filtered.sort_by_key(|r| r.position);
+            filtered
+                .iter()
+                .map(|r| r.author_id.to_string())
+                .collect::<Vec<_>>()
+                .join(";")
+        })
+        .unwrap_or_default()
 }
 
-/// Export journals as CSV bytes.
-pub async fn export_journals_csv(
-    state: &AppState,
-    all: bool,
-    ids: Option<Vec<i64>>,
-    keys: Option<Vec<String>>,
-) -> Result<Vec<u8>, ExportError> {
-    let journals =
-        fetch_entities_by_request(&state.journal_ds, "journal_key", all, ids, keys).await?;
-
-    let mut wtr = csv::Writer::from_writer(vec![]);
-    wtr.write_record([
-        "id",
-        "journal_key",
-        "name_latex",
-        "name_unicode",
-        "issn_print",
-        "issn_electronic",
-    ])
-    .map_err(|e| HexforgeError::internal(e.to_string()))?;
-
-    for j in &journals {
-        wtr.write_record([
-            &j.id.to_string(),
-            &j.journal_key,
-            &j.name_latex,
-            &j.name_unicode,
-            opt_str(&j.issn_print),
-            opt_str(&j.issn_electronic),
-        ])
-        .map_err(|e| HexforgeError::internal(e.to_string()))?;
-    }
-
-    wtr.into_inner()
-        .map_err(|e| ExportError::Internal(HexforgeError::internal(e.to_string())))
-}
-
-/// Export publishers as CSV bytes.
-pub async fn export_publishers_csv(
-    state: &AppState,
-    all: bool,
-    ids: Option<Vec<i64>>,
-    keys: Option<Vec<String>>,
-) -> Result<Vec<u8>, ExportError> {
-    let publishers =
-        fetch_entities_by_request(&state.publisher_ds, "publisher_key", all, ids, keys).await?;
-
-    let mut wtr = csv::Writer::from_writer(vec![]);
-    wtr.write_record([
-        "id",
-        "publisher_key",
-        "name_latex",
-        "name_unicode",
-        "default_address",
-    ])
-    .map_err(|e| HexforgeError::internal(e.to_string()))?;
-
-    for p in &publishers {
-        wtr.write_record([
-            &p.id.to_string(),
-            &p.publisher_key,
-            &p.name_latex,
-            &p.name_unicode,
-            opt_str(&p.default_address),
-        ])
-        .map_err(|e| HexforgeError::internal(e.to_string()))?;
-    }
-
-    wtr.into_inner()
-        .map_err(|e| ExportError::Internal(HexforgeError::internal(e.to_string())))
-}
-
-/// Export institutions as CSV bytes.
-pub async fn export_institutions_csv(
-    state: &AppState,
-    all: bool,
-    ids: Option<Vec<i64>>,
-    keys: Option<Vec<String>>,
-) -> Result<Vec<u8>, ExportError> {
-    let institutions =
-        fetch_entities_by_request(&state.institution_ds, "institution_key", all, ids, keys).await?;
-
-    let mut wtr = csv::Writer::from_writer(vec![]);
-    wtr.write_record([
-        "id",
-        "institution_key",
-        "name_latex",
-        "name_unicode",
-        "default_address",
-    ])
-    .map_err(|e| HexforgeError::internal(e.to_string()))?;
-
-    for inst in &institutions {
-        wtr.write_record([
-            &inst.id.to_string(),
-            &inst.institution_key,
-            &inst.name_latex,
-            &inst.name_unicode,
-            opt_str(&inst.default_address),
-        ])
-        .map_err(|e| HexforgeError::internal(e.to_string()))?;
-    }
-
-    wtr.into_inner()
-        .map_err(|e| ExportError::Internal(HexforgeError::internal(e.to_string())))
-}
-
-/// Export schools as CSV bytes.
-pub async fn export_schools_csv(
-    state: &AppState,
-    all: bool,
-    ids: Option<Vec<i64>>,
-    keys: Option<Vec<String>>,
-) -> Result<Vec<u8>, ExportError> {
-    let schools = fetch_entities_by_request(&state.school_ds, "school_key", all, ids, keys).await?;
-
-    let mut wtr = csv::Writer::from_writer(vec![]);
-    wtr.write_record([
-        "id",
-        "school_key",
-        "name_latex",
-        "name_unicode",
-        "default_address",
-    ])
-    .map_err(|e| HexforgeError::internal(e.to_string()))?;
-
-    for s in &schools {
-        wtr.write_record([
-            &s.id.to_string(),
-            &s.school_key,
-            &s.name_latex,
-            &s.name_unicode,
-            opt_str(&s.default_address),
-        ])
-        .map_err(|e| HexforgeError::internal(e.to_string()))?;
-    }
-
-    wtr.into_inner()
-        .map_err(|e| ExportError::Internal(HexforgeError::internal(e.to_string())))
-}
-
-/// Export series as CSV bytes.
-pub async fn export_series_csv(
-    state: &AppState,
-    all: bool,
-    ids: Option<Vec<i64>>,
-    keys: Option<Vec<String>>,
-) -> Result<Vec<u8>, ExportError> {
-    let series_list =
-        fetch_entities_by_request(&state.series_ds, "series_key", all, ids, keys).await?;
-
-    let mut wtr = csv::Writer::from_writer(vec![]);
-    wtr.write_record(["id", "series_key", "name_latex", "name_unicode"])
-        .map_err(|e| HexforgeError::internal(e.to_string()))?;
-
-    for s in &series_list {
-        wtr.write_record([
-            &s.id.to_string(),
-            &s.series_key,
-            &s.name_latex,
-            &s.name_unicode,
-        ])
-        .map_err(|e| HexforgeError::internal(e.to_string()))?;
-    }
-
-    wtr.into_inner()
-        .map_err(|e| ExportError::Internal(HexforgeError::internal(e.to_string())))
-}
-
-/// Export keywords as CSV bytes.
-pub async fn export_keywords_csv(
-    state: &AppState,
-    all: bool,
-    ids: Option<Vec<i64>>,
-    keys: Option<Vec<String>>,
-) -> Result<Vec<u8>, ExportError> {
-    // Keywords don't have a unique "key" column — identity is (name, level).
-    // We treat `keys` as keyword names for filtering purposes.
-    let keywords: Vec<Keyword> = if all {
-        fetch_all_via_sql(state.pool.pool(), "keywords").await?
-    } else if let Some(ref id_list) = ids {
-        let found = state
-            .keyword_ds
-            .find_by_ids(id_list)
-            .await
-            .map_err(HexforgeError::data_source)?;
-        let found_ids: HashSet<i64> = found.iter().map(|k| k.id).collect();
-        let missing: Vec<i64> = id_list
-            .iter()
-            .filter(|id| !found_ids.contains(id))
-            .copied()
-            .collect();
-        if !missing.is_empty() {
-            return Err(ExportError::MissingIds(missing));
-        }
-        found
-    } else if let Some(ref key_list) = keys {
-        let mut all_found = Vec::new();
-        for name in key_list {
-            let found: Vec<Keyword> = state
-                .keyword_ds
-                .find_many(WhereClause::new("name = $1").bind(name.clone()))
-                .await
-                .map_err(HexforgeError::data_source)?;
-            all_found.extend(found);
-        }
-        let found_names: HashSet<&str> = all_found.iter().map(|k| k.name.as_str()).collect();
-        let missing: Vec<String> = key_list
-            .iter()
-            .filter(|k| !found_names.contains(k.as_str()))
-            .cloned()
-            .collect();
-        if !missing.is_empty() {
-            return Err(ExportError::MissingKeys(missing));
-        }
-        all_found
-    } else {
-        return Err(ExportError::BadRequest);
-    };
-
-    let mut wtr = csv::Writer::from_writer(vec![]);
-    wtr.write_record(["id", "name", "level"])
-        .map_err(|e| HexforgeError::internal(e.to_string()))?;
-
-    for kw in &keywords {
-        wtr.write_record([&kw.id.to_string(), &kw.name, &kw.level.to_string()])
-            .map_err(|e| HexforgeError::internal(e.to_string()))?;
-    }
-
-    wtr.into_inner()
-        .map_err(|e| ExportError::Internal(HexforgeError::internal(e.to_string())))
-}
-
-/// Export bibitems as CSV bytes.
+/// Format author/editor/guesteditor names for a given role.
 ///
-/// Supports two formats:
-/// - `Expanded`: human-readable with resolved names
-/// - `Ids`: machine-readable with raw foreign key IDs
-pub async fn export_bibitems_csv(
-    state: &AppState,
-    req: BibitemExportRequest,
-) -> Result<Vec<u8>, ExportError> {
-    // 1. Fetch bibitems based on selection criteria
-    let bibitems: Vec<BibItem> = if req.all {
-        fetch_all_via_sql(state.pool.pool(), "bibitems").await?
-    } else if let Some(ref id_list) = req.ids {
-        let found = state
-            .bibitem_ds
-            .find_by_ids(id_list)
-            .await
-            .map_err(HexforgeError::data_source)?;
-        let found_ids: HashSet<i64> = found.iter().map(|b| b.id).collect();
-        let missing: Vec<i64> = id_list
-            .iter()
-            .filter(|id| !found_ids.contains(id))
-            .copied()
-            .collect();
-        if !missing.is_empty() {
-            return Err(ExportError::MissingIds(missing));
-        }
-        found
-    } else if let Some(ref bibkey_list) = req.bibkeys {
-        let mut all_found = Vec::new();
-        for bibkey in bibkey_list {
-            let found = state
-                .bibitem_ds
-                .find_one(WhereClause::new("bibkey = $1").bind(bibkey.clone()))
-                .await
-                .map_err(HexforgeError::data_source)?;
-            if let Some(item) = found {
-                all_found.push(item);
-            }
-        }
-        let found_keys: HashSet<&str> = all_found.iter().map(|b| b.bibkey.as_str()).collect();
-        let missing: Vec<String> = bibkey_list
-            .iter()
-            .filter(|k| !found_keys.contains(k.as_str()))
-            .cloned()
-            .collect();
-        if !missing.is_empty() {
-            return Err(ExportError::MissingBibkeys(missing));
-        }
-        all_found
-    } else {
-        return Err(ExportError::BadRequest);
-    };
+/// Returns "LastName, FirstName and LastName2, FirstName2" using unicode names,
+/// ordered by position.
+pub fn format_role_names(
+    bib_authors: Option<&Vec<&BibitemAuthorsRow>>,
+    role: AuthorRole,
+    authors_map: &HashMap<i64, Author>,
+) -> String {
+    let role_str = role.to_string();
+    bib_authors
+        .map(|rows| {
+            let mut filtered: Vec<&BibitemAuthorsRow> = rows
+                .iter()
+                .filter(|r| r.role == role_str)
+                .copied()
+                .collect();
+            filtered.sort_by_key(|r| r.position);
 
-    match req.format {
-        ExportFormat::Ids => build_bibitems_ids_csv(&bibitems, state).await,
-        ExportFormat::Expanded => build_bibitems_expanded_csv(&bibitems, state).await,
-    }
+            let names: Vec<String> = filtered
+                .iter()
+                .filter_map(|r| {
+                    authors_map.get(&r.author_id).map(|a| {
+                        if let Some(ref mononym) = a.mononym_unicode {
+                            mononym.clone()
+                        } else {
+                            let family = a.family_name_unicode.as_deref().unwrap_or("");
+                            let given = a.given_name_unicode.as_deref().unwrap_or("");
+                            if given.is_empty() {
+                                family.to_string()
+                            } else {
+                                format!("{family}, {given}")
+                            }
+                        }
+                    })
+                })
+                .collect();
+
+            names.join(" and ")
+        })
+        .unwrap_or_default()
+}
+
+/// Format keyword names at a given level, semicolon-separated.
+pub fn format_keywords_at_level(
+    bib_keywords: Option<&Vec<&BibitemKeywordsRow>>,
+    level: i16,
+    keywords_map: &HashMap<i64, Keyword>,
+) -> String {
+    bib_keywords
+        .map(|rows| {
+            let names: Vec<&str> = rows
+                .iter()
+                .filter(|r| r.keyword_level == level)
+                .filter_map(|r| keywords_map.get(&r.keyword_id).map(|k| k.name.as_str()))
+                .collect();
+            names.join(";")
+        })
+        .unwrap_or_default()
 }
 
 // =============================================================================
-// Bibitem IDs format
+// CSV header constants
 // =============================================================================
 
 /// IDs format header columns.
-const IDS_FORMAT_HEADER: &[&str] = &[
+pub const IDS_FORMAT_HEADER: &[&str] = &[
     "id",
     "entry_type",
     "bibkey",
@@ -491,29 +226,263 @@ const IDS_FORMAT_HEADER: &[&str] = &[
     "keyword_ids",
 ];
 
-/// Build bibitems CSV in IDs format (machine-readable with foreign key IDs).
-async fn build_bibitems_ids_csv(
-    bibitems: &[BibItem],
-    state: &AppState,
-) -> Result<Vec<u8>, ExportError> {
-    if bibitems.is_empty() {
-        let mut wtr = csv::Writer::from_writer(vec![]);
-        wtr.write_record(IDS_FORMAT_HEADER)
+/// Expanded format header columns.
+pub const EXPANDED_FORMAT_HEADER: &[&str] = &[
+    "entry_type",
+    "bibkey",
+    "author",
+    "editor",
+    "guesteditor",
+    "options",
+    "shorthand",
+    "date_year",
+    "pubstate",
+    "title_latex",
+    "title_unicode",
+    "booktitle_latex",
+    "booktitle_unicode",
+    "crossref",
+    "journal",
+    "volume",
+    "number",
+    "pages",
+    "eid",
+    "series",
+    "address",
+    "institution",
+    "school",
+    "publisher",
+    "type_field",
+    "edition",
+    "note_latex",
+    "note_unicode",
+    "issuetitle_latex",
+    "issuetitle_unicode",
+    "extra_note_latex",
+    "extra_note_unicode",
+    "urn",
+    "eprint",
+    "doi",
+    "url",
+    "kw_level1",
+    "kw_level2",
+    "kw_level3",
+    "epoch",
+    "langid",
+    "is_translation",
+];
+
+// =============================================================================
+// CSV building helpers (pure, synchronous)
+// =============================================================================
+
+/// Build authors CSV from pre-fetched data.
+pub fn build_authors_csv(authors: &[Author]) -> Result<Vec<u8>, ExportError> {
+    let mut wtr = csv::Writer::from_writer(vec![]);
+    wtr.write_record([
+        "id",
+        "author_key",
+        "given_name_latex",
+        "given_name_unicode",
+        "family_name_latex",
+        "family_name_unicode",
+        "mononym_latex",
+        "mononym_unicode",
+        "shorthand_latex",
+        "shorthand_unicode",
+        "famous_name_latex",
+        "famous_name_unicode",
+    ])
+    .map_err(|e| HexforgeError::internal(e.to_string()))?;
+
+    for a in authors {
+        wtr.write_record([
+            &a.id.to_string(),
+            &a.author_key,
+            opt_str(&a.given_name_latex),
+            opt_str(&a.given_name_unicode),
+            opt_str(&a.family_name_latex),
+            opt_str(&a.family_name_unicode),
+            opt_str(&a.mononym_latex),
+            opt_str(&a.mononym_unicode),
+            opt_str(&a.shorthand_latex),
+            opt_str(&a.shorthand_unicode),
+            opt_str(&a.famous_name_latex),
+            opt_str(&a.famous_name_unicode),
+        ])
+        .map_err(|e| HexforgeError::internal(e.to_string()))?;
+    }
+
+    wtr.into_inner()
+        .map_err(|e| ExportError::Internal(HexforgeError::internal(e.to_string())))
+}
+
+/// Build journals CSV from pre-fetched data.
+pub fn build_journals_csv(journals: &[Journal]) -> Result<Vec<u8>, ExportError> {
+    let mut wtr = csv::Writer::from_writer(vec![]);
+    wtr.write_record([
+        "id",
+        "journal_key",
+        "name_latex",
+        "name_unicode",
+        "issn_print",
+        "issn_electronic",
+    ])
+    .map_err(|e| HexforgeError::internal(e.to_string()))?;
+
+    for j in journals {
+        wtr.write_record([
+            &j.id.to_string(),
+            &j.journal_key,
+            &j.name_latex,
+            &j.name_unicode,
+            opt_str(&j.issn_print),
+            opt_str(&j.issn_electronic),
+        ])
+        .map_err(|e| HexforgeError::internal(e.to_string()))?;
+    }
+
+    wtr.into_inner()
+        .map_err(|e| ExportError::Internal(HexforgeError::internal(e.to_string())))
+}
+
+/// Build publishers CSV from pre-fetched data.
+pub fn build_publishers_csv(publishers: &[Publisher]) -> Result<Vec<u8>, ExportError> {
+    let mut wtr = csv::Writer::from_writer(vec![]);
+    wtr.write_record([
+        "id",
+        "publisher_key",
+        "name_latex",
+        "name_unicode",
+        "default_address",
+    ])
+    .map_err(|e| HexforgeError::internal(e.to_string()))?;
+
+    for p in publishers {
+        wtr.write_record([
+            &p.id.to_string(),
+            &p.publisher_key,
+            &p.name_latex,
+            &p.name_unicode,
+            opt_str(&p.default_address),
+        ])
+        .map_err(|e| HexforgeError::internal(e.to_string()))?;
+    }
+
+    wtr.into_inner()
+        .map_err(|e| ExportError::Internal(HexforgeError::internal(e.to_string())))
+}
+
+/// Build institutions CSV from pre-fetched data.
+pub fn build_institutions_csv(institutions: &[Institution]) -> Result<Vec<u8>, ExportError> {
+    let mut wtr = csv::Writer::from_writer(vec![]);
+    wtr.write_record([
+        "id",
+        "institution_key",
+        "name_latex",
+        "name_unicode",
+        "default_address",
+    ])
+    .map_err(|e| HexforgeError::internal(e.to_string()))?;
+
+    for inst in institutions {
+        wtr.write_record([
+            &inst.id.to_string(),
+            &inst.institution_key,
+            &inst.name_latex,
+            &inst.name_unicode,
+            opt_str(&inst.default_address),
+        ])
+        .map_err(|e| HexforgeError::internal(e.to_string()))?;
+    }
+
+    wtr.into_inner()
+        .map_err(|e| ExportError::Internal(HexforgeError::internal(e.to_string())))
+}
+
+/// Build schools CSV from pre-fetched data.
+pub fn build_schools_csv(schools: &[School]) -> Result<Vec<u8>, ExportError> {
+    let mut wtr = csv::Writer::from_writer(vec![]);
+    wtr.write_record([
+        "id",
+        "school_key",
+        "name_latex",
+        "name_unicode",
+        "default_address",
+    ])
+    .map_err(|e| HexforgeError::internal(e.to_string()))?;
+
+    for s in schools {
+        wtr.write_record([
+            &s.id.to_string(),
+            &s.school_key,
+            &s.name_latex,
+            &s.name_unicode,
+            opt_str(&s.default_address),
+        ])
+        .map_err(|e| HexforgeError::internal(e.to_string()))?;
+    }
+
+    wtr.into_inner()
+        .map_err(|e| ExportError::Internal(HexforgeError::internal(e.to_string())))
+}
+
+/// Build series CSV from pre-fetched data.
+pub fn build_series_csv(series_list: &[Series]) -> Result<Vec<u8>, ExportError> {
+    let mut wtr = csv::Writer::from_writer(vec![]);
+    wtr.write_record(["id", "series_key", "name_latex", "name_unicode"])
+        .map_err(|e| HexforgeError::internal(e.to_string()))?;
+
+    for s in series_list {
+        wtr.write_record([
+            &s.id.to_string(),
+            &s.series_key,
+            &s.name_latex,
+            &s.name_unicode,
+        ])
+        .map_err(|e| HexforgeError::internal(e.to_string()))?;
+    }
+
+    wtr.into_inner()
+        .map_err(|e| ExportError::Internal(HexforgeError::internal(e.to_string())))
+}
+
+/// Build keywords CSV from pre-fetched data.
+pub fn build_keywords_csv(keywords: &[Keyword]) -> Result<Vec<u8>, ExportError> {
+    let mut wtr = csv::Writer::from_writer(vec![]);
+    wtr.write_record(["id", "name", "level"])
+        .map_err(|e| HexforgeError::internal(e.to_string()))?;
+
+    for kw in keywords {
+        wtr.write_record([&kw.id.to_string(), &kw.name, &kw.level.to_string()])
             .map_err(|e| HexforgeError::internal(e.to_string()))?;
+    }
+
+    wtr.into_inner()
+        .map_err(|e| ExportError::Internal(HexforgeError::internal(e.to_string())))
+}
+
+/// Build bibitems CSV in IDs format from pre-fetched data.
+///
+/// All junction data must be pre-fetched and passed in.
+pub fn build_bibitems_ids_csv(
+    bibitems: &[BibItem],
+    author_rows: &[BibitemAuthorsRow],
+    keyword_rows: &[BibitemKeywordsRow],
+) -> Result<Vec<u8>, ExportError> {
+    let mut wtr = csv::Writer::from_writer(vec![]);
+    wtr.write_record(IDS_FORMAT_HEADER)
+        .map_err(|e| HexforgeError::internal(e.to_string()))?;
+
+    if bibitems.is_empty() {
         return wtr
             .into_inner()
             .map_err(|e| ExportError::Internal(HexforgeError::internal(e.to_string())));
     }
 
-    let bibitem_ids: Vec<i64> = bibitems.iter().map(|b| b.id).collect();
-
-    // Batch-fetch junction data
-    let author_rows = fetch_bibitem_authors_batch(state.pool.pool(), &bibitem_ids).await?;
-    let keyword_rows = fetch_bibitem_keywords_batch(state.pool.pool(), &bibitem_ids).await?;
-
     // Group authors by bibitem_id
     let mut authors_by_bibitem: HashMap<i64, Vec<&BibitemAuthorsRow>> = HashMap::new();
-    for row in &author_rows {
+    for row in author_rows {
         authors_by_bibitem
             .entry(row.bibitem_id)
             .or_default()
@@ -522,16 +491,12 @@ async fn build_bibitems_ids_csv(
 
     // Group keywords by bibitem_id
     let mut keywords_by_bibitem: HashMap<i64, Vec<&BibitemKeywordsRow>> = HashMap::new();
-    for row in &keyword_rows {
+    for row in keyword_rows {
         keywords_by_bibitem
             .entry(row.bibitem_id)
             .or_default()
             .push(row);
     }
-
-    let mut wtr = csv::Writer::from_writer(vec![]);
-    wtr.write_record(IDS_FORMAT_HEADER)
-        .map_err(|e| HexforgeError::internal(e.to_string()))?;
 
     for bib in bibitems {
         let bib_authors = authors_by_bibitem.get(&bib.id);
@@ -599,144 +564,36 @@ async fn build_bibitems_ids_csv(
         .map_err(|e| ExportError::Internal(HexforgeError::internal(e.to_string())))
 }
 
-/// Format author IDs for a given role, sorted by position.
-fn format_role_ids(bib_authors: Option<&Vec<&BibitemAuthorsRow>>, role: AuthorRole) -> String {
-    let role_str = role.to_string();
-    bib_authors
-        .map(|rows| {
-            let mut filtered: Vec<&BibitemAuthorsRow> = rows
-                .iter()
-                .filter(|r| r.role == role_str)
-                .copied()
-                .collect();
-            filtered.sort_by_key(|r| r.position);
-            filtered
-                .iter()
-                .map(|r| r.author_id.to_string())
-                .collect::<Vec<_>>()
-                .join(";")
-        })
-        .unwrap_or_default()
-}
-
-// =============================================================================
-// Bibitem expanded format
-// =============================================================================
-
-/// Expanded format header columns.
-const EXPANDED_FORMAT_HEADER: &[&str] = &[
-    "entry_type",
-    "bibkey",
-    "author",
-    "editor",
-    "guesteditor",
-    "options",
-    "shorthand",
-    "date_year",
-    "pubstate",
-    "title_latex",
-    "title_unicode",
-    "booktitle_latex",
-    "booktitle_unicode",
-    "crossref",
-    "journal",
-    "volume",
-    "number",
-    "pages",
-    "eid",
-    "series",
-    "address",
-    "institution",
-    "school",
-    "publisher",
-    "type_field",
-    "edition",
-    "note_latex",
-    "note_unicode",
-    "issuetitle_latex",
-    "issuetitle_unicode",
-    "extra_note_latex",
-    "extra_note_unicode",
-    "urn",
-    "eprint",
-    "doi",
-    "url",
-    "kw_level1",
-    "kw_level2",
-    "kw_level3",
-    "epoch",
-    "langid",
-    "is_translation",
-];
-
-/// Build bibitems CSV in expanded format (human-readable with resolved names).
-async fn build_bibitems_expanded_csv(
+/// Build bibitems CSV in expanded format from pre-fetched data.
+///
+/// All entity maps and junction data must be pre-fetched and passed in.
+#[allow(clippy::too_many_arguments)]
+pub fn build_bibitems_expanded_csv(
     bibitems: &[BibItem],
-    state: &AppState,
+    author_rows: &[BibitemAuthorsRow],
+    keyword_rows: &[BibitemKeywordsRow],
+    authors_map: &HashMap<i64, Author>,
+    journals_map: &HashMap<i64, Journal>,
+    publishers_map: &HashMap<i64, Publisher>,
+    institutions_map: &HashMap<i64, Institution>,
+    schools_map: &HashMap<i64, School>,
+    series_map: &HashMap<i64, Series>,
+    crossrefs_map: &HashMap<i64, BibItem>,
+    keywords_map: &HashMap<i64, Keyword>,
 ) -> Result<Vec<u8>, ExportError> {
+    let mut wtr = csv::Writer::from_writer(vec![]);
+    wtr.write_record(EXPANDED_FORMAT_HEADER)
+        .map_err(|e| HexforgeError::internal(e.to_string()))?;
+
     if bibitems.is_empty() {
-        let mut wtr = csv::Writer::from_writer(vec![]);
-        wtr.write_record(EXPANDED_FORMAT_HEADER)
-            .map_err(|e| HexforgeError::internal(e.to_string()))?;
         return wtr
             .into_inner()
             .map_err(|e| ExportError::Internal(HexforgeError::internal(e.to_string())));
     }
 
-    let bibitem_ids: Vec<i64> = bibitems.iter().map(|b| b.id).collect();
-
-    // 2. Collect all unique FK IDs
-    let mut journal_ids = HashSet::new();
-    let mut publisher_ids = HashSet::new();
-    let mut institution_ids = HashSet::new();
-    let mut school_ids = HashSet::new();
-    let mut series_ids = HashSet::new();
-    let mut crossref_ids = HashSet::new();
-
-    for bib in bibitems {
-        if let Some(id) = bib.journal_id {
-            journal_ids.insert(id);
-        }
-        if let Some(id) = bib.publisher_id {
-            publisher_ids.insert(id);
-        }
-        if let Some(id) = bib.institution_id {
-            institution_ids.insert(id);
-        }
-        if let Some(id) = bib.school_id {
-            school_ids.insert(id);
-        }
-        if let Some(id) = bib.series_id {
-            series_ids.insert(id);
-        }
-        if let Some(id) = bib.crossref_id {
-            crossref_ids.insert(id);
-        }
-    }
-
-    // 3. Batch-fetch all related entities into HashMaps
-    let journals_map = batch_fetch_map(&state.journal_ds, &journal_ids).await?;
-    let publishers_map = batch_fetch_map(&state.publisher_ds, &publisher_ids).await?;
-    let institutions_map = batch_fetch_map(&state.institution_ds, &institution_ids).await?;
-    let schools_map = batch_fetch_map(&state.school_ds, &school_ids).await?;
-    let series_map = batch_fetch_map(&state.series_ds, &series_ids).await?;
-    let crossrefs_map = batch_fetch_map(&state.bibitem_ds, &crossref_ids).await?;
-
-    // 4. Batch-query junction tables
-    let author_rows = fetch_bibitem_authors_batch(state.pool.pool(), &bibitem_ids).await?;
-    let keyword_rows = fetch_bibitem_keywords_batch(state.pool.pool(), &bibitem_ids).await?;
-
-    // Build author lookup: author_id -> Author
-    let all_author_ids: HashSet<i64> = author_rows.iter().map(|r| r.author_id).collect();
-    let authors_map = batch_fetch_map(&state.author_ds, &all_author_ids).await?;
-
-    // Build keyword lookup: keyword_id -> Keyword
-    let all_keyword_ids: HashSet<i64> = keyword_rows.iter().map(|r| r.keyword_id).collect();
-    let keywords_map = batch_fetch_map(&state.keyword_ds, &all_keyword_ids).await?;
-
     // Group junction data by bibitem_id
     let mut authors_by_bibitem: HashMap<i64, Vec<&BibitemAuthorsRow>> = HashMap::new();
-    for row in &author_rows {
+    for row in author_rows {
         authors_by_bibitem
             .entry(row.bibitem_id)
             .or_default()
@@ -744,24 +601,19 @@ async fn build_bibitems_expanded_csv(
     }
 
     let mut keywords_by_bibitem: HashMap<i64, Vec<&BibitemKeywordsRow>> = HashMap::new();
-    for row in &keyword_rows {
+    for row in keyword_rows {
         keywords_by_bibitem
             .entry(row.bibitem_id)
             .or_default()
             .push(row);
     }
 
-    // 5. Assemble CSV rows
-    let mut wtr = csv::Writer::from_writer(vec![]);
-    wtr.write_record(EXPANDED_FORMAT_HEADER)
-        .map_err(|e| HexforgeError::internal(e.to_string()))?;
-
     for bib in bibitems {
         let bib_authors = authors_by_bibitem.get(&bib.id);
 
-        let author_col = format_role_names(bib_authors, AuthorRole::Author, &authors_map);
-        let editor_col = format_role_names(bib_authors, AuthorRole::Editor, &authors_map);
-        let guesteditor_col = format_role_names(bib_authors, AuthorRole::Guesteditor, &authors_map);
+        let author_col = format_role_names(bib_authors, AuthorRole::Author, authors_map);
+        let editor_col = format_role_names(bib_authors, AuthorRole::Editor, authors_map);
+        let guesteditor_col = format_role_names(bib_authors, AuthorRole::Guesteditor, authors_map);
 
         let journal_name = bib
             .journal_id
@@ -801,9 +653,9 @@ async fn build_bibitems_expanded_csv(
 
         // Keywords by level
         let bib_keywords = keywords_by_bibitem.get(&bib.id);
-        let kw_level1 = format_keywords_at_level(bib_keywords, 1, &keywords_map);
-        let kw_level2 = format_keywords_at_level(bib_keywords, 2, &keywords_map);
-        let kw_level3 = format_keywords_at_level(bib_keywords, 3, &keywords_map);
+        let kw_level1 = format_keywords_at_level(bib_keywords, 1, keywords_map);
+        let kw_level2 = format_keywords_at_level(bib_keywords, 2, keywords_map);
+        let kw_level3 = format_keywords_at_level(bib_keywords, 3, keywords_map);
 
         wtr.write_record([
             &bib.entry_type.to_string(),
@@ -854,277 +706,4 @@ async fn build_bibitems_expanded_csv(
 
     wtr.into_inner()
         .map_err(|e| ExportError::Internal(HexforgeError::internal(e.to_string())))
-}
-
-/// Format author/editor/guesteditor names for a given role.
-///
-/// Returns "LastName, FirstName and LastName2, FirstName2" using unicode names,
-/// ordered by position.
-fn format_role_names(
-    bib_authors: Option<&Vec<&BibitemAuthorsRow>>,
-    role: AuthorRole,
-    authors_map: &HashMap<i64, Author>,
-) -> String {
-    let role_str = role.to_string();
-    bib_authors
-        .map(|rows| {
-            let mut filtered: Vec<&BibitemAuthorsRow> = rows
-                .iter()
-                .filter(|r| r.role == role_str)
-                .copied()
-                .collect();
-            filtered.sort_by_key(|r| r.position);
-
-            let names: Vec<String> = filtered
-                .iter()
-                .filter_map(|r| {
-                    authors_map.get(&r.author_id).map(|a| {
-                        if let Some(ref mononym) = a.mononym_unicode {
-                            mononym.clone()
-                        } else {
-                            let family = a.family_name_unicode.as_deref().unwrap_or("");
-                            let given = a.given_name_unicode.as_deref().unwrap_or("");
-                            if given.is_empty() {
-                                family.to_string()
-                            } else {
-                                format!("{family}, {given}")
-                            }
-                        }
-                    })
-                })
-                .collect();
-
-            names.join(" and ")
-        })
-        .unwrap_or_default()
-}
-
-/// Format keyword names at a given level, semicolon-separated.
-fn format_keywords_at_level(
-    bib_keywords: Option<&Vec<&BibitemKeywordsRow>>,
-    level: i16,
-    keywords_map: &HashMap<i64, Keyword>,
-) -> String {
-    bib_keywords
-        .map(|rows| {
-            let names: Vec<&str> = rows
-                .iter()
-                .filter(|r| r.keyword_level == level)
-                .filter_map(|r| keywords_map.get(&r.keyword_id).map(|k| k.name.as_str()))
-                .collect();
-            names.join(";")
-        })
-        .unwrap_or_default()
-}
-
-// =============================================================================
-// Generic entity fetch helpers
-// =============================================================================
-
-/// Trait to extract entity id and key for generic entity operations.
-trait EntityWithKey {
-    fn entity_id(&self) -> i64;
-    fn key_value(&self) -> &str;
-}
-
-impl EntityWithKey for Author {
-    fn entity_id(&self) -> i64 {
-        self.id
-    }
-    fn key_value(&self) -> &str {
-        &self.author_key
-    }
-}
-
-impl EntityWithKey for Journal {
-    fn entity_id(&self) -> i64 {
-        self.id
-    }
-    fn key_value(&self) -> &str {
-        &self.journal_key
-    }
-}
-
-impl EntityWithKey for Publisher {
-    fn entity_id(&self) -> i64 {
-        self.id
-    }
-    fn key_value(&self) -> &str {
-        &self.publisher_key
-    }
-}
-
-impl EntityWithKey for Institution {
-    fn entity_id(&self) -> i64 {
-        self.id
-    }
-    fn key_value(&self) -> &str {
-        &self.institution_key
-    }
-}
-
-impl EntityWithKey for School {
-    fn entity_id(&self) -> i64 {
-        self.id
-    }
-    fn key_value(&self) -> &str {
-        &self.school_key
-    }
-}
-
-impl EntityWithKey for Series {
-    fn entity_id(&self) -> i64 {
-        self.id
-    }
-    fn key_value(&self) -> &str {
-        &self.series_key
-    }
-}
-
-/// Trait to extract the id for batch fetching into a HashMap.
-trait EntityWithId {
-    fn entity_id(&self) -> i64;
-}
-
-impl EntityWithId for Author {
-    fn entity_id(&self) -> i64 {
-        self.id
-    }
-}
-impl EntityWithId for Journal {
-    fn entity_id(&self) -> i64 {
-        self.id
-    }
-}
-impl EntityWithId for Publisher {
-    fn entity_id(&self) -> i64 {
-        self.id
-    }
-}
-impl EntityWithId for Institution {
-    fn entity_id(&self) -> i64 {
-        self.id
-    }
-}
-impl EntityWithId for School {
-    fn entity_id(&self) -> i64 {
-        self.id
-    }
-}
-impl EntityWithId for Series {
-    fn entity_id(&self) -> i64 {
-        self.id
-    }
-}
-impl EntityWithId for Keyword {
-    fn entity_id(&self) -> i64 {
-        self.id
-    }
-}
-impl EntityWithId for BibItem {
-    fn entity_id(&self) -> i64 {
-        self.id
-    }
-}
-
-/// Fetch entities by request criteria: all, ids, or keys.
-///
-/// Returns `Ok(entities)` on success, or `Err(ExportError)` for
-/// not-found / bad-request errors.
-async fn fetch_entities_by_request<T, Q>(
-    ds: &hexforge::DataStore<T, Q>,
-    key_column: &str,
-    all: bool,
-    ids: Option<Vec<i64>>,
-    keys: Option<Vec<String>>,
-) -> Result<Vec<T>, ExportError>
-where
-    T: hexforge::PgEntity + Clone + EntityWithKey + Send + Unpin,
-    Q: hexforge::PgQuery + 'static,
-{
-    if all {
-        let all_entities = ds
-            .find_many(WhereClause::new("1=1"))
-            .await
-            .map_err(HexforgeError::data_source)?;
-        return Ok(all_entities);
-    }
-
-    if let Some(ref id_list) = ids {
-        let found = ds
-            .find_by_ids(id_list)
-            .await
-            .map_err(HexforgeError::data_source)?;
-        let found_ids: HashSet<i64> = found.iter().map(|e| e.entity_id()).collect();
-        let missing: Vec<i64> = id_list
-            .iter()
-            .filter(|id| !found_ids.contains(id))
-            .copied()
-            .collect();
-        if !missing.is_empty() {
-            return Err(ExportError::MissingIds(missing));
-        }
-        return Ok(found);
-    }
-
-    if let Some(ref key_list) = keys {
-        let mut all_found = Vec::new();
-        for key in key_list {
-            let clause = WhereClause::new(format!("{key_column} = $1")).bind(key.clone());
-            let found = ds
-                .find_one(clause)
-                .await
-                .map_err(HexforgeError::data_source)?;
-            if let Some(entity) = found {
-                all_found.push(entity);
-            }
-        }
-        let found_keys: HashSet<&str> = all_found.iter().map(|e| e.key_value()).collect();
-        let missing: Vec<String> = key_list
-            .iter()
-            .filter(|k| !found_keys.contains(k.as_str()))
-            .cloned()
-            .collect();
-        if !missing.is_empty() {
-            return Err(ExportError::MissingKeys(missing));
-        }
-        return Ok(all_found);
-    }
-
-    Err(ExportError::BadRequest)
-}
-
-/// Batch-fetch entities into a HashMap keyed by id.
-async fn batch_fetch_map<T, Q>(
-    ds: &hexforge::DataStore<T, Q>,
-    ids: &HashSet<i64>,
-) -> Result<HashMap<i64, T>, ExportError>
-where
-    T: hexforge::PgEntity + Clone + EntityWithId + Send + Unpin,
-    Q: hexforge::PgQuery + 'static,
-{
-    if ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-    let id_vec: Vec<i64> = ids.iter().copied().collect();
-    let entities = ds
-        .find_by_ids(&id_vec)
-        .await
-        .map_err(HexforgeError::data_source)?;
-    Ok(entities.into_iter().map(|e| (e.entity_id(), e)).collect())
-}
-
-/// Fetch all rows from a table using raw SQL (for "all" mode).
-async fn fetch_all_via_sql<T>(
-    pool: &hexforge::db_exports::PgPool,
-    table: &str,
-) -> Result<Vec<T>, ExportError>
-where
-    T: for<'r> sqlx::FromRow<'r, hexforge::db_exports::PgRow> + Send + Unpin,
-{
-    let sql = format!("SELECT * FROM {table} ORDER BY id");
-    query_as::<_, T>(&sql)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| ExportError::Internal(HexforgeError::data_source(e)))
 }
