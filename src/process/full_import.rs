@@ -439,7 +439,7 @@ pub async fn import_full_csv(
         data,
     )
     .await?;
-    if report.has_issues() {
+    if report.has_hard_errors() {
         return Ok(FullImportResult::ValidationFailed(Box::new(report)));
     }
 

@@ -66,9 +66,15 @@ pub struct MissingKeywords {
 }
 
 impl ValidationReport {
+    /// Hard errors: duplicate bibkeys cause upsert conflicts and must be resolved before import.
+    /// Row-level parse errors are soft — those rows are skipped, others proceed.
+    pub fn has_hard_errors(&self) -> bool {
+        !self.duplicate_bibkeys.is_empty()
+    }
+
+    /// Any issue at all — used by the validate-only endpoint to surface everything.
     pub fn has_issues(&self) -> bool {
-        !self.errors.is_empty()
-            || !self.duplicate_bibkeys.is_empty()
+        self.has_hard_errors()
             || !self.missing_authors.is_empty()
             || !self.ambiguous_authors.is_empty()
             || !self.missing_journals.is_empty()

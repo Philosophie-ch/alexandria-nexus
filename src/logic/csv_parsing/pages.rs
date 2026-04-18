@@ -31,10 +31,15 @@ pub fn parse_pages(text: &str) -> Result<Option<String>, String> {
             }
             let start = parts[0].trim();
             let end = parts[1].trim();
-            if start.is_empty() || end.is_empty() {
-                return Err(format!("empty start or end in page range: '{entry}'"));
+            if start.is_empty() {
+                return Err(format!("missing start in page range: '{entry}'"));
             }
-            normalized.push(format!("{start}--{end}"));
+            if end.is_empty() {
+                // open-ended range (e.g. "215--") — store as single page
+                normalized.push(start.to_string());
+            } else {
+                normalized.push(format!("{start}--{end}"));
+            }
         } else if entry.contains('-') {
             return Err(format!(
                 "single hyphen in pages (use '--' for ranges): '{entry}'"
@@ -112,9 +117,14 @@ mod tests {
     }
 
     #[test]
-    fn empty_range_part() {
+    fn missing_start_is_error() {
         assert!(parse_pages("--456").is_err());
-        assert!(parse_pages("123--").is_err());
+    }
+
+    #[test]
+    fn open_ended_range_uses_start() {
+        assert_eq!(parse_pages("123--").unwrap().as_deref(), Some("123"));
+        assert_eq!(parse_pages("xii--").unwrap().as_deref(), Some("xii"));
     }
 
     #[test]
