@@ -58,6 +58,15 @@ CREATE TABLE authors (
     CONSTRAINT author_has_name CHECK (family_name_latex IS NOT NULL OR mononym_latex IS NOT NULL)
 );
 
+CREATE TABLE data_version (
+    id BIGSERIAL PRIMARY KEY,
+    description TEXT,
+    imported_at TIMESTAMPTZ NOT NULL,
+    version TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE institutions (
     id BIGSERIAL PRIMARY KEY,
     default_address TEXT,

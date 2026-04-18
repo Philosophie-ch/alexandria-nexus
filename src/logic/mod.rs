@@ -7,5 +7,6 @@ pub mod keyword_tree;
 pub mod render;
 pub mod search;
 pub mod validation;
+pub mod wipe;
 
 pub mod csv_parsing;

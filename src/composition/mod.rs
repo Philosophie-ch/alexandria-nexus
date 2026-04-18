@@ -12,8 +12,8 @@ pub use state::AppState;
 
 use crate::adapters::auth::ApiKeyValidator;
 use crate::adapters::db::queries::{
-    AuthorQuery, BibItemQuery, InstitutionQuery, JournalQuery, KeywordQuery, PublisherQuery,
-    SchoolQuery, SeriesQuery,
+    AuthorQuery, BibItemQuery, DataVersionQuery, InstitutionQuery, JournalQuery, KeywordQuery,
+    PublisherQuery, SchoolQuery, SeriesQuery,
 };
 use crate::adapters::handlers::{
     convert_latex_columns, convert_latex_to_unicode, export_authors, export_bibitems,
@@ -21,22 +21,23 @@ use crate::adapters::handlers::{
     export_schools, export_series, get_keyword_tree, import_author_name_variants, import_authors,
     import_bibitems, import_entities_from_full_csv, import_full_csv, import_institutions,
     import_journals, import_keywords, import_publishers, import_schools, import_series,
-    render_bibitems, search_bibitems, validate_full_csv,
+    render_bibitems, search_bibitems, validate_full_csv, wipe_data,
 };
 use crate::domain::projections::{
     AuthorExpanded, BibItemCrossref, BibItemSummary, InstitutionExpanded, JournalExpanded,
     KeywordExpanded, PublisherExpanded, SchoolExpanded, SeriesExpanded,
 };
 use crate::domain::{
-    Author, BibItem, CreateAuthor, CreateBibItem, CreateInstitution, CreateJournal, CreateKeyword,
-    CreatePublisher, CreateSchool, CreateSeries, Institution, Journal, Keyword, Publisher, School,
-    Series, UpdateAuthor, UpdateBibItem, UpdateInstitution, UpdateJournal, UpdateKeyword,
-    UpdatePublisher, UpdateSchool, UpdateSeries, create_author_transform,
-    create_bib_item_transform, create_institution_transform, create_journal_transform,
-    create_keyword_transform, create_publisher_transform, create_school_transform,
-    create_series_transform, update_author_transform, update_bib_item_transform,
-    update_institution_transform, update_journal_transform, update_keyword_transform,
-    update_publisher_transform, update_school_transform, update_series_transform,
+    Author, BibItem, CreateAuthor, CreateBibItem, CreateDataVersion, CreateInstitution,
+    CreateJournal, CreateKeyword, CreatePublisher, CreateSchool, CreateSeries, DataVersion,
+    Institution, Journal, Keyword, Publisher, School, Series, UpdateAuthor, UpdateBibItem,
+    UpdateDataVersion, UpdateInstitution, UpdateJournal, UpdateKeyword, UpdatePublisher,
+    UpdateSchool, UpdateSeries, create_author_transform, create_bib_item_transform,
+    create_institution_transform, create_journal_transform, create_keyword_transform,
+    create_publisher_transform, create_school_transform, create_series_transform,
+    update_author_transform, update_bib_item_transform, update_institution_transform,
+    update_journal_transform, update_keyword_transform, update_publisher_transform,
+    update_school_transform, update_series_transform,
 };
 use crate::logic::validation::{
     validate_create_author, validate_create_bibitem, validate_create_institution,
@@ -300,7 +301,22 @@ pub fn build_app(
                 .post("/export-full-csv", export_full_csv)
                 .post("/latex-to-unicode", convert_latex_to_unicode)
                 .post("/convert-latex-columns", convert_latex_columns)
-                .with_state(state),
+                .post("/wipe", wipe_data)
+                .with_state(state.clone()),
+        )
+        // DataVersion CRUD (list is public; all mutations are admin-only)
+        .crud_auto(
+            CrudResourceConfig::<DataVersion, _, CreateDataVersion, UpdateDataVersion, DataVersionQuery>::new(
+                "/api/v1/data-version",
+                state.data_version_ds.clone(),
+            )
+            .tag("DataVersion")
+            .description("Data version tracking")
+            .list_permission(Permission::Public)
+            .get_permission(Permission::Admin)
+            .create_permission(Permission::Admin)
+            .update_permission(Permission::Admin)
+            .delete_permission(Permission::Admin),
         )
         // OpenAPI
         .serve_openapi(

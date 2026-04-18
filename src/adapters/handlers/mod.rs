@@ -26,3 +26,5 @@ pub use latex_columns::convert_latex_columns;
 pub use latex_to_unicode::convert_latex_to_unicode;
 mod latex_columns;
 mod latex_to_unicode;
+pub use wipe::wipe_data;
+mod wipe;

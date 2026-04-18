@@ -5,11 +5,12 @@
 use hexforge::{DataStore, DatabasePool};
 
 use crate::adapters::db::queries::{
-    ApiKeyQuery, AuthorQuery, BibItemQuery, BibitemNotesQuery, InstitutionQuery, JournalQuery,
-    KeywordQuery, PublisherQuery, SchoolQuery, SeriesQuery,
+    ApiKeyQuery, AuthorQuery, BibItemQuery, BibitemNotesQuery, DataVersionQuery, InstitutionQuery,
+    JournalQuery, KeywordQuery, PublisherQuery, SchoolQuery, SeriesQuery,
 };
 use crate::domain::{
-    ApiKey, Author, BibItem, BibitemNotes, Institution, Journal, Keyword, Publisher, School, Series,
+    ApiKey, Author, BibItem, BibitemNotes, DataVersion, Institution, Journal, Keyword, Publisher,
+    School, Series,
 };
 
 #[derive(Clone)]
@@ -19,6 +20,7 @@ pub struct AppState {
     pub author_ds: DataStore<Author, AuthorQuery>,
     pub bibitem_ds: DataStore<BibItem, BibItemQuery>,
     pub bibitem_notes_ds: DataStore<BibitemNotes, BibitemNotesQuery>,
+    pub data_version_ds: DataStore<DataVersion, DataVersionQuery>,
     pub institution_ds: DataStore<Institution, InstitutionQuery>,
     pub journal_ds: DataStore<Journal, JournalQuery>,
     pub keyword_ds: DataStore<Keyword, KeywordQuery>,
@@ -33,6 +35,7 @@ impl AppState {
         let author_ds = DataStore::new(pool.clone());
         let bibitem_ds = DataStore::new(pool.clone());
         let bibitem_notes_ds = DataStore::new(pool.clone());
+        let data_version_ds = DataStore::new(pool.clone());
         let institution_ds = DataStore::new(pool.clone());
         let journal_ds = DataStore::new(pool.clone());
         let keyword_ds = DataStore::new(pool.clone());
@@ -46,6 +49,7 @@ impl AppState {
             author_ds,
             bibitem_ds,
             bibitem_notes_ds,
+            data_version_ds,
             institution_ds,
             journal_ds,
             keyword_ds,

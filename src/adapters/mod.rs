@@ -12,3 +12,4 @@ pub mod latex_columns;
 pub mod latex_to_unicode;
 pub mod render;
 pub mod search;
+pub mod wipe;

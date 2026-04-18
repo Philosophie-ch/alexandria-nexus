@@ -498,6 +498,16 @@ models:
         target: BibItem
 
   # ---------------------------------------------------------------------------
+  # DataVersion (data version tracking — append-only log)
+  # ---------------------------------------------------------------------------
+  DataVersion:
+    table: "data_version"
+    fields:
+      version:     { type: string,    required: true }
+      description: { type: "string?" }
+      imported_at: { type: timestamp, required: true }
+
+  # ---------------------------------------------------------------------------
   # ApiKey (authentication table)
   # ---------------------------------------------------------------------------
   ApiKey:
@@ -676,3 +686,10 @@ operations:
     description: "Export bibitems as human-readable CSV matching the ODS import format"
     permission: Admin
     group: full_import
+
+  wipe:
+    method: POST
+    path: "/admin/wipe"
+    description: "Truncate all data tables in reverse dependency order. Requires ?confirm=true."
+    permission: Admin
+    fn_name: wipe_data

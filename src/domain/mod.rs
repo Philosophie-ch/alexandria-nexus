@@ -10,6 +10,7 @@ mod api_key;
 mod author;
 mod bibitem;
 mod bibitem_notes;
+mod data_version;
 mod institution;
 mod journal;
 mod keyword;
@@ -32,6 +33,10 @@ pub use bibitem::{
 pub use bibitem_notes::{
     BibitemNotes, CreateBibitemNotes, UpdateBibitemNotes, create_bibitem_notes_transform,
     update_bibitem_notes_transform,
+};
+pub use data_version::{
+    CreateDataVersion, DataVersion, UpdateDataVersion, create_data_version_transform,
+    update_data_version_transform,
 };
 pub use institution::{
     CreateInstitution, Institution, UpdateInstitution, create_institution_transform,

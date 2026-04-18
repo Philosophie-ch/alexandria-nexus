@@ -49,10 +49,10 @@ generate:
 	cargo run --bin generate -- generate --schema hexforge.yml --output . --source-only
 
 generate-migration:
-	cargo run --bin generate -- generate --schema hexforge.yml --output . --migration-only
+	cargo run --bin generate -- generate --schema hexforge.yml --output . --migration-only --migration-overwrite
 
 generate-all:
-	cargo run --bin generate -- generate --schema hexforge.yml --output .
+	cargo run --bin generate -- generate --schema hexforge.yml --output . --migration-overwrite
 
 generate-dry-run:
 	cargo run --bin generate -- generate --schema hexforge.yml --output . --dry-run
