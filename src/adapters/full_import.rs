@@ -6,18 +6,18 @@
 use std::collections::{HashMap, HashSet};
 
 use hexforge::HexforgeError;
-use hexforge::db_exports::{FromRow, PgPool, query, query_as, query_scalar};
+use hexforge::db_exports::{FromRow, PgPool, query, query_as};
 
 use crate::domain::junctions::{BibitemAuthorsRow, BibitemKeywordsRow, BibitemRefsRow};
-use crate::domain::{AuthorRole, BibItem, RefType};
+use crate::domain::{BibItem, Epoch, LangId, PubState};
 use crate::logic::full_import::{
-    AuthorLookupResult, AuthorNameKey, VariantInfo, parse_variant_to_keys,
+    AuthorJunctionRow, AuthorLookupResult, AuthorNameKey, BibitemRefInsertRow, KeywordJunctionRow,
+    VariantInfo, parse_variant_to_keys,
 };
 use crate::process::full_import::{
-    AuthorLookup, AuthorNameFetcher, BibitemByBibkeyDeleter, BibitemDeleter, BibkeyLookup,
-    EntityLookup, FullCsvBibitemFetcher, FullCsvJunctionFetcher, FullImportAuthorJunctionStore,
-    FullImportKeywordJunctionStore, FullImportRefStore, KeywordLookup, KeywordNameFetcher,
-    ReverseNameMapFetcher,
+    AuthorLookup, AuthorNameFetcher, BibitemDeleter, BibkeyLookup, BulkBibitemInsert,
+    BulkJunctionInsert, EntityLookup, FullCsvBibitemFetcher, FullCsvJunctionFetcher, KeywordLookup,
+    KeywordNameFetcher, ReverseNameMapFetcher,
 };
 
 // =============================================================================
@@ -191,103 +191,6 @@ impl BibkeyLookup for PgFullImportStore<'_> {
 }
 
 // =============================================================================
-// FullImportAuthorJunctionStore
-// =============================================================================
-
-impl FullImportAuthorJunctionStore for PgFullImportStore<'_> {
-    async fn insert_author_junction(
-        &self,
-        bibitem_id: i64,
-        author_id: i64,
-        role: &AuthorRole,
-        position: i16,
-        variant_latex: Option<&str>,
-        variant_unicode: Option<&str>,
-    ) -> Result<(), String> {
-        let role_str = role.to_string();
-        query(
-            "INSERT INTO bibitem_authors (bibitem_id, author_id, role, position, name_variant_latex, name_variant_unicode) \
-             VALUES ($1, $2, $3::author_role, $4, $5, $6) \
-             ON CONFLICT (bibitem_id, author_id, role) DO UPDATE SET position = $4, name_variant_latex = $5, name_variant_unicode = $6",
-        )
-        .bind(bibitem_id)
-        .bind(author_id)
-        .bind(&role_str)
-        .bind(position)
-        .bind(variant_latex)
-        .bind(variant_unicode)
-        .execute(self.pool)
-        .await
-        .map_err(|e| format!("failed to link author: {e}"))?;
-        Ok(())
-    }
-}
-
-// =============================================================================
-// FullImportKeywordJunctionStore
-// =============================================================================
-
-impl FullImportKeywordJunctionStore for PgFullImportStore<'_> {
-    async fn insert_keyword_junction(
-        &self,
-        bibitem_id: i64,
-        keyword_id: i64,
-        keyword_level: i16,
-    ) -> Result<(), String> {
-        query(
-            "INSERT INTO bibitem_keywords (bibitem_id, keyword_id, keyword_level) \
-             VALUES ($1, $2, $3) \
-             ON CONFLICT (bibitem_id, keyword_id) DO NOTHING",
-        )
-        .bind(bibitem_id)
-        .bind(keyword_id)
-        .bind(keyword_level)
-        .execute(self.pool)
-        .await
-        .map_err(|e| format!("failed to link keyword: {e}"))?;
-        Ok(())
-    }
-}
-
-// =============================================================================
-// FullImportRefStore
-// =============================================================================
-
-impl FullImportRefStore for PgFullImportStore<'_> {
-    async fn insert_bibitem_ref(
-        &self,
-        source_id: i64,
-        target_bibkey: &str,
-        ref_type: &RefType,
-    ) -> Result<(), String> {
-        let ref_type_str = ref_type.to_string();
-        let target_id: Option<i64> = query_scalar("SELECT id FROM bibitems WHERE bibkey = $1")
-            .bind(target_bibkey)
-            .fetch_optional(self.pool)
-            .await
-            .map_err(|e| format!("failed to resolve bibkey '{target_bibkey}': {e}"))?;
-
-        let target_id = match target_id {
-            Some(id) => id,
-            None => return Ok(()), // target not found -- skip silently (same behavior as before)
-        };
-
-        query(
-            "INSERT INTO bibitem_refs (source_id, target_id, ref_type) \
-             VALUES ($1, $2, $3::ref_type) \
-             ON CONFLICT (source_id, target_id, ref_type) DO NOTHING",
-        )
-        .bind(source_id)
-        .bind(target_id)
-        .bind(&ref_type_str)
-        .execute(self.pool)
-        .await
-        .map_err(|e| format!("failed to insert ref: {e}"))?;
-        Ok(())
-    }
-}
-
-// =============================================================================
 // BibitemDeleter
 // =============================================================================
 
@@ -303,16 +206,318 @@ impl BibitemDeleter for PgFullImportStore<'_> {
 }
 
 // =============================================================================
-// BibitemByBibkeyDeleter
+// BulkBibitemInsert
 // =============================================================================
 
-impl BibitemByBibkeyDeleter for PgFullImportStore<'_> {
-    async fn delete_by_bibkey(&self, bibkey: &str) -> Result<(), String> {
-        query("DELETE FROM bibitems WHERE bibkey = $1")
-            .bind(bibkey)
-            .execute(self.pool)
-            .await
-            .map_err(|e| format!("failed to delete old bibitem: {e}"))?;
+#[derive(FromRow)]
+struct InsertedBibitem {
+    id: i64,
+    bibkey: String,
+}
+
+impl BulkBibitemInsert for PgFullImportStore<'_> {
+    async fn bulk_insert_bibitems(
+        &self,
+        entities: &[BibItem],
+    ) -> Result<Vec<(i64, String)>, HexforgeError> {
+        if entities.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut address: Vec<Option<String>> = Vec::new();
+        let mut bibkey: Vec<String> = Vec::new();
+        let mut booktitle_latex: Vec<Option<String>> = Vec::new();
+        let mut booktitle_unicode: Vec<Option<String>> = Vec::new();
+        let mut crossref_id: Vec<Option<i64>> = Vec::new();
+        let mut date_day: Vec<Option<i16>> = Vec::new();
+        let mut date_is_no_date: Vec<bool> = Vec::new();
+        let mut date_month: Vec<Option<i16>> = Vec::new();
+        let mut date_year: Vec<Option<i16>> = Vec::new();
+        let mut date_year_2_hyphen: Vec<Option<i16>> = Vec::new();
+        let mut date_year_2_slash: Vec<Option<i16>> = Vec::new();
+        let mut doi: Vec<Option<String>> = Vec::new();
+        let mut edition: Vec<Option<String>> = Vec::new();
+        let mut eid: Vec<Option<String>> = Vec::new();
+        let mut entry_type: Vec<String> = Vec::new();
+        let mut epoch: Vec<Option<String>> = Vec::new();
+        let mut eprint: Vec<Option<String>> = Vec::new();
+        let mut extra_note_latex: Vec<Option<String>> = Vec::new();
+        let mut extra_note_unicode: Vec<Option<String>> = Vec::new();
+        let mut fulltext_path: Vec<Option<String>> = Vec::new();
+        let mut has_fulltext: Vec<bool> = Vec::new();
+        let mut institution_id: Vec<Option<i64>> = Vec::new();
+        let mut is_translation: Vec<bool> = Vec::new();
+        let mut issuetitle_latex: Vec<Option<String>> = Vec::new();
+        let mut issuetitle_unicode: Vec<Option<String>> = Vec::new();
+        let mut journal_id: Vec<Option<i64>> = Vec::new();
+        let mut langid: Vec<Option<String>> = Vec::new();
+        let mut note_latex: Vec<Option<String>> = Vec::new();
+        let mut note_unicode: Vec<Option<String>> = Vec::new();
+        let mut number: Vec<Option<String>> = Vec::new();
+        let mut options: Vec<Option<String>> = Vec::new();
+        let mut pages: Vec<Option<String>> = Vec::new();
+        let mut person_id: Vec<Option<i64>> = Vec::new();
+        let mut publisher_id: Vec<Option<i64>> = Vec::new();
+        let mut pubstate: Vec<Option<String>> = Vec::new();
+        let mut school_id: Vec<Option<i64>> = Vec::new();
+        let mut series_id: Vec<Option<i64>> = Vec::new();
+        let mut shorthand: Vec<Option<String>> = Vec::new();
+        let mut title_latex: Vec<String> = Vec::new();
+        let mut title_unicode: Vec<String> = Vec::new();
+        let mut type_field: Vec<Option<String>> = Vec::new();
+        let mut url: Vec<Option<String>> = Vec::new();
+        let mut urn: Vec<Option<String>> = Vec::new();
+        let mut volume: Vec<Option<String>> = Vec::new();
+
+        for e in entities {
+            address.push(e.address.clone());
+            bibkey.push(e.bibkey.clone());
+            booktitle_latex.push(e.booktitle_latex.clone());
+            booktitle_unicode.push(e.booktitle_unicode.clone());
+            crossref_id.push(e.crossref_id);
+            date_day.push(e.date_day);
+            date_is_no_date.push(e.date_is_no_date);
+            date_month.push(e.date_month);
+            date_year.push(e.date_year);
+            date_year_2_hyphen.push(e.date_year_2_hyphen);
+            date_year_2_slash.push(e.date_year_2_slash);
+            doi.push(e.doi.clone());
+            edition.push(e.edition.clone());
+            eid.push(e.eid.clone());
+            entry_type.push(e.entry_type.to_string());
+            epoch.push(e.epoch.as_ref().map(Epoch::to_string));
+            eprint.push(e.eprint.clone());
+            extra_note_latex.push(e.extra_note_latex.clone());
+            extra_note_unicode.push(e.extra_note_unicode.clone());
+            fulltext_path.push(e.fulltext_path.clone());
+            has_fulltext.push(e.has_fulltext);
+            institution_id.push(e.institution_id);
+            is_translation.push(e.is_translation);
+            issuetitle_latex.push(e.issuetitle_latex.clone());
+            issuetitle_unicode.push(e.issuetitle_unicode.clone());
+            journal_id.push(e.journal_id);
+            langid.push(e.langid.as_ref().map(LangId::to_string));
+            note_latex.push(e.note_latex.clone());
+            note_unicode.push(e.note_unicode.clone());
+            number.push(e.number.clone());
+            options.push(e.options.clone());
+            pages.push(e.pages.clone());
+            person_id.push(e.person_id);
+            publisher_id.push(e.publisher_id);
+            pubstate.push(e.pubstate.as_ref().map(PubState::to_string));
+            school_id.push(e.school_id);
+            series_id.push(e.series_id);
+            shorthand.push(e.shorthand.clone());
+            title_latex.push(e.title_latex.clone());
+            title_unicode.push(e.title_unicode.clone());
+            type_field.push(e.type_field.clone());
+            url.push(e.url.clone());
+            urn.push(e.urn.clone());
+            volume.push(e.volume.clone());
+        }
+
+        let rows: Vec<InsertedBibitem> = query_as(
+            "INSERT INTO bibitems (
+               address, bibkey, booktitle_latex, booktitle_unicode,
+               crossref_id, date_day, date_is_no_date, date_month, date_year,
+               date_year_2_hyphen, date_year_2_slash, doi, edition, eid, entry_type,
+               epoch, eprint, extra_note_latex, extra_note_unicode, fulltext_path,
+               has_fulltext, institution_id, is_translation, issuetitle_latex, issuetitle_unicode,
+               journal_id, langid, note_latex, note_unicode, number, options, pages,
+               person_id, publisher_id, pubstate, school_id, series_id, shorthand,
+               title_latex, title_unicode, type_field, url, urn, volume
+             )
+             SELECT
+               address, bibkey, booktitle_latex, booktitle_unicode,
+               crossref_id, date_day, date_is_no_date, date_month, date_year,
+               date_year_2_hyphen, date_year_2_slash, doi, edition, eid, entry_type::entry_type,
+               epoch::epoch, eprint, extra_note_latex, extra_note_unicode, fulltext_path,
+               has_fulltext, institution_id, is_translation, issuetitle_latex, issuetitle_unicode,
+               journal_id, langid::langid, note_latex, note_unicode, number, options, pages,
+               person_id, publisher_id, pubstate::pubstate, school_id, series_id, shorthand,
+               title_latex, title_unicode, type_field, url, urn, volume
+             FROM unnest(
+               $1::text[], $2::text[], $3::text[], $4::text[],
+               $5::int8[], $6::int2[], $7::bool[], $8::int2[], $9::int2[],
+               $10::int2[], $11::int2[], $12::text[], $13::text[], $14::text[], $15::text[],
+               $16::text[], $17::text[], $18::text[], $19::text[], $20::text[],
+               $21::bool[], $22::int8[], $23::bool[], $24::text[], $25::text[],
+               $26::int8[], $27::text[], $28::text[], $29::text[], $30::text[], $31::text[], $32::text[],
+               $33::int8[], $34::int8[], $35::text[], $36::int8[], $37::int8[], $38::text[],
+               $39::text[], $40::text[], $41::text[], $42::text[], $43::text[], $44::text[]
+             ) AS t(
+               address, bibkey, booktitle_latex, booktitle_unicode,
+               crossref_id, date_day, date_is_no_date, date_month, date_year,
+               date_year_2_hyphen, date_year_2_slash, doi, edition, eid, entry_type,
+               epoch, eprint, extra_note_latex, extra_note_unicode, fulltext_path,
+               has_fulltext, institution_id, is_translation, issuetitle_latex, issuetitle_unicode,
+               journal_id, langid, note_latex, note_unicode, number, options, pages,
+               person_id, publisher_id, pubstate, school_id, series_id, shorthand,
+               title_latex, title_unicode, type_field, url, urn, volume
+             )
+             RETURNING id, bibkey",
+        )
+        .bind(address)
+        .bind(bibkey)
+        .bind(booktitle_latex)
+        .bind(booktitle_unicode)
+        .bind(crossref_id)
+        .bind(date_day)
+        .bind(date_is_no_date)
+        .bind(date_month)
+        .bind(date_year)
+        .bind(date_year_2_hyphen)
+        .bind(date_year_2_slash)
+        .bind(doi)
+        .bind(edition)
+        .bind(eid)
+        .bind(entry_type)
+        .bind(epoch)
+        .bind(eprint)
+        .bind(extra_note_latex)
+        .bind(extra_note_unicode)
+        .bind(fulltext_path)
+        .bind(has_fulltext)
+        .bind(institution_id)
+        .bind(is_translation)
+        .bind(issuetitle_latex)
+        .bind(issuetitle_unicode)
+        .bind(journal_id)
+        .bind(langid)
+        .bind(note_latex)
+        .bind(note_unicode)
+        .bind(number)
+        .bind(options)
+        .bind(pages)
+        .bind(person_id)
+        .bind(publisher_id)
+        .bind(pubstate)
+        .bind(school_id)
+        .bind(series_id)
+        .bind(shorthand)
+        .bind(title_latex)
+        .bind(title_unicode)
+        .bind(type_field)
+        .bind(url)
+        .bind(urn)
+        .bind(volume)
+        .fetch_all(self.pool)
+        .await
+        .map_err(HexforgeError::data_source)?;
+
+        Ok(rows.into_iter().map(|r| (r.id, r.bibkey)).collect())
+    }
+}
+
+// =============================================================================
+// BulkJunctionInsert
+// =============================================================================
+
+impl BulkJunctionInsert for PgFullImportStore<'_> {
+    async fn bulk_insert_author_junctions(
+        &self,
+        rows: &[AuthorJunctionRow],
+    ) -> Result<(), HexforgeError> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let mut bibitem_ids: Vec<i64> = Vec::new();
+        let mut author_ids: Vec<i64> = Vec::new();
+        let mut roles: Vec<String> = Vec::new();
+        let mut positions: Vec<i16> = Vec::new();
+        let mut variant_latexes: Vec<Option<String>> = Vec::new();
+        let mut variant_unicodes: Vec<Option<String>> = Vec::new();
+        for r in rows {
+            bibitem_ids.push(r.bibitem_id);
+            author_ids.push(r.author_id);
+            roles.push(r.role.to_string());
+            positions.push(r.position);
+            variant_latexes.push(r.variant_latex.clone());
+            variant_unicodes.push(r.variant_unicode.clone());
+        }
+        query(
+            "INSERT INTO bibitem_authors (bibitem_id, author_id, role, position, name_variant_latex, name_variant_unicode)
+             SELECT DISTINCT ON (bibitem_id, author_id, role)
+               bibitem_id, author_id, role::author_role, position, name_variant_latex, name_variant_unicode
+             FROM unnest($1::int8[], $2::int8[], $3::text[], $4::int2[], $5::text[], $6::text[])
+               AS t(bibitem_id, author_id, role, position, name_variant_latex, name_variant_unicode)
+             ORDER BY bibitem_id, author_id, role, position
+             ON CONFLICT (bibitem_id, author_id, role) DO UPDATE SET
+               position = EXCLUDED.position,
+               name_variant_latex = EXCLUDED.name_variant_latex,
+               name_variant_unicode = EXCLUDED.name_variant_unicode",
+        )
+        .bind(bibitem_ids)
+        .bind(author_ids)
+        .bind(roles)
+        .bind(positions)
+        .bind(variant_latexes)
+        .bind(variant_unicodes)
+        .execute(self.pool)
+        .await
+        .map_err(HexforgeError::data_source)?;
+        Ok(())
+    }
+
+    async fn bulk_insert_keyword_junctions(
+        &self,
+        rows: &[KeywordJunctionRow],
+    ) -> Result<(), HexforgeError> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let mut bibitem_ids: Vec<i64> = Vec::new();
+        let mut keyword_ids: Vec<i64> = Vec::new();
+        let mut keyword_levels: Vec<i16> = Vec::new();
+        for r in rows {
+            bibitem_ids.push(r.bibitem_id);
+            keyword_ids.push(r.keyword_id);
+            keyword_levels.push(r.keyword_level);
+        }
+        query(
+            "INSERT INTO bibitem_keywords (bibitem_id, keyword_id, keyword_level)
+             SELECT bibitem_id, keyword_id, keyword_level
+             FROM unnest($1::int8[], $2::int8[], $3::int2[]) AS t(bibitem_id, keyword_id, keyword_level)
+             ON CONFLICT (bibitem_id, keyword_id) DO NOTHING",
+        )
+        .bind(bibitem_ids)
+        .bind(keyword_ids)
+        .bind(keyword_levels)
+        .execute(self.pool)
+        .await
+        .map_err(HexforgeError::data_source)?;
+        Ok(())
+    }
+
+    async fn bulk_insert_bibitem_refs(
+        &self,
+        rows: &[BibitemRefInsertRow],
+    ) -> Result<(), HexforgeError> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let mut source_ids: Vec<i64> = Vec::new();
+        let mut target_bibkeys: Vec<String> = Vec::new();
+        let mut ref_types: Vec<String> = Vec::new();
+        for r in rows {
+            source_ids.push(r.source_id);
+            target_bibkeys.push(r.target_bibkey.clone());
+            ref_types.push(r.ref_type.to_string());
+        }
+        // JOIN resolves bibkeys to IDs; non-existent targets are skipped (inner join).
+        query(
+            "INSERT INTO bibitem_refs (source_id, target_id, ref_type)
+             SELECT t.source_id, b.id, t.ref_type::ref_type
+             FROM unnest($1::int8[], $2::text[], $3::text[]) AS t(source_id, target_bibkey, ref_type)
+             JOIN bibitems b ON b.bibkey = t.target_bibkey
+             ON CONFLICT (source_id, target_id, ref_type) DO NOTHING",
+        )
+        .bind(source_ids)
+        .bind(target_bibkeys)
+        .bind(ref_types)
+        .execute(self.pool)
+        .await
+        .map_err(HexforgeError::data_source)?;
         Ok(())
     }
 }

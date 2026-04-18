@@ -881,6 +881,137 @@ pub fn format_date_for_export(bib: &crate::domain::BibItem) -> String {
     }
 }
 
+// =============================================================================
+// Bulk import junction row types (pure data — no I/O)
+// =============================================================================
+
+pub struct AuthorJunctionRow {
+    pub bibitem_id: i64,
+    pub author_id: i64,
+    pub role: AuthorRole,
+    pub position: i16,
+    pub variant_latex: Option<String>,
+    pub variant_unicode: Option<String>,
+}
+
+pub struct KeywordJunctionRow {
+    pub bibitem_id: i64,
+    pub keyword_id: i64,
+    pub keyword_level: i16,
+}
+
+pub struct BibitemRefInsertRow {
+    pub source_id: i64,
+    pub target_bibkey: String,
+    pub ref_type: RefType,
+}
+
+// =============================================================================
+// Bulk junction collectors (pure)
+// =============================================================================
+
+/// Collect all author junction rows for all parsed rows.
+/// Authors that cannot be resolved are silently skipped (already reported in validation).
+pub fn collect_author_junction_rows(
+    parsed_rows: &[ParsedBibRow],
+    bibkey_to_id: &HashMap<String, i64>,
+    ctx: &ResolutionCtx,
+) -> Vec<AuthorJunctionRow> {
+    let mut rows = Vec::new();
+    for parsed in parsed_rows {
+        let Some(&bibitem_id) = bibkey_to_id.get(&parsed.bibkey) else {
+            continue;
+        };
+        for (role, authors) in [
+            (AuthorRole::Author, &parsed.authors),
+            (AuthorRole::Editor, &parsed.editors),
+            (AuthorRole::Guesteditor, &parsed.guesteditors),
+        ] {
+            for (position, author) in authors.iter().enumerate() {
+                let key = AuthorNameKey::from_parsed(author);
+                let Some(&author_id) = ctx.author_resolve.get(&key) else {
+                    continue;
+                };
+                let Ok(pos) = i16::try_from(position) else {
+                    continue;
+                };
+                let variant = ctx.author_variants.get(&key);
+                rows.push(AuthorJunctionRow {
+                    bibitem_id,
+                    author_id,
+                    role,
+                    position: pos,
+                    variant_latex: variant.and_then(|v| v.variant_latex.clone()),
+                    variant_unicode: variant.and_then(|v| v.variant_unicode.clone()),
+                });
+            }
+        }
+    }
+    rows
+}
+
+/// Collect all keyword junction rows for all parsed rows.
+/// Keywords that cannot be resolved are silently skipped.
+pub fn collect_keyword_junction_rows(
+    parsed_rows: &[ParsedBibRow],
+    bibkey_to_id: &HashMap<String, i64>,
+    ctx: &ResolutionCtx,
+) -> Vec<KeywordJunctionRow> {
+    let mut rows = Vec::new();
+    for parsed in parsed_rows {
+        let Some(&bibitem_id) = bibkey_to_id.get(&parsed.bibkey) else {
+            continue;
+        };
+        let all_keywords: Vec<(&String, i16)> = parsed
+            .keywords
+            .level_1
+            .iter()
+            .map(|k| (k, 1i16))
+            .chain(parsed.keywords.level_2.iter().map(|k| (k, 2i16)))
+            .chain(parsed.keywords.level_3.iter().map(|k| (k, 3i16)))
+            .collect();
+        for (name, level) in all_keywords {
+            let Some(&keyword_id) = ctx.keyword_map.get(&(name.clone(), level)) else {
+                continue;
+            };
+            rows.push(KeywordJunctionRow {
+                bibitem_id,
+                keyword_id,
+                keyword_level: level,
+            });
+        }
+    }
+    rows
+}
+
+/// Collect all bibitem ref rows for all parsed rows.
+pub fn collect_ref_rows(
+    parsed_rows: &[ParsedBibRow],
+    bibkey_to_id: &HashMap<String, i64>,
+) -> Vec<BibitemRefInsertRow> {
+    let mut rows = Vec::new();
+    for parsed in parsed_rows {
+        let Some(&source_id) = bibkey_to_id.get(&parsed.bibkey) else {
+            continue;
+        };
+        for bibkey in &parsed.further_ref_bibkeys {
+            rows.push(BibitemRefInsertRow {
+                source_id,
+                target_bibkey: bibkey.clone(),
+                ref_type: RefType::FurtherRef,
+            });
+        }
+        for bibkey in &parsed.depends_on_bibkeys {
+            rows.push(BibitemRefInsertRow {
+                source_id,
+                target_bibkey: bibkey.clone(),
+                ref_type: RefType::DependsOn,
+            });
+        }
+    }
+    rows
+}
+
 #[cfg(test)]
 mod tests {
     use super::generate_key;

@@ -14,16 +14,17 @@ use hexforge::{DataSource, HexforgeError};
 
 use crate::domain::junctions::{BibitemAuthorsRow, BibitemKeywordsRow, BibitemRefsRow};
 use crate::domain::{
-    AuthorRole, BibItem, CreateInstitution, CreateKeyword, CreateSchool, CreateSeries, RefType,
+    BibItem, CreateInstitution, CreateKeyword, CreateSchool, CreateSeries,
     create_bib_item_transform, create_institution_transform, create_keyword_transform,
     create_school_transform, create_series_transform,
 };
-use crate::logic::csv_parsing::types::{FieldError, ParsedAuthor, ParsedBibRow};
+use crate::logic::csv_parsing::types::{FieldError, ParsedBibRow};
 use crate::logic::full_import::{
-    AuthorLookupResult, AuthorNameKey, CollectedNames, EntityImportError, EntityImportReport,
-    ExportContext, FULL_CSV_HEADERS, FullImportReport, FullImportResult, LookupMaps,
-    NamedEntityKind, ResolutionCtx, RowError, ValidationReport, VariantInfo,
-    assemble_validation_report, build_bibitem_dto, build_export_record, generate_key,
+    AuthorJunctionRow, AuthorLookupResult, BibitemRefInsertRow, CollectedNames, EntityImportError,
+    EntityImportReport, ExportContext, FULL_CSV_HEADERS, FullImportReport, FullImportResult,
+    KeywordJunctionRow, LookupMaps, NamedEntityKind, ResolutionCtx, RowError, ValidationReport,
+    assemble_validation_report, build_bibitem_dto, build_export_record,
+    collect_author_junction_rows, collect_keyword_junction_rows, collect_ref_rows, generate_key,
     parse_all_rows,
 };
 use crate::validation::{
@@ -64,40 +65,7 @@ pub trait BibkeyLookup: Send + Sync {
     ) -> impl Future<Output = Result<HashSet<String>, HexforgeError>> + Send;
 }
 
-/// Contract for inserting author junctions with name variant support.
-pub trait FullImportAuthorJunctionStore: Send + Sync {
-    fn insert_author_junction(
-        &self,
-        bibitem_id: i64,
-        author_id: i64,
-        role: &AuthorRole,
-        position: i16,
-        variant_latex: Option<&str>,
-        variant_unicode: Option<&str>,
-    ) -> impl Future<Output = Result<(), String>> + Send;
-}
-
-/// Contract for inserting keyword junctions.
-pub trait FullImportKeywordJunctionStore: Send + Sync {
-    fn insert_keyword_junction(
-        &self,
-        bibitem_id: i64,
-        keyword_id: i64,
-        keyword_level: i16,
-    ) -> impl Future<Output = Result<(), String>> + Send;
-}
-
-/// Contract for inserting bibitem refs.
-pub trait FullImportRefStore: Send + Sync {
-    fn insert_bibitem_ref(
-        &self,
-        source_id: i64,
-        target_bibkey: &str,
-        ref_type: &RefType,
-    ) -> impl Future<Output = Result<(), String>> + Send;
-}
-
-/// Contract for deleting bibitems by bibkeys.
+/// Contract for deleting bibitems by bibkeys (stale removal + pre-update cleanup).
 pub trait BibitemDeleter: Send + Sync {
     fn delete_bibitems_by_bibkeys(
         &self,
@@ -105,9 +73,31 @@ pub trait BibitemDeleter: Send + Sync {
     ) -> impl Future<Output = Result<usize, HexforgeError>> + Send;
 }
 
-/// Contract for deleting a single bibitem by bibkey (for upsert: delete-then-reinsert).
-pub trait BibitemByBibkeyDeleter: Send + Sync {
-    fn delete_by_bibkey(&self, bibkey: &str) -> impl Future<Output = Result<(), String>> + Send;
+/// Contract for bulk-inserting bibitems.
+/// Returns (id, bibkey) pairs for all inserted rows.
+pub trait BulkBibitemInsert: Send + Sync {
+    fn bulk_insert_bibitems(
+        &self,
+        entities: &[BibItem],
+    ) -> impl Future<Output = Result<Vec<(i64, String)>, HexforgeError>> + Send;
+}
+
+/// Contract for bulk-inserting all junction and ref rows.
+pub trait BulkJunctionInsert: Send + Sync {
+    fn bulk_insert_author_junctions(
+        &self,
+        rows: &[AuthorJunctionRow],
+    ) -> impl Future<Output = Result<(), HexforgeError>> + Send;
+
+    fn bulk_insert_keyword_junctions(
+        &self,
+        rows: &[KeywordJunctionRow],
+    ) -> impl Future<Output = Result<(), HexforgeError>> + Send;
+
+    fn bulk_insert_bibitem_refs(
+        &self,
+        rows: &[BibitemRefInsertRow],
+    ) -> impl Future<Output = Result<(), HexforgeError>> + Send;
 }
 
 /// Contract for fetching all bibitems (for export).
@@ -410,27 +400,25 @@ async fn create_keyword(
 // Import bibitems (full source-of-truth import) orchestration
 // =============================================================================
 
-/// Parse CSV, resolve all names to IDs, upsert bibitems + junctions.
-/// CSV is source of truth: bibitems in DB but not in CSV get deleted.
-///
-/// Runs full validation first -- if any issues exist, returns the complete
-/// `ValidationReport` so the caller sees everything in one response.
 #[allow(clippy::too_many_arguments)]
+/// Parse CSV, resolve all names to IDs, bulk-upsert bibitems + junctions.
+/// CSV is source of truth: bibitems in DB but not in CSV get deleted if `delete_stale=true`.
+///
+/// Hard errors (duplicate bibkeys) return a 422 ValidationFailed.
+/// Soft issues (missing authors, journals, etc.) are skipped per-row — check the validate
+/// endpoint for the full picture.
 pub async fn import_full_csv(
     author_lookup: &impl AuthorLookup,
     entity_lookup: &impl EntityLookup,
     keyword_lookup: &impl KeywordLookup,
     bibkey_lookup: &impl BibkeyLookup,
-    bibitem_ds: &impl DataSource<crate::domain::BibItem, Id = i64, Error = hexforge::DataSourceError>,
     bibitem_deleter: &impl BibitemDeleter,
-    bibkey_deleter: &impl BibitemByBibkeyDeleter,
-    author_junction_store: &impl FullImportAuthorJunctionStore,
-    keyword_junction_store: &impl FullImportKeywordJunctionStore,
-    ref_store: &impl FullImportRefStore,
+    bulk_inserter: &impl BulkBibitemInsert,
+    bulk_junction: &impl BulkJunctionInsert,
     data: &[u8],
     delete_stale: bool,
 ) -> Result<FullImportResult, HexforgeError> {
-    // 1. Validate -- return full report if anything is wrong
+    // 1. Validate — block only on hard errors (duplicate bibkeys)
     let report = validate_full_csv(
         author_lookup,
         entity_lookup,
@@ -443,21 +431,19 @@ pub async fn import_full_csv(
         return Ok(FullImportResult::ValidationFailed(Box::new(report)));
     }
 
-    // 2. Parse (validated, so no errors expected)
+    // 2. Parse all rows (row-level parse errors are skipped, not blocking)
     let (parsed_rows, _) = parse_all_rows(data)?;
 
     // 3. Build resolution context
-    let mut collected = CollectedNames::default();
     let mut csv_bibkeys = HashSet::new();
     for row in &parsed_rows {
-        collected.collect_from_row(row);
         csv_bibkeys.insert(row.bibkey.clone());
     }
     let maps =
         build_lookup_maps(author_lookup, entity_lookup, keyword_lookup, bibkey_lookup).await?;
     let ctx = ResolutionCtx::from_lookup_maps(maps);
 
-    // 4. Delete stale bibitems (only if explicitly requested)
+    // 4. Delete stale bibitems
     let deleted = if delete_stale {
         let stale: Vec<String> = ctx
             .existing_bibkeys
@@ -473,211 +459,99 @@ pub async fn import_full_csv(
         0
     };
 
-    // 5. Upsert each bibitem
-    let mut imported = 0usize;
-    let mut updated = 0usize;
-    let mut errors = Vec::new();
+    // 5. Build all entities in memory; track update vs insert counts
+    let (entities_with_flags, build_errors) = build_all_bibitem_entities(&parsed_rows, &ctx);
+    let updated = entities_with_flags
+        .iter()
+        .filter(|(was_update, _)| *was_update)
+        .count();
+    let imported = entities_with_flags
+        .iter()
+        .filter(|(was_update, _)| !was_update)
+        .count();
 
-    for (idx, row) in parsed_rows.iter().enumerate() {
-        let row_num = idx + 2;
-        match upsert_bibitem_row(
-            row,
-            &ctx,
-            bibitem_ds,
-            bibkey_deleter,
-            author_junction_store,
-            keyword_junction_store,
-            ref_store,
-        )
-        .await
-        {
-            Ok(was_update) => {
-                if was_update {
-                    updated += 1;
-                } else {
-                    imported += 1;
-                }
-            }
-            Err(e) => {
-                errors.push(RowError {
-                    row: row_num,
-                    bibkey: Some(row.bibkey.clone()),
-                    errors: vec![FieldError {
-                        field: "_insert".to_string(),
-                        error: e,
-                    }],
-                });
-            }
-        }
+    // 6. Batch-delete all bibkeys that will be re-inserted (cascade clears junctions)
+    let update_bibkeys: Vec<String> = entities_with_flags
+        .iter()
+        .filter(|(was_update, _)| *was_update)
+        .map(|(_, e)| e.bibkey.clone())
+        .collect();
+    if !update_bibkeys.is_empty() {
+        bibitem_deleter
+            .delete_bibitems_by_bibkeys(&update_bibkeys)
+            .await?;
     }
+
+    // 7. Bulk insert all bibitems, get back (id, bibkey) pairs
+    let entities: Vec<BibItem> = entities_with_flags.into_iter().map(|(_, e)| e).collect();
+    let inserted_ids = bulk_inserter.bulk_insert_bibitems(&entities).await?;
+    let bibkey_to_id: HashMap<String, i64> =
+        inserted_ids.into_iter().map(|(id, bk)| (bk, id)).collect();
+
+    // 8. Collect junction rows and bulk insert
+    let author_rows = collect_author_junction_rows(&parsed_rows, &bibkey_to_id, &ctx);
+    let keyword_rows = collect_keyword_junction_rows(&parsed_rows, &bibkey_to_id, &ctx);
+    let ref_rows = collect_ref_rows(&parsed_rows, &bibkey_to_id);
+
+    bulk_junction
+        .bulk_insert_author_junctions(&author_rows)
+        .await?;
+    bulk_junction
+        .bulk_insert_keyword_junctions(&keyword_rows)
+        .await?;
+    bulk_junction.bulk_insert_bibitem_refs(&ref_rows).await?;
 
     Ok(FullImportResult::Success(FullImportReport {
         imported,
         updated,
         deleted,
-        failed: errors.len(),
-        errors,
+        failed: build_errors.len(),
+        errors: build_errors,
     }))
 }
 
 // =============================================================================
-// Bibitem upsert (orchestration)
+// Bulk entity builder (pure)
 // =============================================================================
 
-/// Resolve a parsed row to IDs and upsert the bibitem + junctions.
-/// Returns Ok(true) if updated, Ok(false) if inserted.
-async fn upsert_bibitem_row(
-    row: &ParsedBibRow,
+/// Build all bibitem entities from parsed rows.
+/// Returns (was_update, entity) pairs and a list of rows that failed to build.
+fn build_all_bibitem_entities(
+    parsed_rows: &[ParsedBibRow],
     ctx: &ResolutionCtx,
-    bibitem_ds: &impl DataSource<crate::domain::BibItem, Id = i64, Error = hexforge::DataSourceError>,
-    bibkey_deleter: &impl BibitemByBibkeyDeleter,
-    author_junction_store: &impl FullImportAuthorJunctionStore,
-    keyword_junction_store: &impl FullImportKeywordJunctionStore,
-    ref_store: &impl FullImportRefStore,
-) -> Result<bool, String> {
-    let was_update = ctx.existing_bibkeys.contains(&row.bibkey);
+) -> (Vec<(bool, BibItem)>, Vec<RowError>) {
+    let mut entities = Vec::new();
+    let mut errors = Vec::new();
 
-    // Build CreateBibItem DTO (pure)
-    let dto = build_bibitem_dto(row, ctx)?;
-    validate_create_bibitem(&dto).map_err(|e| e.to_string())?;
-
-    if was_update {
-        // Delete existing bibitem (cascade deletes junctions), then re-insert
-        bibkey_deleter.delete_by_bibkey(&row.bibkey).await?;
+    for (idx, row) in parsed_rows.iter().enumerate() {
+        let row_num = idx + 2;
+        match build_bibitem_dto(row, ctx) {
+            Err(e) => errors.push(RowError {
+                row: row_num,
+                bibkey: Some(row.bibkey.clone()),
+                errors: vec![FieldError {
+                    field: "_build".to_string(),
+                    error: e,
+                }],
+            }),
+            Ok(dto) => match validate_create_bibitem(&dto) {
+                Err(e) => errors.push(RowError {
+                    row: row_num,
+                    bibkey: Some(row.bibkey.clone()),
+                    errors: vec![FieldError {
+                        field: "_validation".to_string(),
+                        error: e.to_string(),
+                    }],
+                }),
+                Ok(()) => {
+                    let was_update = ctx.existing_bibkeys.contains(&row.bibkey);
+                    entities.push((was_update, create_bib_item_transform(dto)));
+                }
+            },
+        }
     }
 
-    let entity = create_bib_item_transform(dto);
-    let inserted = bibitem_ds
-        .insert(entity)
-        .await
-        .map_err(|e| format!("failed to insert bibitem: {e}"))?;
-
-    let bibitem_id: i64 = inserted.id;
-
-    // Insert author junctions
-    insert_author_junctions(
-        author_junction_store,
-        bibitem_id,
-        &row.authors,
-        AuthorRole::Author,
-        &ctx.author_resolve,
-        &ctx.author_variants,
-    )
-    .await?;
-    insert_author_junctions(
-        author_junction_store,
-        bibitem_id,
-        &row.editors,
-        AuthorRole::Editor,
-        &ctx.author_resolve,
-        &ctx.author_variants,
-    )
-    .await?;
-    insert_author_junctions(
-        author_junction_store,
-        bibitem_id,
-        &row.guesteditors,
-        AuthorRole::Guesteditor,
-        &ctx.author_resolve,
-        &ctx.author_variants,
-    )
-    .await?;
-
-    // Insert keyword junctions
-    insert_keyword_junctions(keyword_junction_store, bibitem_id, row, &ctx.keyword_map).await?;
-
-    // Insert bibitem refs (further_refs, depends_on)
-    insert_bibitem_refs(
-        ref_store,
-        bibitem_id,
-        &row.further_ref_bibkeys,
-        RefType::FurtherRef,
-    )
-    .await?;
-    insert_bibitem_refs(
-        ref_store,
-        bibitem_id,
-        &row.depends_on_bibkeys,
-        RefType::DependsOn,
-    )
-    .await?;
-
-    Ok(was_update)
-}
-
-// =============================================================================
-// Junction insertion helpers (orchestration)
-// =============================================================================
-
-async fn insert_author_junctions(
-    store: &impl FullImportAuthorJunctionStore,
-    bibitem_id: i64,
-    authors: &[ParsedAuthor],
-    role: AuthorRole,
-    resolve: &HashMap<AuthorNameKey, i64>,
-    variants: &HashMap<AuthorNameKey, VariantInfo>,
-) -> Result<(), String> {
-    for (position, author) in authors.iter().enumerate() {
-        let key = AuthorNameKey::from_parsed(author);
-        let author_id = resolve
-            .get(&key)
-            .ok_or_else(|| format!("could not resolve author: {}", author.display_name()))?;
-        let pos = i16::try_from(position).map_err(|_| "too many authors")?;
-        let variant = variants.get(&key);
-        let variant_latex = variant.and_then(|v| v.variant_latex.as_deref());
-        let variant_unicode = variant.and_then(|v| v.variant_unicode.as_deref());
-        store
-            .insert_author_junction(
-                bibitem_id,
-                *author_id,
-                &role,
-                pos,
-                variant_latex,
-                variant_unicode,
-            )
-            .await?;
-    }
-    Ok(())
-}
-
-async fn insert_keyword_junctions(
-    store: &impl FullImportKeywordJunctionStore,
-    bibitem_id: i64,
-    row: &ParsedBibRow,
-    keyword_map: &HashMap<(String, i16), i64>,
-) -> Result<(), String> {
-    let all_keywords: Vec<(&String, i16)> = row
-        .keywords
-        .level_1
-        .iter()
-        .map(|k| (k, 1i16))
-        .chain(row.keywords.level_2.iter().map(|k| (k, 2i16)))
-        .chain(row.keywords.level_3.iter().map(|k| (k, 3i16)))
-        .collect();
-
-    for (name, level) in all_keywords {
-        let keyword_id = keyword_map
-            .get(&(name.clone(), level))
-            .ok_or_else(|| format!("could not resolve keyword: {name} (level {level})"))?;
-        store
-            .insert_keyword_junction(bibitem_id, *keyword_id, level)
-            .await?;
-    }
-    Ok(())
-}
-
-async fn insert_bibitem_refs(
-    store: &impl FullImportRefStore,
-    source_id: i64,
-    target_bibkeys: &[String],
-    ref_type: RefType,
-) -> Result<(), String> {
-    for bibkey in target_bibkeys {
-        store
-            .insert_bibitem_ref(source_id, bibkey, &ref_type)
-            .await?;
-    }
-    Ok(())
+    (entities, errors)
 }
 
 // =============================================================================

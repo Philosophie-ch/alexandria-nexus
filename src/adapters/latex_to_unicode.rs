@@ -14,8 +14,8 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::{Duration, timeout};
 
-/// Timeout for the entire subprocess call (all texts in the batch).
-const SUBPROCESS_TIMEOUT: Duration = Duration::from_secs(30);
+const SUBPROCESS_TIMEOUT: Duration = Duration::from_secs(60);
+const CHUNK_SIZE: usize = 5_000;
 
 /// Python script embedded at compile time.
 /// Reads a JSON array of strings from stdin; writes a JSON array of
@@ -65,10 +65,8 @@ pub enum PyConvertItem {
 pub struct PyLatexConverter;
 
 impl PyLatexConverter {
-    pub async fn convert_batch(
-        &self,
-        texts: &[String],
-    ) -> Result<Vec<PyConvertItem>, HexforgeError> {
+    /// Convert a single chunk via one Python subprocess invocation.
+    async fn convert_chunk(&self, texts: &[String]) -> Result<Vec<PyConvertItem>, HexforgeError> {
         let input =
             serde_json::to_vec(texts).map_err(|e| HexforgeError::internal(e.to_string()))?;
 
@@ -106,6 +104,18 @@ impl PyLatexConverter {
 
         serde_json::from_slice(&output.stdout)
             .map_err(|e| HexforgeError::internal(format!("Failed to parse converter output: {e}")))
+    }
+
+    /// Convert texts in chunks of CHUNK_SIZE, concatenating all results.
+    pub async fn convert_batch(
+        &self,
+        texts: &[String],
+    ) -> Result<Vec<PyConvertItem>, HexforgeError> {
+        let mut all = Vec::with_capacity(texts.len());
+        for chunk in texts.chunks(CHUNK_SIZE) {
+            all.extend(self.convert_chunk(chunk).await?);
+        }
+        Ok(all)
     }
 }
 

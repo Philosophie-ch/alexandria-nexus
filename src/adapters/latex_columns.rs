@@ -59,22 +59,28 @@ impl<'a> PgLatexColumnConverter<'a> {
             .map_err(HexforgeError::data_source)
     }
 
-    /// Write converted unicode values back to one column.
+    /// Write converted unicode values back to one column using a bulk unnest UPDATE.
     async fn update_column(
         &self,
         table: &'static str,
         unicode_col: &'static str,
         updates: &[(i64, String)],
     ) -> Result<(), HexforgeError> {
-        for (id, value) in updates {
-            let sql = format!("UPDATE {table} SET {unicode_col} = $1 WHERE id = $2");
-            query(&sql)
-                .bind(value)
-                .bind(id)
-                .execute(self.pool)
-                .await
-                .map_err(HexforgeError::data_source)?;
+        if updates.is_empty() {
+            return Ok(());
         }
+        let (ids, values): (Vec<i64>, Vec<String>) = updates.iter().cloned().unzip();
+        let sql = format!(
+            "UPDATE {table} SET {unicode_col} = u.value \
+             FROM unnest($1::int8[], $2::text[]) AS u(id, value) \
+             WHERE {table}.id = u.id"
+        );
+        query(&sql)
+            .bind(ids)
+            .bind(values)
+            .execute(self.pool)
+            .await
+            .map_err(HexforgeError::data_source)?;
         Ok(())
     }
 
