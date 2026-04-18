@@ -16,7 +16,9 @@ pub struct ImportFullCsvParams {
 }
 
 use crate::adapters::full_import::PgFullImportStore;
-use crate::logic::full_import::{EntityImportReport, FullImportResult, ValidationReport};
+use crate::logic::full_import::{
+    EntityImportReport, FULL_CSV_HEADERS, FullImportResult, ValidationReport,
+};
 use crate::process::full_import;
 use crate::state::AppState;
 
@@ -91,7 +93,21 @@ pub async fn import_full_csv(
 /// `POST /api/v1/admin/export-full-csv`
 pub async fn export_full_csv(State(state): State<AppState>) -> Result<Response, HexforgeError> {
     let store = PgFullImportStore::new(state.pool.pool());
-    let csv = full_import::export_full_csv(&store, &store, &store, &store, &store).await?;
+    let rows = full_import::export_full_csv(&store, &store, &store, &store, &store).await?;
+
+    let mut wtr = csv::Writer::from_writer(Vec::new());
+    wtr.write_record(FULL_CSV_HEADERS.split(','))
+        .map_err(|e| HexforgeError::internal(format!("CSV header error: {e}")))?;
+    for row in rows {
+        wtr.write_record(&row)
+            .map_err(|e| HexforgeError::internal(format!("CSV write error: {e}")))?;
+    }
+    let bytes = wtr
+        .into_inner()
+        .map_err(|e| HexforgeError::internal(format!("CSV flush error: {e}")))?;
+    let csv = String::from_utf8(bytes)
+        .map_err(|e| HexforgeError::internal(format!("CSV UTF-8 error: {e}")))?;
+
     Ok((
         StatusCode::OK,
         [

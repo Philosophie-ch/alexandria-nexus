@@ -21,8 +21,8 @@ use crate::domain::{
 use crate::logic::csv_parsing::types::{FieldError, ParsedBibRow};
 use crate::logic::full_import::{
     AuthorJunctionRow, AuthorLookupResult, BibitemRefInsertRow, CollectedNames, EntityImportError,
-    EntityImportReport, ExportContext, FULL_CSV_HEADERS, FullImportReport, FullImportResult,
-    KeywordJunctionRow, LookupMaps, NamedEntityKind, ResolutionCtx, RowError, ValidationReport,
+    EntityImportReport, ExportContext, FullImportReport, FullImportResult, KeywordJunctionRow,
+    LookupMaps, NamedEntityKind, ResolutionCtx, RowError, ValidationReport,
     assemble_validation_report, build_bibitem_dto, build_export_record,
     collect_author_junction_rows, collect_keyword_junction_rows, collect_ref_rows, generate_key,
     parse_all_rows,
@@ -558,14 +558,18 @@ fn build_all_bibitem_entities(
 // Full CSV export orchestration
 // =============================================================================
 
-/// Export all bibitems as a human-readable CSV matching the full import format.
+/// Export all bibitems as raw rows matching the full import CSV format.
+///
+/// Returns one `Vec<String>` per bibitem (fields in column order). The caller
+/// is responsible for serialising to whatever output format is needed (CSV,
+/// JSON, etc.).
 pub async fn export_full_csv(
     bibitem_fetcher: &impl FullCsvBibitemFetcher,
     author_name_fetcher: &impl AuthorNameFetcher,
     reverse_name_fetcher: &impl ReverseNameMapFetcher,
     keyword_name_fetcher: &impl KeywordNameFetcher,
     junction_fetcher: &impl FullCsvJunctionFetcher,
-) -> Result<String, HexforgeError> {
+) -> Result<Vec<Vec<String>>, HexforgeError> {
     // Fetch all bibitems
     let bibitems = bibitem_fetcher.fetch_all_bibitems().await?;
 
@@ -618,7 +622,6 @@ pub async fn export_full_csv(
         refs_by_bib.entry(row.source_id).or_default().push(row);
     }
 
-    // Build CSV using pure helper
     let export_ctx = ExportContext {
         author_names: &author_names,
         journal_names: &journal_names,
@@ -633,19 +636,9 @@ pub async fn export_full_csv(
         refs_by_bib: &refs_by_bib,
     };
 
-    let mut wtr = csv::Writer::from_writer(Vec::new());
-    wtr.write_record(FULL_CSV_HEADERS.split(','))
-        .map_err(|e| HexforgeError::Internal(format!("CSV header error: {e}")))?;
-
-    for bib in &bibitems {
-        let record = build_export_record(bib, &export_ctx);
-
-        wtr.write_record(&record)
-            .map_err(|e| HexforgeError::Internal(format!("CSV write error: {e}")))?;
-    }
-
-    let bytes = wtr
-        .into_inner()
-        .map_err(|e| HexforgeError::Internal(format!("CSV flush error: {e}")))?;
-    String::from_utf8(bytes).map_err(|e| HexforgeError::Internal(format!("CSV UTF-8 error: {e}")))
+    let rows = bibitems
+        .iter()
+        .map(|bib| build_export_record(bib, &export_ctx))
+        .collect();
+    Ok(rows)
 }
