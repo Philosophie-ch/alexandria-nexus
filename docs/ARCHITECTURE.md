@@ -47,15 +47,85 @@ These rules are **non-negotiable**. Every import must respect them.
 
 **Adapter trait impls and process:** Adapter trait impl files (e.g., `adapters/search.rs`, `adapters/render.rs`) import from process **only to implement traits** that process defines. They CANNOT import process functions or orchestration logic — only trait definitions. This keeps the dependency one-directional: process defines contracts, adapters fulfill them.
 
-**Handlers and process:** Handlers are a special case within the adapters layer. They import process **traits** (to construct adapter impls), process **types** (e.g., `ResolveResult`), and process **functions** (e.g., `render_bibitems_to_html`). This is necessary because process orchestration functions coordinate multiple traits — logic that cannot live on any single trait. Handlers construct the concrete adapter impls and pass them to process functions.
+**Handlers and process:** Handlers import process **types** (e.g., `ResolveResult`) and process **functions** (e.g., `render_bibitems_to_html`) to call process orchestration. Handlers are **thin HTTP adapters only**: extract request → forward to process → format response. They do not contain business logic and do not decide which adapter implementation to use — that is composition's job.
 
 ## The Process / Adapter Contract
 
-This is the core architectural pattern. **Process defines contracts (traits). Adapters implement them.**
+This is the core architectural pattern. **Process defines abstract I/O contracts (traits). Adapters implement them. Composition wires them.**
+
+### The pattern
+
+For any feature that needs I/O, process defines **separate** `read` and `write` traits — abstract function signatures with no storage concepts (no tables, columns, schemas, SQL). The orchestration function receives them as parameters:
+
+```
+raw_data = reader.read()       # abstract: returns Vec<T> — no column/table concept
+result   = logic_fn(raw_data)  # pure transformation (Layer 2)
+report   = writer.write(result) # abstract: returns a report — no column/table concept
+```
+
+In Rust, these are traits because async functions need a concrete type to carry state. Architecturally they are function signatures — the trait is a pragmatic carrier, not a design choice.
 
 ```rust
-// PROCESS layer — defines WHAT it needs (no Postgres, no SQL, no pool)
-#[async_trait]
+// PROCESS layer — defines WHAT, uses only domain types, no storage concepts
+pub trait DataReader: Send + Sync {
+    async fn read(&self) -> Result<Vec<Row>, HexforgeError>;
+}
+pub trait DataWriter: Send + Sync {
+    async fn write(&self, rows: Vec<ProcessedRow>) -> Result<Report, HexforgeError>;
+}
+
+pub async fn process_fn(
+    reader: &impl DataReader,
+    writer: &impl DataWriter,
+) -> Result<Report, HexforgeError> {
+    let raw = reader.read().await?;
+    let result = logic::transform(raw);      // pure logic, Layer 2
+    writer.write(result).await
+}
+
+// ADAPTER layer — implements read and write SEPARATELY and INDEPENDENTLY
+// Could equally be CsvReader, ElasticSearchWriter, ApiReader, etc.
+struct PgReader { pool: PgPool }
+impl DataReader for PgReader {
+    async fn read(&self) -> Result<Vec<Row>, HexforgeError> {
+        // SQL, column names, table names — all hidden here
+    }
+}
+
+struct PgWriter { pool: PgPool }
+impl DataWriter for PgWriter {
+    async fn write(&self, rows: Vec<ProcessedRow>) -> Result<Report, HexforgeError> {
+        // UPDATE statements, column names — all hidden here
+    }
+}
+
+// COMPOSITION — the only layer that knows all others; wires concrete impls to process
+// This is in build_app() or the router setup, NOT in the handler
+process_fn(
+    reader = PgReader::new(pool),
+    writer = PgWriter::new(pool),
+)
+
+// HANDLER — thin HTTP adapter only: extract request → forward → format response
+pub async fn my_handler(State(state): State<AppState>) {
+    let report = process_fn(
+        &PgReader::new(state.pool.pool()),
+        &PgWriter::new(state.pool.pool()),
+    ).await?;
+    Ok(Json(report))
+}
+```
+
+**Why separate read and write traits:** If you switch from Postgres to MongoDB, you only write `MongoReader` and `MongoWriter`. Process, logic, and domain are untouched. You could equally mix: `CsvReader` with `PgWriter`, or `ApiReader` with `ElasticSearchWriter`. They are fully swappable without touching any other layer.
+
+**Why composition wires (not handlers):** Composition is the only layer that knows all others. Wiring decisions — which concrete adapter to use — belong there. Handlers know nothing about storage technologies; they receive the already-wired application state from composition and remain thin HTTP glue.
+
+### Example: search (single combined trait)
+
+Some features combine read + orchestration into a single trait when there is no separate write step:
+
+```rust
+// PROCESS layer
 pub trait BibitemSearcher {
     async fn search(&self, query: &str, filters: &SearchFilters, limit: i64, offset: i64)
         -> Result<(Vec<BibItem>, i64), HexforgeError>;
@@ -64,37 +134,21 @@ pub trait BibitemSearcher {
 pub async fn perform_search(
     searcher: &impl BibitemSearcher,
     request: SearchRequest,
-) -> Result<SearchResponse, HexforgeError> {
-    // Pure orchestration: validate input, call trait, format output
-}
+) -> Result<SearchResponse, HexforgeError> { /* orchestration */ }
 
-// ADAPTER layer — defines HOW (Postgres-specific)
+// ADAPTER layer
 struct PgBibitemSearcher { pool: PgPool }
-
-#[async_trait]
-impl BibitemSearcher for PgBibitemSearcher {
-    async fn search(&self, query: &str, ...) -> Result<...> {
-        // pg_trgm similarity(), SQL, bind params — all Postgres-specific
-    }
-}
-
-// HANDLER — thin HTTP glue
-pub async fn search_bibitems(State(state): State<AppState>, Json(req): Json<SearchRequest>) {
-    let searcher = PgBibitemSearcher::new(state.pool.pool());
-    let response = perform_search(&searcher, req).await?;
-    Ok(Json(response))
-}
+impl BibitemSearcher for PgBibitemSearcher { /* pg_trgm SQL */ }
 ```
-
-**Why this matters:** If you switch from Postgres to MongoDB, or add ElasticSearch alongside Postgres, you only implement new adapters. Process, logic, and domain are 100% reusable. You wire the new adapters in composition and nothing else changes.
 
 **Key rules:**
 
-1. **Process NEVER has concrete I/O.** No `PgPool`, no `query()`, no `sqlx`, no filesystem. If it needs I/O, it receives a trait object.
-2. **Process defines traits for its I/O needs.** These traits use only domain types in their signatures.
-3. **Adapters implement process traits.** The Postgres adapter uses `PgPool`, raw SQL, `sqlx` types — all hidden behind the trait.
-4. **Handlers construct adapters and call process.** They extract HTTP, build the concrete adapter, call the process function, format the response.
-5. **hexforge's `DataSource<T>` trait** is already an abstract contract. Process can use `&impl DataSource<T>` for standard CRUD operations without depending on adapters.
+1. **Process NEVER has concrete I/O.** No `PgPool`, no `query()`, no `sqlx`, no filesystem. If it needs I/O, it receives a trait.
+2. **Process defines traits for its I/O needs.** Read and write traits are defined **separately**. No table, column, or schema names anywhere in process.
+3. **Adapters implement read and write independently.** `PgReader` and `PgWriter` are separate structs that can be swapped without touching each other.
+4. **COMPOSITION wires concrete implementations.** `process_fn(reader=PgReader::new(pool), writer=PgWriter::new(pool))` — this decision belongs in `build_app()`, not in handlers.
+5. **Handlers are thin HTTP adapters only.** Extract request → call wired process → format response. Zero business logic. Zero wiring decisions.
+6. **hexforge's `DataSource<T>` trait** is already an abstract contract. Process can use `&impl DataSource<T>` for standard CRUD operations without depending on adapters.
 
 ## Layer Details
 
