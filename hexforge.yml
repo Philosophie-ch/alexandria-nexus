@@ -233,7 +233,6 @@ models:
       school_key: { type: string, required: true, unique: true }
       name_latex: { type: string, required: true, unique: true }
       name_unicode: { type: string, required: true }
-      default_address: { type: "string?" }
     filters:
       name: { op: like, column: "name_unicode" }
     indexes:

@@ -99,7 +99,6 @@ CREATE TABLE publishers (
 
 CREATE TABLE schools (
     id BIGSERIAL PRIMARY KEY,
-    default_address TEXT,
     name_latex TEXT NOT NULL UNIQUE,
     name_unicode TEXT NOT NULL,
     school_key TEXT NOT NULL UNIQUE,

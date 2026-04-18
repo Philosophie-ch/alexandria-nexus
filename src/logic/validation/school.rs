@@ -49,7 +49,6 @@ mod tests {
             school_key: "mit_linguistics".to_string(),
             name_latex: "MIT Linguistics".to_string(),
             name_unicode: String::new(),
-            default_address: None,
         };
         assert!(validate_create_school(&input).is_ok());
     }
@@ -60,7 +59,6 @@ mod tests {
             school_key: String::new(),
             name_latex: "MIT Linguistics".to_string(),
             name_unicode: String::new(),
-            default_address: None,
         };
         assert!(validate_create_school(&input).is_err());
     }
@@ -71,7 +69,6 @@ mod tests {
             school_key: "mit_linguistics".to_string(),
             name_latex: String::new(),
             name_unicode: String::new(),
-            default_address: None,
         };
         assert!(validate_create_school(&input).is_err());
     }
@@ -82,7 +79,6 @@ mod tests {
             school_key: Some(String::new()),
             name_latex: None,
             name_unicode: None,
-            default_address: None,
         };
         assert!(validate_update_school(&input).is_err());
     }
@@ -93,7 +89,6 @@ mod tests {
             school_key: None,
             name_latex: Some("New Name".to_string()),
             name_unicode: None,
-            default_address: None,
         };
         assert!(validate_update_school(&input).is_ok());
     }

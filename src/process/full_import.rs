@@ -368,7 +368,6 @@ async fn create_named_entity_school(
         school_key: key.to_string(),
         name_latex: name.to_string(),
         name_unicode: name.to_string(),
-        default_address: None,
     };
     validate_create_school(&dto).map_err(|e| e.to_string())?;
     let entity = create_school_transform(dto);

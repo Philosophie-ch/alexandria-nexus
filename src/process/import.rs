@@ -987,7 +987,6 @@ pub async fn import_schools_from_csv(
     let col_school_key = require_column(&headers, "school_key")?;
     let col_name_latex = column_index(&headers, "name_latex");
     let col_name_unicode = column_index(&headers, "name_unicode");
-    let col_default_address = column_index(&headers, "default_address");
 
     let mut imported = 0usize;
     let mut updated = 0usize;
@@ -1041,7 +1040,6 @@ pub async fn import_schools_from_csv(
                         school_key: Some(school_key.clone()),
                         name_latex: col_name_latex.and_then(|i| get_field(&record, i)),
                         name_unicode: col_name_unicode.and_then(|i| get_field(&record, i)),
-                        default_address: col_default_address.and_then(|i| get_field(&record, i)),
                     };
                     if let Err(e) = validate_update_school(&update_dto) {
                         errors.push(ImportRowError {
@@ -1072,7 +1070,6 @@ pub async fn import_schools_from_csv(
                         name_unicode: col_name_unicode
                             .and_then(|i| get_field(&record, i))
                             .unwrap_or_default(),
-                        default_address: col_default_address.and_then(|i| get_field(&record, i)),
                     };
                     if let Err(e) = validate_create_school(&dto) {
                         errors.push(ImportRowError {
@@ -1114,7 +1111,6 @@ pub async fn import_schools_from_csv(
             name_unicode: col_name_unicode
                 .and_then(|i| get_field(&record, i))
                 .unwrap_or_default(),
-            default_address: col_default_address.and_then(|i| get_field(&record, i)),
         };
 
         if let Err(e) = validate_create_school(&dto) {

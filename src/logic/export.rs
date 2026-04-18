@@ -406,14 +406,8 @@ pub fn build_institutions_csv(institutions: &[Institution]) -> Result<Vec<u8>, E
 /// Build schools CSV from pre-fetched data.
 pub fn build_schools_csv(schools: &[School]) -> Result<Vec<u8>, ExportError> {
     let mut wtr = csv::Writer::from_writer(vec![]);
-    wtr.write_record([
-        "id",
-        "school_key",
-        "name_latex",
-        "name_unicode",
-        "default_address",
-    ])
-    .map_err(|e| HexforgeError::internal(e.to_string()))?;
+    wtr.write_record(["id", "school_key", "name_latex", "name_unicode"])
+        .map_err(|e| HexforgeError::internal(e.to_string()))?;
 
     for s in schools {
         wtr.write_record([
@@ -421,7 +415,6 @@ pub fn build_schools_csv(schools: &[School]) -> Result<Vec<u8>, ExportError> {
             &s.school_key,
             &s.name_latex,
             &s.name_unicode,
-            opt_str(&s.default_address),
         ])
         .map_err(|e| HexforgeError::internal(e.to_string()))?;
     }

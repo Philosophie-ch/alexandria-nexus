@@ -12,7 +12,6 @@ use utoipa::ToSchema;
 pub struct School {
     #[entity(id)]
     pub id: i64,
-    pub default_address: Option<String>,
     #[crud(required)]
     pub name_latex: String,
     #[crud(required)]
