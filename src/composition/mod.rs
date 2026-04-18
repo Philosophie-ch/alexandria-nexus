@@ -16,12 +16,12 @@ use crate::adapters::db::queries::{
     SchoolQuery, SeriesQuery,
 };
 use crate::adapters::handlers::{
-    convert_latex_to_unicode, export_authors, export_bibitems, export_full_csv,
-    export_institutions, export_journals, export_keywords, export_publishers, export_schools,
-    export_series, get_keyword_tree, import_author_name_variants, import_authors, import_bibitems,
-    import_entities_from_full_csv, import_full_csv, import_institutions, import_journals,
-    import_keywords, import_publishers, import_schools, import_series, render_bibitems,
-    search_bibitems, validate_full_csv,
+    convert_latex_columns, convert_latex_to_unicode, export_authors, export_bibitems,
+    export_full_csv, export_institutions, export_journals, export_keywords, export_publishers,
+    export_schools, export_series, get_keyword_tree, import_author_name_variants, import_authors,
+    import_bibitems, import_entities_from_full_csv, import_full_csv, import_institutions,
+    import_journals, import_keywords, import_publishers, import_schools, import_series,
+    render_bibitems, search_bibitems, validate_full_csv,
 };
 use crate::domain::projections::{
     AuthorExpanded, BibItemCrossref, BibItemSummary, InstitutionExpanded, JournalExpanded,
@@ -299,6 +299,7 @@ pub fn build_app(
                 .post("/import-full-csv", import_full_csv)
                 .post("/export-full-csv", export_full_csv)
                 .post("/latex-to-unicode", convert_latex_to_unicode)
+                .post("/convert-latex-columns", convert_latex_columns)
                 .with_state(state),
         )
         // OpenAPI

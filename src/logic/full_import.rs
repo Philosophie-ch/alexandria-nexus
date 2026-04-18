@@ -106,6 +106,42 @@ pub struct EntityImportError {
 }
 
 // =============================================================================
+// LaTeX → Unicode conversion report types
+// =============================================================================
+
+/// Per-item outcome of a LaTeX → Unicode conversion.
+#[derive(Debug)]
+pub enum ConvertOutcome {
+    Ok(String),
+    Err { original: String, message: String },
+}
+
+/// Aggregate report returned by `POST /api/v1/admin/convert-latex-columns`.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct LatexConvertReport {
+    pub columns: Vec<ColumnConvertResult>,
+    pub total_updated: usize,
+    pub errors: Vec<LatexConvertError>,
+}
+
+/// Stats for one converted column.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ColumnConvertResult {
+    pub table: &'static str,
+    pub column: &'static str,
+    pub updated: usize,
+}
+
+/// A row whose LaTeX value could not be converted — mirrors `EntityImportError`.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct LatexConvertError {
+    pub table: &'static str,
+    pub column: &'static str,
+    pub id: i64,
+    pub error: String,
+}
+
+// =============================================================================
 // Full import report types
 // =============================================================================
 

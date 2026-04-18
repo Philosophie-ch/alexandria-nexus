@@ -6,6 +6,9 @@
 
 use hexforge::HexforgeError;
 use serde::Deserialize;
+
+use crate::logic::full_import::ConvertOutcome;
+use crate::process::latex_columns::LatexBatchConverter;
 use std::process::Stdio;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -103,5 +106,20 @@ impl PyLatexConverter {
 
         serde_json::from_slice(&output.stdout)
             .map_err(|e| HexforgeError::internal(format!("Failed to parse converter output: {e}")))
+    }
+}
+
+impl LatexBatchConverter for PyLatexConverter {
+    async fn convert(&self, texts: Vec<String>) -> Result<Vec<ConvertOutcome>, HexforgeError> {
+        let py_items = self.convert_batch(&texts).await?;
+        let outcomes = texts
+            .into_iter()
+            .zip(py_items)
+            .map(|(original, item)| match item {
+                PyConvertItem::Ok { result } => ConvertOutcome::Ok(result),
+                PyConvertItem::Error { message } => ConvertOutcome::Err { original, message },
+            })
+            .collect();
+        Ok(outcomes)
     }
 }

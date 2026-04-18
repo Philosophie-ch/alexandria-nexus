@@ -4,6 +4,7 @@ mod export;
 mod full_import;
 mod import;
 mod keyword_tree;
+mod latex_columns;
 mod latex_to_unicode;
 mod render;
 mod search;
@@ -20,6 +21,7 @@ pub use import::{
     import_journals, import_keywords, import_publishers, import_schools, import_series,
 };
 pub use keyword_tree::get_keyword_tree;
+pub use latex_columns::convert_latex_columns;
 pub use latex_to_unicode::convert_latex_to_unicode;
 pub use render::render_bibitems;
 pub use search::search_bibitems;
