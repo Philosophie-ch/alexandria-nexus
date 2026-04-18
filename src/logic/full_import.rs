@@ -472,8 +472,10 @@ pub fn generate_key(name: &str) -> String {
         .chars()
         .map(|c| if c.is_alphanumeric() { c } else { '_' })
         .collect::<String>()
-        .trim_matches('_')
-        .to_string()
+        .split('_')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("_")
 }
 
 // =============================================================================
@@ -738,7 +740,8 @@ pub fn build_export_record(bib: &crate::domain::BibItem, ctx: &ExportContext<'_>
         ctx.keywords_by_bib
             .get(&bib.id)
             .map(|rows| {
-                rows.iter()
+                let names: Vec<&str> = rows
+                    .iter()
                     .filter_map(|r| {
                         ctx.keyword_names.get(&r.keyword_id).and_then(|(name, lv)| {
                             if *lv == level {
@@ -748,8 +751,12 @@ pub fn build_export_record(bib: &crate::domain::BibItem, ctx: &ExportContext<'_>
                             }
                         })
                     })
-                    .collect::<Vec<_>>()
-                    .join("; ")
+                    .collect();
+                if names.is_empty() {
+                    String::new()
+                } else {
+                    format!("{};", names.join("; "))
+                }
             })
             .unwrap_or_default()
     };
@@ -865,5 +872,41 @@ pub fn format_date_for_export(bib: &crate::domain::BibItem) -> String {
             }
         }
         _ => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::generate_key;
+
+    #[test]
+    fn basic_lowercase() {
+        assert_eq!(generate_key("MIT"), "mit");
+    }
+
+    #[test]
+    fn spaces_become_single_underscore() {
+        assert_eq!(
+            generate_key("University of Toronto"),
+            "university_of_toronto"
+        );
+    }
+
+    #[test]
+    fn parens_dont_produce_double_underscore() {
+        assert_eq!(
+            generate_key("COINS (University of Massachusetts)"),
+            "coins_university_of_massachusetts"
+        );
+    }
+
+    #[test]
+    fn leading_trailing_special_chars_trimmed() {
+        assert_eq!(generate_key("(MIT)"), "mit");
+    }
+
+    #[test]
+    fn multiple_consecutive_separators_collapsed() {
+        assert_eq!(generate_key("A  --  B"), "a_b");
     }
 }
