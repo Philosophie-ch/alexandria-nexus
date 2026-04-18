@@ -3,7 +3,6 @@ FROM rust:1.94-slim-bookworm AS builder
 
 WORKDIR /app
 
-# Install build dependencies
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
@@ -23,7 +22,7 @@ COPY src ./src
 COPY migrations ./migrations
 
 # Build release binary (SSH agent forwarding for hexforge private dep)
-RUN --mount=type=ssh cargo build --release
+RUN --mount=type=ssh cargo build --release --bin alexandria-nexus
 
 # Runtime stage
 FROM debian:bookworm-slim

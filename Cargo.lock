@@ -772,7 +772,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1114,7 +1114,8 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hexforge"
-version = "0.2.0"
+version = "0.3.0"
+source = "git+ssh://git@gitlab.com/alebg/hexforge.git?tag=v0.3.0#19efd4dc6f0770f1470c6250512efa4b2b521ba0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -1137,7 +1138,8 @@ dependencies = [
 
 [[package]]
 name = "hexforge-cli"
-version = "0.1.0"
+version = "0.3.0"
+source = "git+ssh://git@gitlab.com/alebg/hexforge.git?tag=v0.3.0#19efd4dc6f0770f1470c6250512efa4b2b521ba0"
 dependencies = [
  "clap",
  "heck",
@@ -1147,7 +1149,8 @@ dependencies = [
 
 [[package]]
 name = "hexforge-macros"
-version = "0.2.0"
+version = "0.3.0"
+source = "git+ssh://git@gitlab.com/alebg/hexforge.git?tag=v0.3.0#19efd4dc6f0770f1470c6250512efa4b2b521ba0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2360,7 +2363,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3044,7 +3047,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

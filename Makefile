@@ -8,13 +8,13 @@ DB_URL = postgres://$${POSTGRES_USER}:$${POSTGRES_PASSWORD}@localhost:$${DB_PORT
 dev-raw:
 	set -a && source .env && set +a && DATABASE_URL=$(DB_URL) cargo run --bin alexandria-nexus
 
-# Start DB + Adminer and run the app
+# Build the app image (requires SSH agent for hexforge private dep)
+dev-build:
+	DOCKER_BUILDKIT=1 docker compose build app
+
+# Start DB + Adminer + app (build image first with: make dev-build)
 dev-start:
-	docker compose up -d alexandria-db adminer
-	@echo "Waiting for Postgres to be ready..."
-	@until docker compose exec alexandria-db pg_isready -U $${POSTGRES_USER} > /dev/null 2>&1; do sleep 0.5; done
-	@echo "Postgres ready"
-	set -a && source .env && set +a && DATABASE_URL=$(DB_URL) cargo run --bin alexandria-nexus
+	docker compose up -d
 
 # Stop all containers
 dev-stop:

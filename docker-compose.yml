@@ -22,5 +22,20 @@ services:
     depends_on:
       - alexandria-db
 
+  app:
+    build:
+      context: .
+      ssh:
+        - default
+    ports:
+      - "${PORT:-8080}:8080"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@alexandria-db:5432/${POSTGRES_DB}
+    depends_on:
+      alexandria-db:
+        condition: service_healthy
+
 volumes:
   postgres_data:
