@@ -39,13 +39,17 @@ async fn test_import_authors_csv() {
          plato-{suffix},,,,,,"
     );
 
-    let resp = upload_csv(&app, "/api/v1/admin/import/authors", &csv).await;
+    let resp = upload_csv(
+        &app,
+        "/api/v1/admin/import/authors?auto_assign_ids=true",
+        &csv,
+    )
+    .await;
     assert_eq!(resp.status(), 200, "Import authors should return 200");
 
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["imported"], 1, "Should import 1 valid author (Kant)");
-    // Plato row has no family/given/mononym names and only author_key, so it
-    // depends on validation rules whether it fails. At minimum Kant should import.
+    // Plato row has no family/given/mononym names — fails validation.
 
     // Verify Kant exists
     let get_resp = app
@@ -54,7 +58,7 @@ async fn test_import_authors_csv() {
     assert_eq!(get_resp.status(), 200);
     let author: serde_json::Value = get_resp.json().await.unwrap();
     assert_eq!(author["family_name_latex"], "Kant");
-    assert_eq!(author["given_name_simplified"], "immanuel");
+    assert_eq!(author["given_name_latex"], "Immanuel");
 }
 
 #[tokio::test]
@@ -68,7 +72,12 @@ async fn test_import_authors_with_mononym() {
          aristotle-{suffix},Aristotle,Aristotle,aristotle"
     );
 
-    let resp = upload_csv(&app, "/api/v1/admin/import/authors", &csv).await;
+    let resp = upload_csv(
+        &app,
+        "/api/v1/admin/import/authors?auto_assign_ids=true",
+        &csv,
+    )
+    .await;
     assert_eq!(resp.status(), 200);
 
     let body: serde_json::Value = resp.json().await.unwrap();
@@ -133,7 +142,12 @@ async fn test_import_journals_csv() {
          nous-{suffix},Nous,Nous,nous,,"
     );
 
-    let resp = upload_csv(&app, "/api/v1/admin/import/journals", &csv).await;
+    let resp = upload_csv(
+        &app,
+        "/api/v1/admin/import/journals?auto_assign_ids=true",
+        &csv,
+    )
+    .await;
     assert_eq!(resp.status(), 200);
 
     let body: serde_json::Value = resp.json().await.unwrap();
@@ -164,7 +178,12 @@ async fn test_import_publishers_csv() {
          oup-{suffix},Oxford University Press,Oxford University Press,oxford university press,Oxford"
     );
 
-    let resp = upload_csv(&app, "/api/v1/admin/import/publishers", &csv).await;
+    let resp = upload_csv(
+        &app,
+        "/api/v1/admin/import/publishers?auto_assign_ids=true",
+        &csv,
+    )
+    .await;
     assert_eq!(resp.status(), 200);
 
     let body: serde_json::Value = resp.json().await.unwrap();
@@ -325,7 +344,7 @@ async fn test_import_bibitems_csv() {
     assert_eq!(bibitem_resp.status(), 200);
     let bibitem: serde_json::Value = bibitem_resp.json().await.unwrap();
     assert_eq!(bibitem["entry_type"], "article");
-    assert_eq!(bibitem["title_simplified"], "critique of pure reason");
+    assert_eq!(bibitem["title_unicode"], "Critique of Pure Reason");
     assert_eq!(bibitem["journal_id"], journal_id);
     assert_eq!(bibitem["date_year"], 1781);
 
@@ -597,4 +616,323 @@ async fn test_import_multiple_bibitems() {
             .await;
         assert_eq!(bib_resp.status(), 200, "Bibitem {label} should exist");
     }
+}
+
+// ============================================================================
+// ID-based upsert — all four cases
+// ============================================================================
+
+/// Case: CSV has ID that does not exist in DB → creates the row with that ID.
+#[tokio::test]
+async fn test_import_author_with_explicit_id_creates() {
+    let app = TestApp::spawn().await;
+    let suffix = unique_suffix();
+
+    let csv = format!(
+        "id,author_key,family_name_latex,given_name_latex\n\
+         80001,kant-{suffix},Kant,Immanuel"
+    );
+
+    let resp = upload_csv(&app, "/api/v1/admin/import/authors", &csv).await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["imported"], 1);
+    assert_eq!(body["failed"], 0);
+
+    let get_resp = app.get("/api/v1/authors/80001").await;
+    assert_eq!(get_resp.status(), 200);
+    let author: serde_json::Value = get_resp.json().await.unwrap();
+    assert_eq!(author["id"], 80001);
+    assert_eq!(author["author_key"], format!("kant-{suffix}"));
+    assert_eq!(author["family_name_latex"], "Kant");
+}
+
+/// Case: CSV has ID that exists with the same key → updates the row.
+#[tokio::test]
+async fn test_import_author_id_exists_matching_key_updates() {
+    let app = TestApp::spawn().await;
+    let suffix = unique_suffix();
+
+    // Create with explicit ID
+    let csv_create = format!(
+        "id,author_key,family_name_latex\n\
+         80002,kant-{suffix},Kant"
+    );
+    let r = upload_csv(&app, "/api/v1/admin/import/authors", &csv_create).await;
+    assert_eq!(r.json::<serde_json::Value>().await.unwrap()["imported"], 1);
+
+    // Re-import same ID + same key, different field value → update
+    let csv_update = format!(
+        "id,author_key,family_name_latex,given_name_latex\n\
+         80002,kant-{suffix},Kant,Immanuel"
+    );
+    let resp = upload_csv(&app, "/api/v1/admin/import/authors", &csv_update).await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["updated"], 1, "should update existing author");
+    assert_eq!(body["failed"], 0);
+
+    let author: serde_json::Value = app.get("/api/v1/authors/80002").await.json().await.unwrap();
+    assert_eq!(author["given_name_latex"], "Immanuel");
+}
+
+/// Case: CSV has ID that exists but with a different key → row-level error.
+#[tokio::test]
+async fn test_import_author_id_exists_mismatched_key_errors() {
+    let app = TestApp::spawn().await;
+    let suffix = unique_suffix();
+
+    let csv_create = format!(
+        "id,author_key,family_name_latex\n\
+         80003,kant-{suffix},Kant"
+    );
+    upload_csv(&app, "/api/v1/admin/import/authors", &csv_create).await;
+
+    let csv_mismatch = format!(
+        "id,author_key,family_name_latex\n\
+         80003,hegel-{suffix},Hegel"
+    );
+    let resp = upload_csv(&app, "/api/v1/admin/import/authors", &csv_mismatch).await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["failed"], 1, "key mismatch must fail");
+    assert_eq!(body["imported"], 0);
+    assert_eq!(body["updated"], 0);
+}
+
+/// Case: CSV has no ID and ?auto_assign_ids is absent → row-level error.
+#[tokio::test]
+async fn test_import_author_no_id_without_flag_errors() {
+    let app = TestApp::spawn().await;
+    let suffix = unique_suffix();
+
+    let csv = format!(
+        "author_key,family_name_latex\n\
+         kant-{suffix},Kant"
+    );
+    let resp = upload_csv(&app, "/api/v1/admin/import/authors", &csv).await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(
+        body["failed"], 1,
+        "missing id without auto_assign must fail"
+    );
+    assert_eq!(body["imported"], 0);
+}
+
+// ============================================================================
+// ?auto_assign_ids=true
+// ============================================================================
+
+#[tokio::test]
+async fn test_import_authors_auto_assign_ids() {
+    let app = TestApp::spawn().await;
+    let suffix = unique_suffix();
+
+    let csv = format!(
+        "author_key,family_name_latex,given_name_latex\n\
+         kant-{suffix},Kant,Immanuel\n\
+         hegel-{suffix},Hegel,Georg"
+    );
+
+    let resp = upload_csv(
+        &app,
+        "/api/v1/admin/import/authors?auto_assign_ids=true",
+        &csv,
+    )
+    .await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["imported"], 2);
+    assert_eq!(body["failed"], 0);
+
+    // Both must exist with server-assigned IDs
+    let kant = app
+        .get(&format!("/api/v1/authors/by-key/kant-{suffix}"))
+        .await;
+    assert_eq!(kant.status(), 200);
+
+    let hegel = app
+        .get(&format!("/api/v1/authors/by-key/hegel-{suffix}"))
+        .await;
+    assert_eq!(hegel.status(), 200);
+
+    // IDs must be distinct
+    let kant_id = kant.json::<serde_json::Value>().await.unwrap()["id"].clone();
+    let hegel_id = hegel.json::<serde_json::Value>().await.unwrap()["id"].clone();
+    assert_ne!(kant_id, hegel_id);
+}
+
+#[tokio::test]
+async fn test_import_journals_auto_assign_ids() {
+    let app = TestApp::spawn().await;
+    let suffix = unique_suffix();
+
+    let csv = format!(
+        "journal_key,name_latex,name_unicode\n\
+         mind-{suffix},Mind,Mind\n\
+         nous-{suffix},No\\^{{u}}s,Noûs"
+    );
+
+    let resp = upload_csv(
+        &app,
+        "/api/v1/admin/import/journals?auto_assign_ids=true",
+        &csv,
+    )
+    .await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["imported"], 2);
+    assert_eq!(body["failed"], 0);
+}
+
+// ============================================================================
+// Author name variants import
+// ============================================================================
+
+#[tokio::test]
+async fn test_import_author_name_variants() {
+    let app = TestApp::spawn().await;
+    let suffix = unique_suffix();
+
+    // Create an author
+    let payload = json!({
+        "author_key": format!("kant-{suffix}"),
+        "family_name_latex": "Kant",
+        "given_name_latex": "Immanuel"
+    });
+    let author: serde_json::Value = app
+        .post_json("/api/v1/authors", &payload)
+        .await
+        .json()
+        .await
+        .unwrap();
+    let author_id = author["id"].as_i64().unwrap();
+
+    // Import two LaTeX name variants ("Kant, I." is quoted because it contains a comma)
+    let csv = format!(
+        "name_variant,type,profile_id\n\
+         Kant I.,latex,{author_id}\n\
+         \"Kant, I.\",latex,{author_id}"
+    );
+
+    let resp = upload_csv(&app, "/api/v1/admin/import/author-name-variants", &csv).await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["updated"], 2, "two variants should be stored");
+    assert_eq!(body["failed"], 0);
+
+    // Verify both variants appear on the author record
+    let updated: serde_json::Value = app
+        .get(&format!("/api/v1/authors/by-key/kant-{suffix}"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let variants = updated["name_variants_latex"].as_array().unwrap();
+    assert!(
+        variants.iter().any(|v| v.as_str() == Some("Kant I.")),
+        "variant 'Kant I.' should be stored"
+    );
+    assert!(
+        variants.iter().any(|v| v.as_str() == Some("Kant, I.")),
+        "variant 'Kant, I.' should be stored"
+    );
+}
+
+#[tokio::test]
+async fn test_import_name_variant_duplicate_is_idempotent() {
+    let app = TestApp::spawn().await;
+    let suffix = unique_suffix();
+
+    let payload = json!({
+        "author_key": format!("hegel-{suffix}"),
+        "family_name_latex": "Hegel"
+    });
+    let author: serde_json::Value = app
+        .post_json("/api/v1/authors", &payload)
+        .await
+        .json()
+        .await
+        .unwrap();
+    let author_id = author["id"].as_i64().unwrap();
+
+    let csv = format!(
+        "name_variant,type,profile_id\n\
+         Hegel G.,latex,{author_id}"
+    );
+
+    // Import the same variant twice
+    upload_csv(&app, "/api/v1/admin/import/author-name-variants", &csv).await;
+    let resp2 = upload_csv(&app, "/api/v1/admin/import/author-name-variants", &csv).await;
+    assert_eq!(resp2.status(), 200);
+    let body: serde_json::Value = resp2.json().await.unwrap();
+    assert_eq!(body["failed"], 0, "duplicate variant should not error");
+
+    // Still only one entry in the array
+    let updated: serde_json::Value = app
+        .get(&format!("/api/v1/authors/by-key/hegel-{suffix}"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let variants = updated["name_variants_latex"].as_array().unwrap();
+    assert_eq!(
+        variants
+            .iter()
+            .filter(|v| v.as_str() == Some("Hegel G."))
+            .count(),
+        1,
+        "variant should appear exactly once"
+    );
+}
+
+#[tokio::test]
+async fn test_import_name_variant_unknown_author_errors() {
+    let app = TestApp::spawn().await;
+
+    let csv = "name_variant,type,profile_id\n\
+               Some Variant,latex,99999999";
+
+    let resp = upload_csv(&app, "/api/v1/admin/import/author-name-variants", csv).await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["failed"], 1, "unknown author id should fail");
+    assert_eq!(body["updated"], 0);
+}
+
+// ============================================================================
+// Sequence sync after explicit-ID import
+// ============================================================================
+
+#[tokio::test]
+async fn test_sequence_synced_after_explicit_id_import() {
+    let app = TestApp::spawn().await;
+    let suffix = unique_suffix();
+
+    // Import an author with a large explicit ID
+    let csv = format!(
+        "id,author_key,family_name_latex\n\
+         90000,kant-{suffix},Kant"
+    );
+    let r = upload_csv(&app, "/api/v1/admin/import/authors", &csv).await;
+    assert_eq!(r.json::<serde_json::Value>().await.unwrap()["imported"], 1);
+
+    // Create a new author via the API (no explicit ID).
+    // If the sequence was NOT synced past 90000 this would conflict and return 500.
+    let payload = json!({
+        "author_key": format!("hegel-{suffix}"),
+        "family_name_latex": "Hegel"
+    });
+    let create_resp = app.post_json("/api/v1/authors", &payload).await;
+    assert_eq!(
+        create_resp.status(),
+        200,
+        "new author must not conflict with explicitly-imported ID 90000"
+    );
+    let new_author: serde_json::Value = create_resp.json().await.unwrap();
+    assert!(
+        new_author["id"].as_i64().unwrap() > 90000,
+        "auto-assigned ID must be above the imported explicit ID"
+    );
 }

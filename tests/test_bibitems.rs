@@ -63,7 +63,7 @@ async fn test_get_bibitem_by_bibkey() {
 
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["bibkey"], bibkey);
-    assert_eq!(body["title_simplified"], "tractatus logico-philosophicus");
+    assert_eq!(body["title_unicode"], "Tractatus Logico-Philosophicus");
 }
 
 // ============================================================================

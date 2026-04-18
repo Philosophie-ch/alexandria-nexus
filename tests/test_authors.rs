@@ -201,5 +201,5 @@ async fn test_list_authors_with_filter() {
     let body: serde_json::Value = resp.json().await.unwrap();
     let items = body["items"].as_array().expect("Expected items array");
     assert_eq!(items.len(), 1, "Filter should return exactly 1 author");
-    assert_eq!(items[0]["family_name_simplified"], "schopenhauer");
+    assert_eq!(items[0]["family_name_unicode"], "Schopenhauer");
 }

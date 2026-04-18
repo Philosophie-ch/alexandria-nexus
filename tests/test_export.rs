@@ -237,8 +237,8 @@ async fn test_export_journals_by_ids() {
     let rows = parse_csv(&body);
     assert_eq!(rows.len(), 1);
     assert_eq!(
-        rows[0].get("name_simplified").map(String::as_str),
-        Some("test journal")
+        rows[0].get("name_unicode").map(String::as_str),
+        Some("Test Journal")
     );
 }
 

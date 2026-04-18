@@ -211,10 +211,10 @@ async fn test_validate_resolves_author_via_name_variant() {
         "author_key": format!("aristotle-{s}"),
         "mononym_latex": "Aristotle",
         "mononym_unicode": "Aristotle",
-        "mononym_simplified": "aristotle",
-        "name_variants": ["Aristote", "Aristoteles"]
+        "name_variants_latex": ["Aristote", "Aristoteles"]
     });
-    app.post_json("/api/v1/authors", &payload).await;
+    let create = app.post_json("/api/v1/authors", &payload).await;
+    assert_eq!(create.status(), 200, "Failed to seed author");
 
     // CSV uses a variant name — should resolve, not report as missing
     let csv = format!(
@@ -243,10 +243,10 @@ async fn test_import_resolves_author_via_name_variant() {
         "author_key": format!("aristotle-{s}"),
         "mononym_latex": "Aristotle",
         "mononym_unicode": "Aristotle",
-        "mononym_simplified": "aristotle",
-        "name_variants": ["Aristote", "Aristoteles"]
+        "name_variants_latex": ["Aristote", "Aristoteles"]
     });
-    app.post_json("/api/v1/authors", &payload).await;
+    let create = app.post_json("/api/v1/authors", &payload).await;
+    assert_eq!(create.status(), 200, "Failed to seed author");
 
     // Import using variant name
     let csv = format!(
@@ -272,8 +272,7 @@ async fn test_variant_collision_reported_as_ambiguous() {
         "author_key": format!("aristotle-{s}"),
         "mononym_latex": "Aristotle",
         "mononym_unicode": "Aristotle",
-        "mononym_simplified": "aristotle",
-        "name_variants": ["Stageirites"]
+        "name_variants_latex": ["Stageirites"]
     });
     app.post_json("/api/v1/authors", &payload1).await;
 
@@ -281,7 +280,6 @@ async fn test_variant_collision_reported_as_ambiguous() {
         "author_key": format!("stageirites-{s}"),
         "mononym_latex": "Stageirites",
         "mononym_unicode": "Stageirites",
-        "mononym_simplified": "stageirites",
     });
     app.post_json("/api/v1/authors", &payload2).await;
 
@@ -309,18 +307,21 @@ async fn test_import_entities_creates_missing() {
     let app = TestApp::spawn().await;
     let s = unique_suffix();
 
+    // This endpoint creates institutions, schools, series, keywords.
+    // Authors, journals, publishers must be imported via their own endpoints.
     let csv = format!(
-        "entry_type,bibkey,title,author,journal,publisher,date\n\
-         article,test{s}:2024,A Paper,\"NewAuthor-{s}, Given\",NewJournal-{s},NewPublisher-{s},2024"
+        "entry_type,bibkey,title,institution,school,series,_kw-level1,date\n\
+         book,test{s}:2024,A Book,MIT-{s},ETH-{s},LNM-{s},kw-{s},2024"
     );
 
     let resp = upload_csv(&app, "/api/v1/admin/import-entities-from-full-csv", &csv).await;
     assert_eq!(resp.status(), 200);
 
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(body["created_authors"], 1);
-    assert_eq!(body["created_journals"], 1);
-    assert_eq!(body["created_publishers"], 1);
+    assert_eq!(body["created_institutions"], 1);
+    assert_eq!(body["created_schools"], 1);
+    assert_eq!(body["created_series"], 1);
+    assert_eq!(body["created_keywords"], 1);
     assert_eq!(body["errors"].as_array().unwrap().len(), 0);
 }
 
@@ -346,21 +347,26 @@ async fn test_import_entities_skips_existing() {
     let app = TestApp::spawn().await;
     let s = unique_suffix();
 
-    // Seed an author first
-    seed_author(&app, &format!("existing-{s}"), "Existing", "Author").await;
-
+    // First import creates the keyword
     let csv = format!(
-        "entry_type,bibkey,title,author,date\n\
-         book,test{s}:2024,A Book,\"Existing, Author\",2024"
+        "entry_type,bibkey,title,_kw-level1,date\n\
+         book,test{s}:2024,A Book,existing-kw-{s},2024"
     );
+    let r: serde_json::Value =
+        upload_csv(&app, "/api/v1/admin/import-entities-from-full-csv", &csv)
+            .await
+            .json()
+            .await
+            .unwrap();
+    assert_eq!(r["created_keywords"], 1);
 
+    // Second import with same keyword must not create a duplicate
     let resp = upload_csv(&app, "/api/v1/admin/import-entities-from-full-csv", &csv).await;
     assert_eq!(resp.status(), 200);
-
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(
-        body["created_authors"], 0,
-        "Should not create duplicate author"
+        body["created_keywords"], 0,
+        "Should not create duplicate keyword"
     );
 }
 
@@ -563,26 +569,30 @@ async fn test_full_pipeline() {
     let app = TestApp::spawn().await;
     let s = unique_suffix();
 
+    // Authors and journals must be seeded via their own endpoints.
+    // import-entities-from-full-csv only creates institutions/schools/series/keywords.
+    seed_author(&app, &format!("kant-{s}"), "Kant", "Immanuel").await;
+    seed_journal(&app, &format!("mind-{s}"), "Mind").await;
+
     let csv = format!(
         "entry_type,bibkey,title,author,journal,date,_kw-level1\n\
-         article,pipe{s}:2024,Pipeline Paper,\"NewPipe-{s}, Author\",PipeJournal-{s},2024,pipe-kw-{s}"
+         article,pipe{s}:2024,Pipeline Paper,\"Kant, Immanuel\",Mind,2024,pipe-kw-{s}"
     );
 
-    // Step 1: Validate — should report missing entities
+    // Step 1: Validate — author and journal are seeded, only keyword is missing
     let v_resp = upload_csv(&app, "/api/v1/admin/validate-full-csv", &csv).await;
     assert_eq!(v_resp.status(), 200);
     let v_body: serde_json::Value = v_resp.json().await.unwrap();
     assert_eq!(v_body["valid_rows"], 1);
-    assert_eq!(v_body["missing_authors"].as_array().unwrap().len(), 1);
-    assert_eq!(v_body["missing_journals"].as_array().unwrap().len(), 1);
+    assert_eq!(v_body["missing_authors"].as_array().unwrap().len(), 0);
+    assert_eq!(v_body["missing_journals"].as_array().unwrap().len(), 0);
 
-    // Step 2: Import entities — creates the missing ones
+    // Step 2: Import entities — creates the keyword
     let e_resp = upload_csv(&app, "/api/v1/admin/import-entities-from-full-csv", &csv).await;
     assert_eq!(e_resp.status(), 200);
     let e_body: serde_json::Value = e_resp.json().await.unwrap();
-    assert_eq!(e_body["created_authors"], 1);
-    assert_eq!(e_body["created_journals"], 1);
     assert_eq!(e_body["created_keywords"], 1);
+    assert_eq!(e_body["errors"].as_array().unwrap().len(), 0);
 
     // Step 3: Import bibitems — should now succeed
     let i_resp = upload_csv(&app, "/api/v1/admin/import-full-csv", &csv).await;

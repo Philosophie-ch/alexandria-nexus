@@ -83,8 +83,8 @@ async fn test_search_bibitems() {
             "Result items should have bibkey field"
         );
         assert!(
-            results[0]["title_simplified"].is_string(),
-            "Result items should have title_simplified field"
+            results[0]["title_unicode"].is_string(),
+            "Result items should have title_unicode field"
         );
     }
 }
