@@ -201,6 +201,12 @@ pub fn parse_csv_row(headers: &CsvHeaders, record: &csv::StringRecord) -> RowPar
     let issuetitle = get_field(record, headers, "_issuetitle");
     let extra_note = get_field(record, headers, "_extra_note");
     let shorthand = get_field(record, headers, "shorthand");
+    let note_perso = get_field(record, headers, "_note_perso");
+    let note_stock = get_field(record, headers, "_note_stock");
+    let note_missing = get_field(record, headers, "_note_missing");
+    let change_request = get_field(record, headers, "_change_request");
+    let dltc_copyediting_note = get_field(record, headers, "_dltc_copyediting_note");
+    let todo_general = get_field(record, headers, "_to_do_general");
     let options = get_field(record, headers, "options");
     let doi = get_field(record, headers, "doi");
     let url = get_field(record, headers, "url");
@@ -244,6 +250,12 @@ pub fn parse_csv_row(headers: &CsvHeaders, record: &csv::StringRecord) -> RowPar
         issuetitle,
         extra_note,
         shorthand,
+        note_perso,
+        note_stock,
+        note_missing,
+        change_request,
+        dltc_copyediting_note,
+        todo_general,
         options,
         doi,
         url,

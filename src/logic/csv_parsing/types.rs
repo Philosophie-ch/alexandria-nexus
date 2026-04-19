@@ -155,6 +155,14 @@ pub struct ParsedBibRow {
     pub issuetitle: Option<String>,
     pub extra_note: Option<String>,
     pub shorthand: Option<String>,
+
+    // Workflow notes (bibitem_notes table, not exported as LaTeX)
+    pub note_perso: Option<String>,
+    pub note_stock: Option<String>,
+    pub note_missing: Option<String>,
+    pub change_request: Option<String>,
+    pub dltc_copyediting_note: Option<String>,
+    pub todo_general: Option<String>,
     pub options: Option<String>,
 
     // Identifiers

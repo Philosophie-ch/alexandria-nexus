@@ -14,7 +14,7 @@ use hexforge::{DataSource, HexforgeError};
 
 use crate::domain::junctions::{BibitemAuthorsRow, BibitemKeywordsRow};
 use crate::domain::{
-    BibItem, CreateInstitution, CreateKeyword, CreateSchool, CreateSeries,
+    BibItem, BibitemNotes, CreateInstitution, CreateKeyword, CreateSchool, CreateSeries,
     create_bib_item_transform, create_institution_transform, create_keyword_transform,
     create_school_transform, create_series_transform,
 };
@@ -26,6 +26,7 @@ use crate::logic::full_import::{
     assemble_validation_report, build_bibitem_dto, build_export_record,
     collect_author_junction_rows, collect_keyword_junction_rows, collect_ref_rows, generate_key,
 };
+use crate::process::import::{BibitemNotesData, BibitemNotesStore};
 use crate::validation::{
     validate_create_bibitem, validate_create_institution, validate_create_keyword,
     validate_create_school, validate_create_series,
@@ -158,6 +159,12 @@ pub trait FullCsvJunctionFetcher: Send + Sync {
         &self,
         ids: &[i64],
     ) -> impl Future<Output = Result<Vec<BibitemKeywordsRow>, HexforgeError>> + Send;
+}
+
+pub trait BibitemNotesFetcher: Send + Sync {
+    fn fetch_all_bibitem_notes(
+        &self,
+    ) -> impl Future<Output = Result<HashMap<i64, BibitemNotes>, HexforgeError>> + Send;
 }
 
 // =============================================================================
@@ -440,6 +447,7 @@ pub async fn import_bibitems(
     bulk_inserter: &impl BulkBibitemInsert,
     bulk_junction: &impl BulkJunctionInsert,
     transitive_deps: &impl TransitiveDepsComputer,
+    notes_store: &impl BibitemNotesStore,
     rows: Vec<ParsedBibRow>,
     row_errors: Vec<RowError>,
     delete_stale: bool,
@@ -528,6 +536,31 @@ pub async fn import_bibitems(
     bulk_junction.bulk_insert_bibitem_refs(&ref_rows).await?;
     transitive_deps.compute_transitive_deps().await?;
 
+    // Upsert notes for rows that have at least one note field set
+    for row in &parsed_rows {
+        let has_notes = row.note_perso.is_some()
+            || row.note_stock.is_some()
+            || row.note_missing.is_some()
+            || row.change_request.is_some()
+            || row.dltc_copyediting_note.is_some()
+            || row.todo_general.is_some();
+        if has_notes && let Some(&bibitem_id) = bibkey_to_id.get(&row.bibkey) {
+            notes_store
+                .upsert_bibitem_notes(
+                    bibitem_id,
+                    &BibitemNotesData {
+                        note_perso: row.note_perso.as_deref(),
+                        note_stock: row.note_stock.as_deref(),
+                        note_missing: row.note_missing.as_deref(),
+                        change_request: row.change_request.as_deref(),
+                        dltc_copyediting_note: row.dltc_copyediting_note.as_deref(),
+                        todo_general: row.todo_general.as_deref(),
+                    },
+                )
+                .await?;
+        }
+    }
+
     Ok(FullImportResult::Success(FullImportReport {
         imported,
         updated,
@@ -596,6 +629,7 @@ pub async fn fetch_export_rows(
     reverse_name_fetcher: &impl ReverseNameMapFetcher,
     keyword_name_fetcher: &impl KeywordNameFetcher,
     junction_fetcher: &impl FullCsvJunctionFetcher,
+    notes_fetcher: &impl BibitemNotesFetcher,
 ) -> Result<Vec<Vec<String>>, HexforgeError> {
     // Fetch all bibitems
     let bibitems = bibitem_fetcher.fetch_all_bibitems().await?;
@@ -644,6 +678,8 @@ pub async fn fetch_export_rows(
         keywords_by_bib.entry(row.bibitem_id).or_default().push(row);
     }
 
+    let notes_by_bib = notes_fetcher.fetch_all_bibitem_notes().await?;
+
     let export_ctx = ExportContext {
         author_names: &author_names,
         journal_names: &journal_names,
@@ -655,6 +691,7 @@ pub async fn fetch_export_rows(
         bibkey_by_id: &bibkey_by_id,
         authors_by_bib: &authors_by_bib,
         keywords_by_bib: &keywords_by_bib,
+        notes_by_bib: &notes_by_bib,
     };
 
     let rows = bibitems

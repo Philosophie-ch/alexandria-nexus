@@ -2375,18 +2375,29 @@ pub async fn import_bibitem_refs_from_csv(
 // BibitemNotesStore + import_bibitem_notes_from_csv
 // =============================================================================
 
+/// Six optional note fields for upsert.
+pub struct BibitemNotesData<'a> {
+    pub note_perso: Option<&'a str>,
+    pub note_stock: Option<&'a str>,
+    pub note_missing: Option<&'a str>,
+    pub change_request: Option<&'a str>,
+    pub dltc_copyediting_note: Option<&'a str>,
+    pub todo_general: Option<&'a str>,
+}
+
 /// Contract for upserting bibitem notes rows.
 pub trait BibitemNotesStore: Send + Sync {
     fn upsert_bibitem_notes(
         &self,
         bibitem_id: i64,
-        notes: &serde_json::Value,
+        notes: &BibitemNotesData<'_>,
     ) -> impl Future<Output = Result<(), HexforgeError>> + Send;
 }
 
 /// Import bibitem notes from CSV bytes.
 ///
-/// CSV must have columns: `bibitem_id`, `notes` (JSON string). An `id` column is
+/// CSV must have columns: `bibitem_id`, `note_perso`, `note_stock`, `note_missing`,
+/// `change_request`, `dltc_copyediting_note`, `todo_general`. An `id` column is
 /// accepted but ignored — notes are upserted by `bibitem_id` (unique constraint).
 /// All bibitem IDs must exist; returns a validation error listing any that are missing.
 pub async fn import_bibitem_notes_from_csv(
@@ -2405,12 +2416,30 @@ pub async fn import_bibitem_notes_from_csv(
         .clone();
 
     let col_bibitem_id = require_column(&headers, "bibitem_id")?;
-    let col_notes = require_column(&headers, "notes")?;
+
+    let find_col = |name: &str| headers.iter().position(|h| h == name);
+    let col_note_perso = find_col("note_perso");
+    let col_note_stock = find_col("note_stock");
+    let col_note_missing = find_col("note_missing");
+    let col_change_request = find_col("change_request");
+    let col_dltc = find_col("dltc_copyediting_note");
+    let col_todo = find_col("todo_general");
 
     struct NotesRow {
         bibitem_id: i64,
-        notes: serde_json::Value,
+        note_perso: Option<String>,
+        note_stock: Option<String>,
+        note_missing: Option<String>,
+        change_request: Option<String>,
+        dltc_copyediting_note: Option<String>,
+        todo_general: Option<String>,
     }
+
+    let opt_field = |record: &csv::StringRecord, idx: Option<usize>| -> Option<String> {
+        idx.and_then(|i| record.get(i))
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
 
     let mut rows: Vec<NotesRow> = Vec::new();
     let mut errors: Vec<ImportRowError> = Vec::new();
@@ -2443,20 +2472,15 @@ pub async fn import_bibitem_notes_from_csv(
             }
         };
 
-        let notes_str = get_field(&record, col_notes).unwrap_or_default();
-        let notes = match serde_json::from_str::<serde_json::Value>(&notes_str) {
-            Ok(v) => v,
-            Err(e) => {
-                errors.push(ImportRowError {
-                    row: row_num,
-                    identifier: bibitem_id.to_string(),
-                    error: format!("invalid notes JSON: {e}"),
-                });
-                continue;
-            }
-        };
-
-        rows.push(NotesRow { bibitem_id, notes });
+        rows.push(NotesRow {
+            bibitem_id,
+            note_perso: opt_field(&record, col_note_perso),
+            note_stock: opt_field(&record, col_note_stock),
+            note_missing: opt_field(&record, col_note_missing),
+            change_request: opt_field(&record, col_change_request),
+            dltc_copyediting_note: opt_field(&record, col_dltc),
+            todo_general: opt_field(&record, col_todo),
+        });
     }
 
     if !errors.is_empty() {
@@ -2482,7 +2506,17 @@ pub async fn import_bibitem_notes_from_csv(
     let total = rows.len();
     for row in &rows {
         notes_store
-            .upsert_bibitem_notes(row.bibitem_id, &row.notes)
+            .upsert_bibitem_notes(
+                row.bibitem_id,
+                &BibitemNotesData {
+                    note_perso: row.note_perso.as_deref(),
+                    note_stock: row.note_stock.as_deref(),
+                    note_missing: row.note_missing.as_deref(),
+                    change_request: row.change_request.as_deref(),
+                    dltc_copyediting_note: row.dltc_copyediting_note.as_deref(),
+                    todo_general: row.todo_general.as_deref(),
+                },
+            )
             .await?;
     }
 

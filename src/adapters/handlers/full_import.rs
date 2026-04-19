@@ -26,7 +26,8 @@ const FULL_CSV_HEADERS: &str = "entry_type,bibkey,author,editor,_guesteditor,dat
 booktitle,journal,publisher,institution,school,series,volume,number,pages,eid,address,type,edition,\
 note,_issuetitle,_extra_note,crossref,\
 _kw_level1,_kw_level2,_kw_level3,_epoch,_langid,_lang_der,_person,\
-_has_link_to_full_text,shorthand,options,doi,url,eprint,urn";
+_has_link_to_full_text,shorthand,options,doi,url,eprint,urn,\
+_note-perso,_note-stock,_note-missing,_change-request,_dltc_copyediting_note,_to-do-general";
 
 /// Validate a human-readable CSV without importing.
 /// `POST /api/v1/admin/validate-full-csv`
@@ -88,6 +89,7 @@ pub async fn import_full_csv(
         &store,
         &store,
         &store,
+        &store,
         rows,
         row_errors,
         params.delete_stale,
@@ -120,7 +122,8 @@ pub async fn recompute_deps(
 /// `POST /api/v1/admin/export-full-csv`
 pub async fn export_full_csv(State(state): State<AppState>) -> Result<Response, HexforgeError> {
     let store = PgFullImportStore::new(state.pool.pool());
-    let rows = full_import::fetch_export_rows(&store, &store, &store, &store, &store).await?;
+    let rows =
+        full_import::fetch_export_rows(&store, &store, &store, &store, &store, &store).await?;
 
     let mut wtr = csv::Writer::from_writer(Vec::new());
     wtr.write_record(FULL_CSV_HEADERS.split(','))

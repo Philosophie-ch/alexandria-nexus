@@ -721,6 +721,7 @@ pub struct ExportContext<'a> {
     pub bibkey_by_id: &'a HashMap<i64, String>,
     pub authors_by_bib: &'a HashMap<i64, Vec<&'a crate::domain::junctions::BibitemAuthorsRow>>,
     pub keywords_by_bib: &'a HashMap<i64, Vec<&'a crate::domain::junctions::BibitemKeywordsRow>>,
+    pub notes_by_bib: &'a HashMap<i64, crate::domain::BibitemNotes>,
 }
 
 /// Build the CSV record for a single bibitem.
@@ -846,6 +847,30 @@ pub fn build_export_record(bib: &crate::domain::BibItem, ctx: &ExportContext<'_>
         bib.url.clone().unwrap_or_default(),
         bib.eprint.clone().unwrap_or_default(),
         bib.urn.clone().unwrap_or_default(),
+        ctx.notes_by_bib
+            .get(&bib.id)
+            .and_then(|n| n.note_perso.clone())
+            .unwrap_or_default(),
+        ctx.notes_by_bib
+            .get(&bib.id)
+            .and_then(|n| n.note_stock.clone())
+            .unwrap_or_default(),
+        ctx.notes_by_bib
+            .get(&bib.id)
+            .and_then(|n| n.note_missing.clone())
+            .unwrap_or_default(),
+        ctx.notes_by_bib
+            .get(&bib.id)
+            .and_then(|n| n.change_request.clone())
+            .unwrap_or_default(),
+        ctx.notes_by_bib
+            .get(&bib.id)
+            .and_then(|n| n.dltc_copyediting_note.clone())
+            .unwrap_or_default(),
+        ctx.notes_by_bib
+            .get(&bib.id)
+            .and_then(|n| n.todo_general.clone())
+            .unwrap_or_default(),
     ]
 }
 

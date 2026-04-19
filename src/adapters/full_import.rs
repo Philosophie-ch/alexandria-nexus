@@ -9,17 +9,19 @@ use hexforge::HexforgeError;
 use hexforge::db_exports::{FromRow, PgPool, query, query_as};
 
 use crate::domain::junctions::{BibitemAuthorsRow, BibitemKeywordsRow};
-use crate::domain::{BibItem, Epoch, LangId, PubState, RefType};
+use crate::domain::{BibItem, BibitemNotes, Epoch, LangId, PubState, RefType};
 use crate::logic::full_import::{
     AuthorJunctionRow, AuthorLookupResult, AuthorNameKey, BibitemRefInsertRow, KeywordJunctionRow,
     VariantInfo, parse_variant_to_keys,
 };
 use crate::logic::transitive_closure::transitive_closure;
 use crate::process::full_import::{
-    AuthorLookup, AuthorNameFetcher, BibitemDeleter, BibkeyLookup, BulkBibitemInsert,
-    BulkJunctionInsert, EntityLookup, FullCsvBibitemFetcher, FullCsvJunctionFetcher, KeywordLookup,
-    KeywordNameFetcher, NamedEntity, ReverseNameMapFetcher, TransitiveDepsComputer,
+    AuthorLookup, AuthorNameFetcher, BibitemDeleter, BibitemNotesFetcher, BibkeyLookup,
+    BulkBibitemInsert, BulkJunctionInsert, EntityLookup, FullCsvBibitemFetcher,
+    FullCsvJunctionFetcher, KeywordLookup, KeywordNameFetcher, NamedEntity, ReverseNameMapFetcher,
+    TransitiveDepsComputer,
 };
+use crate::process::import::{BibitemNotesData, BibitemNotesStore};
 
 // =============================================================================
 // Row types for sqlx (adapter-only)
@@ -710,5 +712,52 @@ impl FullCsvJunctionFetcher for PgFullImportStore<'_> {
         .fetch_all(self.pool)
         .await
         .map_err(HexforgeError::data_source)
+    }
+}
+
+impl BibitemNotesStore for PgFullImportStore<'_> {
+    async fn upsert_bibitem_notes(
+        &self,
+        bibitem_id: i64,
+        notes: &BibitemNotesData<'_>,
+    ) -> Result<(), HexforgeError> {
+        query(
+            "INSERT INTO bibitem_notes \
+             (bibitem_id, note_perso, note_stock, note_missing, change_request, dltc_copyediting_note, todo_general) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7) \
+             ON CONFLICT (bibitem_id) DO UPDATE SET \
+             note_perso = EXCLUDED.note_perso, \
+             note_stock = EXCLUDED.note_stock, \
+             note_missing = EXCLUDED.note_missing, \
+             change_request = EXCLUDED.change_request, \
+             dltc_copyediting_note = EXCLUDED.dltc_copyediting_note, \
+             todo_general = EXCLUDED.todo_general, \
+             updated_at = NOW()",
+        )
+        .bind(bibitem_id)
+        .bind(notes.note_perso)
+        .bind(notes.note_stock)
+        .bind(notes.note_missing)
+        .bind(notes.change_request)
+        .bind(notes.dltc_copyediting_note)
+        .bind(notes.todo_general)
+        .execute(self.pool)
+        .await
+        .map_err(HexforgeError::data_source)?;
+        Ok(())
+    }
+}
+
+impl BibitemNotesFetcher for PgFullImportStore<'_> {
+    async fn fetch_all_bibitem_notes(&self) -> Result<HashMap<i64, BibitemNotes>, HexforgeError> {
+        let rows = query_as::<_, BibitemNotes>(
+            "SELECT id, bibitem_id, note_perso, note_stock, note_missing, \
+             change_request, dltc_copyediting_note, todo_general, \
+             created_at, updated_at FROM bibitem_notes",
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(HexforgeError::data_source)?;
+        Ok(rows.into_iter().map(|n| (n.bibitem_id, n)).collect())
     }
 }

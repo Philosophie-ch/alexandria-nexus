@@ -11,8 +11,8 @@ use hexforge::db_exports::{FromRow, PgPool, query, query_as, query_scalar};
 use crate::domain::AuthorRole;
 use crate::logic::import::NameVariantType;
 use crate::process::import::{
-    BibitemJunctionStore, BibitemNotesStore, BibitemRefsStore, NameVariantStore, ReferenceStore,
-    SequenceSyncer,
+    BibitemJunctionStore, BibitemNotesData, BibitemNotesStore, BibitemRefsStore, NameVariantStore,
+    ReferenceStore, SequenceSyncer,
 };
 
 // =============================================================================
@@ -342,14 +342,28 @@ impl BibitemNotesStore for PgBibitemNotesStore<'_> {
     async fn upsert_bibitem_notes(
         &self,
         bibitem_id: i64,
-        notes: &serde_json::Value,
+        notes: &BibitemNotesData<'_>,
     ) -> Result<(), HexforgeError> {
         query(
-            "INSERT INTO bibitem_notes (bibitem_id, notes) VALUES ($1, $2) \
-             ON CONFLICT (bibitem_id) DO UPDATE SET notes = EXCLUDED.notes, updated_at = NOW()",
+            "INSERT INTO bibitem_notes \
+             (bibitem_id, note_perso, note_stock, note_missing, change_request, dltc_copyediting_note, todo_general) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7) \
+             ON CONFLICT (bibitem_id) DO UPDATE SET \
+             note_perso = EXCLUDED.note_perso, \
+             note_stock = EXCLUDED.note_stock, \
+             note_missing = EXCLUDED.note_missing, \
+             change_request = EXCLUDED.change_request, \
+             dltc_copyediting_note = EXCLUDED.dltc_copyediting_note, \
+             todo_general = EXCLUDED.todo_general, \
+             updated_at = NOW()",
         )
         .bind(bibitem_id)
-        .bind(notes)
+        .bind(notes.note_perso)
+        .bind(notes.note_stock)
+        .bind(notes.note_missing)
+        .bind(notes.change_request)
+        .bind(notes.dltc_copyediting_note)
+        .bind(notes.todo_general)
         .execute(self.pool)
         .await
         .map_err(HexforgeError::data_source)?;
