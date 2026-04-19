@@ -1087,7 +1087,7 @@ async fn test_import_bibitem_notes_requires_auth() {
     let app = TestApp::spawn().await;
     let form = reqwest::multipart::Form::new().part(
         "file",
-        reqwest::multipart::Part::bytes(b"bibitem_id,notes\n1,[]".to_vec())
+        reqwest::multipart::Part::bytes(b"bibitem_id,note_perso\n1,hello".to_vec())
             .file_name("test.csv")
             .mime_str("text/csv")
             .unwrap(),
@@ -1119,7 +1119,7 @@ async fn test_import_bibitem_notes_happy_path() {
         .unwrap();
     let bib_id = bib["id"].as_i64().unwrap();
 
-    let csv = format!("bibitem_id,notes\n{bib_id},[]");
+    let csv = format!("bibitem_id,note_perso\n{bib_id},a personal note");
     let resp = upload_csv(&app, "/api/v1/admin/import/bibitem-notes", &csv).await;
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.unwrap();
@@ -1130,6 +1130,7 @@ async fn test_import_bibitem_notes_happy_path() {
     let zip = snapshot_bytes(&app).await;
     let notes_csv = zip_file_content(&zip, "bibitem_notes/all.csv");
     assert!(notes_csv.contains(&bib_id.to_string()));
+    assert!(notes_csv.contains("a personal note"));
 }
 
 #[tokio::test]
@@ -1150,17 +1151,17 @@ async fn test_import_bibitem_notes_upsert_updates_existing() {
     let bib_id = bib["id"].as_i64().unwrap();
 
     // First import
-    let csv1 = format!("bibitem_id,notes\n{bib_id},[]");
+    let csv1 = format!("bibitem_id,note_perso\n{bib_id},first note");
     upload_csv(&app, "/api/v1/admin/import/bibitem-notes", &csv1).await;
 
-    // Second import with different notes — should upsert
-    let csv2 = format!("bibitem_id,notes\n{bib_id},[{{}}]");
+    // Second import with different note — should upsert
+    let csv2 = format!("bibitem_id,note_perso\n{bib_id},updated note");
     let resp = upload_csv(&app, "/api/v1/admin/import/bibitem-notes", &csv2).await;
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["failed"], 0);
 
-    // Snapshot should show only one row for this bibitem
+    // Snapshot should show only one row for this bibitem with the updated note
     let zip = snapshot_bytes(&app).await;
     let notes_csv = zip_file_content(&zip, "bibitem_notes/all.csv");
     let count = notes_csv
@@ -1168,12 +1169,13 @@ async fn test_import_bibitem_notes_upsert_updates_existing() {
         .filter(|l| l.contains(&bib_id.to_string()))
         .count();
     assert_eq!(count, 1, "upsert must not create a duplicate row");
+    assert!(notes_csv.contains("updated note"));
 }
 
 #[tokio::test]
 async fn test_import_bibitem_notes_missing_bibitem_id() {
     let app = TestApp::spawn().await;
-    let csv = "bibitem_id,notes\n99993,[]";
+    let csv = "bibitem_id,note_perso\n99993,some note";
     let resp = upload_csv(&app, "/api/v1/admin/import/bibitem-notes", csv).await;
     assert!(
         resp.status() == 400 || resp.status() == 422,
@@ -1183,7 +1185,7 @@ async fn test_import_bibitem_notes_missing_bibitem_id() {
 }
 
 #[tokio::test]
-async fn test_import_bibitem_notes_invalid_json() {
+async fn test_import_bibitem_notes_multiple_columns() {
     let app = TestApp::spawn().await;
     let s = unique_suffix();
 
@@ -1199,12 +1201,20 @@ async fn test_import_bibitem_notes_invalid_json() {
         .unwrap();
     let bib_id = bib["id"].as_i64().unwrap();
 
-    let csv = format!("bibitem_id,notes\n{bib_id},not-valid-json");
+    let csv = format!(
+        "bibitem_id,note_perso,note_stock,change_request\n{bib_id},perso note,stock note,fix this"
+    );
     let resp = upload_csv(&app, "/api/v1/admin/import/bibitem-notes", &csv).await;
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(body["failed"], 1);
-    assert_eq!(body["imported"], 0);
+    assert_eq!(body["imported"], 1);
+    assert_eq!(body["failed"], 0);
+
+    let zip = snapshot_bytes(&app).await;
+    let notes_csv = zip_file_content(&zip, "bibitem_notes/all.csv");
+    assert!(notes_csv.contains("perso note"));
+    assert!(notes_csv.contains("stock note"));
+    assert!(notes_csv.contains("fix this"));
 }
 
 // ============================================================================
