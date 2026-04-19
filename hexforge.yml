@@ -398,6 +398,20 @@ models:
         target: BibItem
         extra_columns:
           - { name: ref_type, type: "RefType", primary_key: true }
+      further_refs:
+        type: many_to_many
+        through: bibitem_further_refs
+        local_fk: source_id
+        foreign_fk: dep_id
+        target: BibItem
+        internal: true
+      depends_on:
+        type: many_to_many
+        through: bibitem_depends_on
+        local_fk: source_id
+        foreign_fk: dep_id
+        target: BibItem
+        internal: true
 
     filters:
       entry_type: { op: eq_cast, column: "entry_type::entry_type" }

@@ -198,6 +198,20 @@ CREATE TABLE bibitem_authors (
 );
 CREATE INDEX idx_bibitem_authors_author_id ON bibitem_authors(author_id);
 
+CREATE TABLE bibitem_depends_on (
+    source_id BIGINT NOT NULL REFERENCES bibitems(id) ON DELETE CASCADE,
+    dep_id BIGINT NOT NULL REFERENCES bibitems(id) ON DELETE RESTRICT,
+    PRIMARY KEY (source_id, dep_id)
+);
+CREATE INDEX idx_bibitem_depends_on_dep_id ON bibitem_depends_on(dep_id);
+
+CREATE TABLE bibitem_further_refs (
+    source_id BIGINT NOT NULL REFERENCES bibitems(id) ON DELETE CASCADE,
+    dep_id BIGINT NOT NULL REFERENCES bibitems(id) ON DELETE RESTRICT,
+    PRIMARY KEY (source_id, dep_id)
+);
+CREATE INDEX idx_bibitem_further_refs_dep_id ON bibitem_further_refs(dep_id);
+
 CREATE TABLE bibitem_keywords (
     bibitem_id BIGINT NOT NULL REFERENCES bibitems(id) ON DELETE CASCADE,
     keyword_id BIGINT NOT NULL REFERENCES keywords(id) ON DELETE RESTRICT,

@@ -4,7 +4,7 @@ use hexforge::db_exports::{PgPool, query};
 pub async fn wipe_tables(pool: &PgPool) -> Result<(), HexforgeError> {
     query(
         "TRUNCATE TABLE \
-         bibitem_notes, bibitem_refs, bibitem_keywords, bibitem_authors, \
+         bibitem_further_refs, bibitem_depends_on, bibitem_notes, bibitem_refs, bibitem_keywords, bibitem_authors, \
          bibitems, authors, journals, publishers, institutions, schools, series, keywords, \
          data_version",
     )

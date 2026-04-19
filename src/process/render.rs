@@ -68,6 +68,14 @@ pub trait RenderEntityFetcher: Send + Sync {
     ) -> impl Future<Output = Result<HashMap<i64, String>, HexforgeError>> + Send;
 }
 
+/// Contract for fetching transitive further-ref dep IDs for a set of source IDs.
+pub trait TransitiveDepsResolver: Send + Sync {
+    fn fetch_further_ref_ids(
+        &self,
+        source_ids: &[i64],
+    ) -> impl Future<Output = Result<Vec<i64>, HexforgeError>> + Send;
+}
+
 /// Contract for batch-fetching author junction data and author entities.
 pub trait RenderAuthorFetcher: Send + Sync {
     fn fetch_bibitem_authors(
@@ -89,6 +97,12 @@ pub trait RenderAuthorFetcher: Send + Sync {
 pub enum RenderSelection {
     ByIds(Vec<i64>),
     ByBibkeys(Vec<String>),
+}
+
+/// Rendered output from the render pipeline.
+pub struct RenderResponse {
+    pub main_html: String,
+    pub further_refs_html: Option<String>,
 }
 
 /// Maximum number of items per render request.
@@ -120,13 +134,15 @@ impl From<HexforgeError> for RenderPipelineError {
 
 /// Full render pipeline: validate → resolve → fetch → build contexts → sort → render.
 ///
-/// Returns rendered HTML or a typed error for the handler to map to HTTP.
+/// Returns a `RenderResponse` or a typed error for the handler to map to HTTP.
 pub async fn render_pipeline(
     resolver: &impl BibitemResolver,
     entity_fetcher: &impl RenderEntityFetcher,
     author_fetcher: &impl RenderAuthorFetcher,
+    deps_resolver: &impl TransitiveDepsResolver,
     selection: RenderSelection,
-) -> Result<String, RenderPipelineError> {
+    include_further_refs: bool,
+) -> Result<RenderResponse, RenderPipelineError> {
     // Validate count
     let count = match &selection {
         RenderSelection::ByIds(ids) => ids.len(),
@@ -139,7 +155,10 @@ pub async fn render_pipeline(
         });
     }
     if count == 0 {
-        return Ok(String::new());
+        return Ok(RenderResponse {
+            main_html: String::new(),
+            further_refs_html: None,
+        });
     }
 
     // Resolve bibitems
@@ -172,9 +191,30 @@ pub async fn render_pipeline(
         }
     };
 
-    // Fetch related data, build contexts, sort, render
-    let html = fetch_and_render(entity_fetcher, author_fetcher, bibitems).await?;
-    Ok(html)
+    let main_ids: Vec<i64> = bibitems.iter().map(|b| b.id).collect();
+    let main_html = fetch_and_render(entity_fetcher, author_fetcher, bibitems).await?;
+
+    let further_refs_html = if include_further_refs {
+        let main_id_set: HashSet<i64> = main_ids.iter().copied().collect();
+        let dep_ids = deps_resolver.fetch_further_ref_ids(&main_ids).await?;
+        let novel_dep_ids: Vec<i64> = dep_ids
+            .into_iter()
+            .filter(|id| !main_id_set.contains(id))
+            .collect();
+        if novel_dep_ids.is_empty() {
+            Some(String::new())
+        } else {
+            let dep_bibitems = resolver.find_by_ids(&novel_dep_ids).await?;
+            Some(fetch_and_render(entity_fetcher, author_fetcher, dep_bibitems).await?)
+        }
+    } else {
+        None
+    };
+
+    Ok(RenderResponse {
+        main_html,
+        further_refs_html,
+    })
 }
 
 // =============================================================================

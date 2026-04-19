@@ -139,8 +139,6 @@ pub struct ParsedBibRow {
 
     // Bibitem references (bibkeys, not IDs)
     pub crossref_bibkey: Option<String>,
-    pub further_ref_bibkeys: Vec<String>,
-    pub depends_on_bibkeys: Vec<String>,
 
     // Keywords (names, not IDs)
     pub keywords: ParsedKeywords,

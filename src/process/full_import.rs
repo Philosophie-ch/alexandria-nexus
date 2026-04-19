@@ -12,7 +12,7 @@ use std::future::Future;
 
 use hexforge::{DataSource, HexforgeError};
 
-use crate::domain::junctions::{BibitemAuthorsRow, BibitemKeywordsRow, BibitemRefsRow};
+use crate::domain::junctions::{BibitemAuthorsRow, BibitemKeywordsRow};
 use crate::domain::{
     BibItem, CreateInstitution, CreateKeyword, CreateSchool, CreateSeries,
     create_bib_item_transform, create_institution_transform, create_keyword_transform,
@@ -25,7 +25,6 @@ use crate::logic::full_import::{
     LookupMaps, NamedEntityKind, ResolutionCtx, RowError, ValidationReport,
     assemble_validation_report, build_bibitem_dto, build_export_record,
     collect_author_junction_rows, collect_keyword_junction_rows, collect_ref_rows, generate_key,
-    parse_all_rows,
 };
 use crate::validation::{
     validate_create_bibitem, validate_create_institution, validate_create_keyword,
@@ -43,11 +42,21 @@ pub trait AuthorLookup: Send + Sync {
     ) -> impl Future<Output = Result<AuthorLookupResult, HexforgeError>> + Send;
 }
 
+/// Which named-entity table to query (journals, publishers, institutions, schools, series).
+#[derive(Debug, Clone, Copy)]
+pub enum NamedEntity {
+    Journals,
+    Publishers,
+    Institutions,
+    Schools,
+    Series,
+}
+
 /// Contract for batch-looking up entities by name_latex.
 pub trait EntityLookup: Send + Sync {
-    fn batch_lookup_by_name_latex(
+    fn batch_lookup_named_entity(
         &self,
-        table: &str,
+        entity: NamedEntity,
     ) -> impl Future<Output = Result<HashMap<String, i64>, HexforgeError>> + Send;
 }
 
@@ -100,6 +109,15 @@ pub trait BulkJunctionInsert: Send + Sync {
     ) -> impl Future<Output = Result<(), HexforgeError>> + Send;
 }
 
+/// Contract for computing and storing the transitive closure of ref edges.
+///
+/// Returns `(further_refs_inserted, depends_on_inserted)`.
+pub trait TransitiveDepsComputer: Send + Sync {
+    fn compute_transitive_deps(
+        &self,
+    ) -> impl Future<Output = Result<(usize, usize), HexforgeError>> + Send;
+}
+
 /// Contract for fetching all bibitems (for export).
 pub trait FullCsvBibitemFetcher: Send + Sync {
     fn fetch_all_bibitems(
@@ -116,9 +134,9 @@ pub trait AuthorNameFetcher: Send + Sync {
 
 /// Contract for fetching reverse name maps (id -> name_latex) for entity tables.
 pub trait ReverseNameMapFetcher: Send + Sync {
-    fn fetch_reverse_name_map(
+    fn fetch_entity_name_map(
         &self,
-        table: &str,
+        entity: NamedEntity,
     ) -> impl Future<Output = Result<HashMap<i64, String>, HexforgeError>> + Send;
 }
 
@@ -140,11 +158,6 @@ pub trait FullCsvJunctionFetcher: Send + Sync {
         &self,
         ids: &[i64],
     ) -> impl Future<Output = Result<Vec<BibitemKeywordsRow>, HexforgeError>> + Send;
-
-    fn fetch_bibitem_refs_batch(
-        &self,
-        ids: &[i64],
-    ) -> impl Future<Output = Result<Vec<BibitemRefsRow>, HexforgeError>> + Send;
 }
 
 // =============================================================================
@@ -160,15 +173,21 @@ async fn build_lookup_maps(
 ) -> Result<LookupMaps, HexforgeError> {
     Ok(LookupMaps {
         authors: author_lookup.batch_lookup_authors().await?,
-        journals: entity_lookup.batch_lookup_by_name_latex("journals").await?,
+        journals: entity_lookup
+            .batch_lookup_named_entity(NamedEntity::Journals)
+            .await?,
         publishers: entity_lookup
-            .batch_lookup_by_name_latex("publishers")
+            .batch_lookup_named_entity(NamedEntity::Publishers)
             .await?,
         institutions: entity_lookup
-            .batch_lookup_by_name_latex("institutions")
+            .batch_lookup_named_entity(NamedEntity::Institutions)
             .await?,
-        schools: entity_lookup.batch_lookup_by_name_latex("schools").await?,
-        series: entity_lookup.batch_lookup_by_name_latex("series").await?,
+        schools: entity_lookup
+            .batch_lookup_named_entity(NamedEntity::Schools)
+            .await?,
+        series: entity_lookup
+            .batch_lookup_named_entity(NamedEntity::Series)
+            .await?,
         keywords: keyword_lookup.batch_lookup_keywords().await?,
         bibkeys: bibkey_lookup.fetch_all_bibkeys().await?,
     })
@@ -178,35 +197,29 @@ async fn build_lookup_maps(
 // Validate endpoint orchestration
 // =============================================================================
 
-/// Parse and validate a full CSV, checking all references against the database.
-/// Returns a validation report. Does NOT modify anything.
-pub async fn validate_full_csv(
+/// Validate parsed rows against the database. Returns a validation report. Does NOT modify anything.
+pub async fn validate_import(
     author_lookup: &impl AuthorLookup,
     entity_lookup: &impl EntityLookup,
     keyword_lookup: &impl KeywordLookup,
     bibkey_lookup: &impl BibkeyLookup,
-    data: &[u8],
+    rows: &[ParsedBibRow],
+    row_errors: Vec<RowError>,
 ) -> Result<ValidationReport, HexforgeError> {
-    // 1. Parse all rows (pure)
-    let (parsed_rows, row_errors) = parse_all_rows(data)?;
-
-    // 2. Batch DB lookups
     let maps =
         build_lookup_maps(author_lookup, entity_lookup, keyword_lookup, bibkey_lookup).await?;
-
-    // 3. Assemble report (pure)
-    Ok(assemble_validation_report(&parsed_rows, row_errors, &maps))
+    Ok(assemble_validation_report(rows, row_errors, &maps))
 }
 
 // =============================================================================
 // Import entities orchestration
 // =============================================================================
 
-/// Parse CSV, find entities referenced but not in DB, and create them.
+/// Find entities referenced in rows but not in DB, and create them.
 /// Only creates institutions, schools, series, and keywords.
 /// Authors, journals, and publishers must be imported separately.
 #[allow(clippy::too_many_arguments)]
-pub async fn import_entities_from_full_csv(
+pub async fn import_entities(
     author_lookup: &impl AuthorLookup,
     entity_lookup: &impl EntityLookup,
     keyword_lookup: &impl KeywordLookup,
@@ -219,12 +232,10 @@ pub async fn import_entities_from_full_csv(
     school_ds: &impl DataSource<crate::domain::School, Id = i64, Error = hexforge::DataSourceError>,
     series_ds: &impl DataSource<crate::domain::Series, Id = i64, Error = hexforge::DataSourceError>,
     keyword_ds: &impl DataSource<crate::domain::Keyword, Id = i64, Error = hexforge::DataSourceError>,
-    data: &[u8],
+    rows: &[ParsedBibRow],
 ) -> Result<EntityImportReport, HexforgeError> {
-    let (parsed_rows, _) = parse_all_rows(data)?;
-
     let mut collected = CollectedNames::default();
-    for row in &parsed_rows {
+    for row in rows {
         collected.collect_from_row(row);
     }
 
@@ -248,7 +259,7 @@ pub async fn import_entities_from_full_csv(
         match create_named_entity_institution(&key, name, institution_ds).await {
             Ok(()) => report.created_institutions += 1,
             Err(e) => report.errors.push(EntityImportError {
-                entity_type: NamedEntityKind::Institution.label().to_string(),
+                entity_type: NamedEntityKind::Institution,
                 name: name.clone(),
                 error: e,
             }),
@@ -264,7 +275,7 @@ pub async fn import_entities_from_full_csv(
         match create_named_entity_school(&key, name, school_ds).await {
             Ok(()) => report.created_schools += 1,
             Err(e) => report.errors.push(EntityImportError {
-                entity_type: NamedEntityKind::School.label().to_string(),
+                entity_type: NamedEntityKind::School,
                 name: name.clone(),
                 error: e,
             }),
@@ -280,7 +291,7 @@ pub async fn import_entities_from_full_csv(
         match create_named_entity_series(&key, name, series_ds).await {
             Ok(()) => report.created_series += 1,
             Err(e) => report.errors.push(EntityImportError {
-                entity_type: NamedEntityKind::Series.label().to_string(),
+                entity_type: NamedEntityKind::Series,
                 name: name.clone(),
                 error: e,
             }),
@@ -293,7 +304,7 @@ pub async fn import_entities_from_full_csv(
             match create_keyword(kw, 1, keyword_ds).await {
                 Ok(()) => report.created_keywords += 1,
                 Err(e) => report.errors.push(EntityImportError {
-                    entity_type: "keyword".to_string(),
+                    entity_type: NamedEntityKind::Keyword,
                     name: format!("{kw} (level 1)"),
                     error: e,
                 }),
@@ -305,7 +316,7 @@ pub async fn import_entities_from_full_csv(
             match create_keyword(kw, 2, keyword_ds).await {
                 Ok(()) => report.created_keywords += 1,
                 Err(e) => report.errors.push(EntityImportError {
-                    entity_type: "keyword".to_string(),
+                    entity_type: NamedEntityKind::Keyword,
                     name: format!("{kw} (level 2)"),
                     error: e,
                 }),
@@ -317,7 +328,7 @@ pub async fn import_entities_from_full_csv(
             match create_keyword(kw, 3, keyword_ds).await {
                 Ok(()) => report.created_keywords += 1,
                 Err(e) => report.errors.push(EntityImportError {
-                    entity_type: "keyword".to_string(),
+                    entity_type: NamedEntityKind::Keyword,
                     name: format!("{kw} (level 3)"),
                     error: e,
                 }),
@@ -397,17 +408,30 @@ async fn create_keyword(
 }
 
 // =============================================================================
+// Recompute transitive deps orchestration
+// =============================================================================
+
+/// Truncate and recompute all transitive dependency tables from `bibitem_refs`.
+///
+/// Returns `(further_refs_inserted, depends_on_inserted)`.
+pub async fn recompute_transitive_deps(
+    deps_computer: &impl TransitiveDepsComputer,
+) -> Result<(usize, usize), HexforgeError> {
+    deps_computer.compute_transitive_deps().await
+}
+
+// =============================================================================
 // Import bibitems (full source-of-truth import) orchestration
 // =============================================================================
 
 #[allow(clippy::too_many_arguments)]
-/// Parse CSV, resolve all names to IDs, bulk-upsert bibitems + junctions.
-/// CSV is source of truth: bibitems in DB but not in CSV get deleted if `delete_stale=true`.
+/// Resolve all names to IDs, bulk-upsert bibitems + junctions.
+/// Rows are the source of truth: bibitems in DB but not in rows get deleted if `delete_stale=true`.
 ///
 /// Hard errors (duplicate bibkeys, unresolved entity references, ambiguous authors) return a
 /// 422 ValidationFailed. Soft issues (missing cross-bibitem refs, missing keywords) are
 /// skipped per-row — check the validate endpoint for the full picture.
-pub async fn import_full_csv(
+pub async fn import_bibitems(
     author_lookup: &impl AuthorLookup,
     entity_lookup: &impl EntityLookup,
     keyword_lookup: &impl KeywordLookup,
@@ -415,24 +439,26 @@ pub async fn import_full_csv(
     bibitem_deleter: &impl BibitemDeleter,
     bulk_inserter: &impl BulkBibitemInsert,
     bulk_junction: &impl BulkJunctionInsert,
-    data: &[u8],
+    transitive_deps: &impl TransitiveDepsComputer,
+    rows: Vec<ParsedBibRow>,
+    row_errors: Vec<RowError>,
     delete_stale: bool,
 ) -> Result<FullImportResult, HexforgeError> {
     // 1. Validate — block only on hard errors (duplicate bibkeys)
-    let report = validate_full_csv(
+    let report = validate_import(
         author_lookup,
         entity_lookup,
         keyword_lookup,
         bibkey_lookup,
-        data,
+        &rows,
+        row_errors,
     )
     .await?;
     if report.has_hard_errors() {
         return Ok(FullImportResult::ValidationFailed(Box::new(report)));
     }
 
-    // 2. Parse all rows (row-level parse errors are skipped, not blocking)
-    let (parsed_rows, _) = parse_all_rows(data)?;
+    let parsed_rows = rows;
 
     // 3. Build resolution context
     let mut csv_bibkeys = HashSet::new();
@@ -500,6 +526,7 @@ pub async fn import_full_csv(
         .bulk_insert_keyword_junctions(&keyword_rows)
         .await?;
     bulk_junction.bulk_insert_bibitem_refs(&ref_rows).await?;
+    transitive_deps.compute_transitive_deps().await?;
 
     Ok(FullImportResult::Success(FullImportReport {
         imported,
@@ -563,7 +590,7 @@ fn build_all_bibitem_entities(
 /// Returns one `Vec<String>` per bibitem (fields in column order). The caller
 /// is responsible for serialising to whatever output format is needed (CSV,
 /// JSON, etc.).
-pub async fn export_full_csv(
+pub async fn fetch_export_rows(
     bibitem_fetcher: &impl FullCsvBibitemFetcher,
     author_name_fetcher: &impl AuthorNameFetcher,
     reverse_name_fetcher: &impl ReverseNameMapFetcher,
@@ -576,19 +603,19 @@ pub async fn export_full_csv(
     // Build reverse lookup maps (ID -> name)
     let author_names = author_name_fetcher.fetch_author_names().await?;
     let journal_names = reverse_name_fetcher
-        .fetch_reverse_name_map("journals")
+        .fetch_entity_name_map(NamedEntity::Journals)
         .await?;
     let publisher_names = reverse_name_fetcher
-        .fetch_reverse_name_map("publishers")
+        .fetch_entity_name_map(NamedEntity::Publishers)
         .await?;
     let institution_names = reverse_name_fetcher
-        .fetch_reverse_name_map("institutions")
+        .fetch_entity_name_map(NamedEntity::Institutions)
         .await?;
     let school_names = reverse_name_fetcher
-        .fetch_reverse_name_map("schools")
+        .fetch_entity_name_map(NamedEntity::Schools)
         .await?;
     let series_names = reverse_name_fetcher
-        .fetch_reverse_name_map("series")
+        .fetch_entity_name_map(NamedEntity::Series)
         .await?;
 
     // Keywords by ID
@@ -606,7 +633,6 @@ pub async fn export_full_csv(
     let bib_keywords = junction_fetcher
         .fetch_bibitem_keywords_batch(&bib_ids)
         .await?;
-    let bib_refs = junction_fetcher.fetch_bibitem_refs_batch(&bib_ids).await?;
 
     // Index junction data by bibitem_id
     let mut authors_by_bib: HashMap<i64, Vec<&BibitemAuthorsRow>> = HashMap::new();
@@ -616,10 +642,6 @@ pub async fn export_full_csv(
     let mut keywords_by_bib: HashMap<i64, Vec<&BibitemKeywordsRow>> = HashMap::new();
     for row in &bib_keywords {
         keywords_by_bib.entry(row.bibitem_id).or_default().push(row);
-    }
-    let mut refs_by_bib: HashMap<i64, Vec<&BibitemRefsRow>> = HashMap::new();
-    for row in &bib_refs {
-        refs_by_bib.entry(row.source_id).or_default().push(row);
     }
 
     let export_ctx = ExportContext {
@@ -633,7 +655,6 @@ pub async fn export_full_csv(
         bibkey_by_id: &bibkey_by_id,
         authors_by_bib: &authors_by_bib,
         keywords_by_bib: &keywords_by_bib,
-        refs_by_bib: &refs_by_bib,
     };
 
     let rows = bibitems

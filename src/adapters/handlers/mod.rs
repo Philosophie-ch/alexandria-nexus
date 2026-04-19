@@ -14,7 +14,8 @@ pub use export::{
     export_publishers, export_schools, export_series,
 };
 pub use full_import::{
-    export_full_csv, import_entities_from_full_csv, import_full_csv, validate_full_csv,
+    export_full_csv, import_entities_from_full_csv, import_full_csv, recompute_deps,
+    validate_full_csv,
 };
 pub use import::{
     import_author_name_variants, import_authors, import_bibitem_notes, import_bibitem_refs,

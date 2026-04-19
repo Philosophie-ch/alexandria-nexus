@@ -12,7 +12,9 @@ use crate::adapters::db::queries::junctions::fetch_bibitem_authors_batch;
 use crate::adapters::db::queries::{AuthorQuery, BibItemQuery};
 use crate::domain::junctions::BibitemAuthorsRow;
 use crate::domain::{Author, BibItem};
-use crate::process::render::{BibitemResolver, RenderAuthorFetcher, RenderEntityFetcher};
+use crate::process::render::{
+    BibitemResolver, RenderAuthorFetcher, RenderEntityFetcher, TransitiveDepsResolver,
+};
 
 // =============================================================================
 // Shared SQL helper
@@ -173,5 +175,38 @@ impl RenderAuthorFetcher for PgRenderAuthorFetcher<'_> {
             .await
             .map_err(HexforgeError::data_source)?;
         Ok(authors.into_iter().map(|a| (a.id, a)).collect())
+    }
+}
+
+// =============================================================================
+// TransitiveDepsResolver
+// =============================================================================
+
+pub struct PgTransitiveDepsResolver<'a> {
+    pool: &'a PgPool,
+}
+
+impl<'a> PgTransitiveDepsResolver<'a> {
+    pub fn new(pool: &'a PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+impl TransitiveDepsResolver for PgTransitiveDepsResolver<'_> {
+    async fn fetch_further_ref_ids(&self, source_ids: &[i64]) -> Result<Vec<i64>, HexforgeError> {
+        if source_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        #[derive(FromRow)]
+        struct DepRow {
+            dep_id: i64,
+        }
+        let rows: Vec<DepRow> =
+            query_as("SELECT DISTINCT dep_id FROM bibitem_further_refs WHERE source_id = ANY($1)")
+                .bind(source_ids)
+                .fetch_all(self.pool)
+                .await
+                .map_err(HexforgeError::data_source)?;
+        Ok(rows.into_iter().map(|r| r.dep_id).collect())
     }
 }

@@ -8,16 +8,17 @@ use std::collections::{HashMap, HashSet};
 use hexforge::HexforgeError;
 use hexforge::db_exports::{FromRow, PgPool, query, query_as};
 
-use crate::domain::junctions::{BibitemAuthorsRow, BibitemKeywordsRow, BibitemRefsRow};
-use crate::domain::{BibItem, Epoch, LangId, PubState};
+use crate::domain::junctions::{BibitemAuthorsRow, BibitemKeywordsRow};
+use crate::domain::{BibItem, Epoch, LangId, PubState, RefType};
 use crate::logic::full_import::{
     AuthorJunctionRow, AuthorLookupResult, AuthorNameKey, BibitemRefInsertRow, KeywordJunctionRow,
     VariantInfo, parse_variant_to_keys,
 };
+use crate::logic::transitive_closure::transitive_closure;
 use crate::process::full_import::{
     AuthorLookup, AuthorNameFetcher, BibitemDeleter, BibkeyLookup, BulkBibitemInsert,
     BulkJunctionInsert, EntityLookup, FullCsvBibitemFetcher, FullCsvJunctionFetcher, KeywordLookup,
-    KeywordNameFetcher, ReverseNameMapFetcher,
+    KeywordNameFetcher, NamedEntity, ReverseNameMapFetcher, TransitiveDepsComputer,
 };
 
 // =============================================================================
@@ -143,16 +144,22 @@ impl AuthorLookup for PgFullImportStore<'_> {
 // =============================================================================
 
 impl EntityLookup for PgFullImportStore<'_> {
-    async fn batch_lookup_by_name_latex(
+    async fn batch_lookup_named_entity(
         &self,
-        table: &str,
+        entity: NamedEntity,
     ) -> Result<HashMap<String, i64>, HexforgeError> {
+        let table = match entity {
+            NamedEntity::Journals => "journals",
+            NamedEntity::Publishers => "publishers",
+            NamedEntity::Institutions => "institutions",
+            NamedEntity::Schools => "schools",
+            NamedEntity::Series => "series",
+        };
         let sql = format!("SELECT id, name_latex FROM {table}");
         let rows: Vec<NameIdRow> = query_as(&sql)
             .fetch_all(self.pool)
             .await
             .map_err(HexforgeError::data_source)?;
-
         Ok(rows.into_iter().map(|r| (r.name_latex, r.id)).collect())
     }
 }
@@ -571,10 +578,17 @@ impl AuthorNameFetcher for PgFullImportStore<'_> {
 // =============================================================================
 
 impl ReverseNameMapFetcher for PgFullImportStore<'_> {
-    async fn fetch_reverse_name_map(
+    async fn fetch_entity_name_map(
         &self,
-        table: &str,
+        entity: NamedEntity,
     ) -> Result<HashMap<i64, String>, HexforgeError> {
+        let table = match entity {
+            NamedEntity::Journals => "journals",
+            NamedEntity::Publishers => "publishers",
+            NamedEntity::Institutions => "institutions",
+            NamedEntity::Schools => "schools",
+            NamedEntity::Series => "series",
+        };
         let sql = format!("SELECT id, name_latex FROM {table}");
         let rows: Vec<NameIdRow> = query_as(&sql)
             .fetch_all(self.pool)
@@ -605,6 +619,70 @@ impl KeywordNameFetcher for PgFullImportStore<'_> {
 // FullCsvJunctionFetcher
 // =============================================================================
 
+impl TransitiveDepsComputer for PgFullImportStore<'_> {
+    async fn compute_transitive_deps(&self) -> Result<(usize, usize), HexforgeError> {
+        query("TRUNCATE bibitem_further_refs, bibitem_depends_on")
+            .execute(self.pool)
+            .await
+            .map_err(HexforgeError::data_source)?;
+
+        let further = compute_and_insert_closure(self.pool, RefType::FurtherRef).await?;
+        let depends = compute_and_insert_closure(self.pool, RefType::DependsOn).await?;
+        Ok((further, depends))
+    }
+}
+
+async fn compute_and_insert_closure(
+    pool: &hexforge::db_exports::PgPool,
+    ref_type: RefType,
+) -> Result<usize, HexforgeError> {
+    let table = match ref_type {
+        RefType::FurtherRef => "bibitem_further_refs",
+        RefType::DependsOn => "bibitem_depends_on",
+    };
+
+    #[derive(FromRow)]
+    struct RefEdge {
+        source_id: i64,
+        target_id: i64,
+    }
+
+    let raw: Vec<RefEdge> =
+        query_as("SELECT source_id, target_id FROM bibitem_refs WHERE ref_type = $1::ref_type")
+            .bind(ref_type.to_string())
+            .fetch_all(pool)
+            .await
+            .map_err(HexforgeError::data_source)?;
+
+    if raw.is_empty() {
+        return Ok(0);
+    }
+
+    let edges: Vec<(i64, i64)> = raw
+        .into_iter()
+        .map(|e| (e.source_id, e.target_id))
+        .collect();
+    let closure = transitive_closure(&edges);
+    if closure.is_empty() {
+        return Ok(0);
+    }
+
+    let source_ids: Vec<i64> = closure.iter().map(|&(s, _)| s).collect();
+    let dep_ids: Vec<i64> = closure.iter().map(|&(_, d)| d).collect();
+    let sql = format!(
+        "INSERT INTO {table} (source_id, dep_id) \
+         SELECT * FROM UNNEST($1::bigint[], $2::bigint[]) ON CONFLICT DO NOTHING"
+    );
+    let rows = query(&sql)
+        .bind(&source_ids[..])
+        .bind(&dep_ids[..])
+        .execute(pool)
+        .await
+        .map_err(HexforgeError::data_source)?
+        .rows_affected();
+    Ok(usize::try_from(rows).unwrap_or(usize::MAX))
+}
+
 impl FullCsvJunctionFetcher for PgFullImportStore<'_> {
     async fn fetch_bibitem_authors_batch(
         &self,
@@ -627,20 +705,6 @@ impl FullCsvJunctionFetcher for PgFullImportStore<'_> {
         query_as::<_, BibitemKeywordsRow>(
             "SELECT bibitem_id, keyword_id, keyword_level \
              FROM bibitem_keywords WHERE bibitem_id = ANY($1) ORDER BY bibitem_id",
-        )
-        .bind(ids)
-        .fetch_all(self.pool)
-        .await
-        .map_err(HexforgeError::data_source)
-    }
-
-    async fn fetch_bibitem_refs_batch(
-        &self,
-        ids: &[i64],
-    ) -> Result<Vec<BibitemRefsRow>, HexforgeError> {
-        query_as::<_, BibitemRefsRow>(
-            "SELECT source_id, target_id, ref_type::text as ref_type \
-             FROM bibitem_refs WHERE source_id = ANY($1) ORDER BY source_id, ref_type",
         )
         .bind(ids)
         .fetch_all(self.pool)

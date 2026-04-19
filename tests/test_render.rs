@@ -96,32 +96,24 @@ async fn test_render_single_article() {
         .await;
     assert_eq!(resp.status(), 200);
 
-    let content_type = resp
-        .headers()
-        .get("content-type")
-        .unwrap()
-        .to_str()
-        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let html = body["main_html"]
+        .as_str()
+        .expect("main_html should be a string");
+    assert!(html.contains("data-type=\"article\""), "entry type present");
     assert!(
-        content_type.contains("text/html"),
-        "Expected text/html, got {content_type}"
-    );
-
-    let body = resp.text().await.unwrap();
-    assert!(body.contains("data-type=\"article\""), "entry type present");
-    assert!(
-        body.contains(&format!("data-bibkey=\"smith-{suffix}\"")),
+        html.contains(&format!("data-bibkey=\"smith-{suffix}\"")),
         "bibkey present"
     );
     assert!(
-        body.contains("class=\"smallcaps\">Smith</span>"),
+        html.contains("class=\"smallcaps\">Smith</span>"),
         "author in smallcaps"
     );
     assert!(
-        body.contains("data-field=\"date\">2024</span>"),
+        html.contains("data-field=\"date\">2024</span>"),
         "year present"
     );
-    assert!(body.contains("Some Title"), "title present");
+    assert!(html.contains("Some Title"), "title present");
 }
 
 // =============================================================================

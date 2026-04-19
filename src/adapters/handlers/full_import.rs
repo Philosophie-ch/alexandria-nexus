@@ -17,10 +17,16 @@ pub struct ImportFullCsvParams {
 
 use crate::adapters::full_import::PgFullImportStore;
 use crate::logic::full_import::{
-    EntityImportReport, FULL_CSV_HEADERS, FullImportResult, ValidationReport,
+    EntityImportReport, FullImportResult, ValidationReport, parse_all_rows,
 };
 use crate::process::full_import;
 use crate::state::AppState;
+
+const FULL_CSV_HEADERS: &str = "entry_type,bibkey,author,editor,_guesteditor,date,pubstate,title,\
+booktitle,journal,publisher,institution,school,series,volume,number,pages,eid,address,type,edition,\
+note,_issuetitle,_extra_note,crossref,\
+_kw_level1,_kw_level2,_kw_level3,_epoch,_langid,_lang_der,_person,\
+_has_link_to_full_text,shorthand,options,doi,url,eprint,urn";
 
 /// Validate a human-readable CSV without importing.
 /// `POST /api/v1/admin/validate-full-csv`
@@ -29,8 +35,10 @@ pub async fn validate_full_csv(
     multipart: Multipart,
 ) -> Result<Json<ValidationReport>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
+    let (rows, row_errors) = parse_all_rows(&data)?;
     let store = PgFullImportStore::new(state.pool.pool());
-    let report = full_import::validate_full_csv(&store, &store, &store, &store, &data).await?;
+    let report =
+        full_import::validate_import(&store, &store, &store, &store, &rows, row_errors).await?;
     Ok(Json(report))
 }
 
@@ -41,8 +49,9 @@ pub async fn import_entities_from_full_csv(
     multipart: Multipart,
 ) -> Result<Json<EntityImportReport>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
+    let (rows, _) = parse_all_rows(&data)?;
     let store = PgFullImportStore::new(state.pool.pool());
-    let report = full_import::import_entities_from_full_csv(
+    let report = full_import::import_entities(
         &store,
         &store,
         &store,
@@ -51,7 +60,7 @@ pub async fn import_entities_from_full_csv(
         &state.school_ds,
         &state.series_ds,
         &state.keyword_ds,
-        &data,
+        &rows,
     )
     .await?;
     Ok(Json(report))
@@ -68,8 +77,9 @@ pub async fn import_full_csv(
     multipart: Multipart,
 ) -> Result<Response, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
+    let (rows, row_errors) = parse_all_rows(&data)?;
     let store = PgFullImportStore::new(state.pool.pool());
-    let result = full_import::import_full_csv(
+    let result = full_import::import_bibitems(
         &store,
         &store,
         &store,
@@ -77,7 +87,9 @@ pub async fn import_full_csv(
         &store,
         &store,
         &store,
-        &data,
+        &store,
+        rows,
+        row_errors,
         params.delete_stale,
     )
     .await?;
@@ -89,11 +101,26 @@ pub async fn import_full_csv(
     }
 }
 
+/// Recompute transitive further-ref dependencies from `bibitem_refs`.
+/// `POST /api/v1/admin/recompute-deps`
+///
+/// Truncates `bibitem_further_refs` and repopulates it via recursive CTE.
+/// Use after manual edits to `bibitem_refs` without doing a full import.
+pub async fn recompute_deps(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, HexforgeError> {
+    let store = PgFullImportStore::new(state.pool.pool());
+    let (further_refs, depends_on) = full_import::recompute_transitive_deps(&store).await?;
+    Ok(Json(
+        serde_json::json!({ "further_refs": further_refs, "depends_on": depends_on }),
+    ))
+}
+
 /// Export all bibitems as a human-readable CSV matching the full import format.
 /// `POST /api/v1/admin/export-full-csv`
 pub async fn export_full_csv(State(state): State<AppState>) -> Result<Response, HexforgeError> {
     let store = PgFullImportStore::new(state.pool.pool());
-    let rows = full_import::export_full_csv(&store, &store, &store, &store, &store).await?;
+    let rows = full_import::fetch_export_rows(&store, &store, &store, &store, &store).await?;
 
     let mut wtr = csv::Writer::from_writer(Vec::new());
     wtr.write_record(FULL_CSV_HEADERS.split(','))

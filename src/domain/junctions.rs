@@ -15,6 +15,18 @@ pub struct BibitemAuthorsRow {
 }
 
 #[derive(Debug, Clone, FromRow)]
+pub struct BibitemDependsOnRow {
+    pub source_id: i64,
+    pub dep_id: i64,
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct BibitemFurtherRefsRow {
+    pub source_id: i64,
+    pub dep_id: i64,
+}
+
+#[derive(Debug, Clone, FromRow)]
 pub struct BibitemKeywordsRow {
     pub bibitem_id: i64,
     pub keyword_id: i64,

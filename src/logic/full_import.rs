@@ -14,6 +14,7 @@ use crate::logic::csv_parsing::types::{
     DateRangeSeparator, FieldError, ParsedAuthor, ParsedBibRow, ParsedDate, RowParseResult,
 };
 use crate::logic::csv_parsing::{CsvHeaders, parse_csv_row};
+use crate::logic::latex_citations::extract_cite_keys;
 
 // =============================================================================
 // Response types
@@ -117,7 +118,7 @@ pub struct EntityImportReport {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct EntityImportError {
-    pub entity_type: String,
+    pub entity_type: NamedEntityKind,
     pub name: String,
     pub error: String,
 }
@@ -307,21 +308,13 @@ impl ResolutionCtx {
 // Named entity kind
 // =============================================================================
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
 pub enum NamedEntityKind {
     Institution,
     School,
     Series,
-}
-
-impl NamedEntityKind {
-    pub fn label(&self) -> &'static str {
-        match self {
-            Self::Institution => "institutions",
-            Self::School => "schools",
-            Self::Series => "series",
-        }
-    }
+    Keyword,
 }
 
 // =============================================================================
@@ -380,11 +373,16 @@ impl CollectedNames {
             .extend(row.keywords.level_3.iter().cloned());
         if let Some(cr) = &row.crossref_bibkey {
             self.crossref_bibkeys.insert(cr.clone());
+            self.depends_on_bibkeys.insert(cr.clone());
         }
         self.further_ref_bibkeys
-            .extend(row.further_ref_bibkeys.iter().cloned());
-        self.depends_on_bibkeys
-            .extend(row.depends_on_bibkeys.iter().cloned());
+            .extend(extract_cite_keys(&row.title));
+        if let Some(note) = &row.note {
+            self.further_ref_bibkeys.extend(extract_cite_keys(note));
+        }
+        if let Some(extra) = &row.extra_note {
+            self.depends_on_bibkeys.extend(extract_cite_keys(extra));
+        }
     }
 }
 
@@ -709,12 +707,6 @@ pub fn assemble_validation_report(
 // Full CSV export helpers (pure)
 // =============================================================================
 
-pub const FULL_CSV_HEADERS: &str = "entry_type,bibkey,author,editor,_guesteditor,date,pubstate,title,\
-booktitle,journal,publisher,institution,school,series,volume,number,pages,eid,address,type,edition,\
-note,_issuetitle,_extra_note,crossref,_further_refs,_depends_on,\
-_kw_level1,_kw_level2,_kw_level3,_epoch,_langid,_lang_der,_person,\
-_has_link_to_full_text,shorthand,options,doi,url,eprint,urn";
-
 /// Pre-resolved lookup data for building CSV export records.
 pub struct ExportContext<'a> {
     pub author_names: &'a HashMap<i64, String>,
@@ -727,7 +719,6 @@ pub struct ExportContext<'a> {
     pub bibkey_by_id: &'a HashMap<i64, String>,
     pub authors_by_bib: &'a HashMap<i64, Vec<&'a crate::domain::junctions::BibitemAuthorsRow>>,
     pub keywords_by_bib: &'a HashMap<i64, Vec<&'a crate::domain::junctions::BibitemKeywordsRow>>,
-    pub refs_by_bib: &'a HashMap<i64, Vec<&'a crate::domain::junctions::BibitemRefsRow>>,
 }
 
 /// Build the CSV record for a single bibitem.
@@ -774,21 +765,6 @@ pub fn build_export_record(bib: &crate::domain::BibItem, ctx: &ExportContext<'_>
                 } else {
                     format!("{};", names.join("; "))
                 }
-            })
-            .unwrap_or_default()
-    };
-
-    let refs_for_type = |rt: RefType| -> String {
-        let rt_str = rt.to_string();
-        ctx.refs_by_bib
-            .get(&bib.id)
-            .map(|rows| {
-                rows.iter()
-                    .filter(|r| r.ref_type == rt_str)
-                    .filter_map(|r| ctx.bibkey_by_id.get(&r.target_id))
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", ")
             })
             .unwrap_or_default()
     };
@@ -846,8 +822,6 @@ pub fn build_export_record(bib: &crate::domain::BibItem, ctx: &ExportContext<'_>
         bib.issuetitle_latex.clone().unwrap_or_default(),
         bib.extra_note_latex.clone().unwrap_or_default(),
         crossref,
-        refs_for_type(RefType::FurtherRef),
-        refs_for_type(RefType::DependsOn),
         keywords_for_level(1),
         keywords_for_level(2),
         keywords_for_level(3),
@@ -996,6 +970,9 @@ pub fn collect_keyword_junction_rows(
 }
 
 /// Collect all bibitem ref rows for all parsed rows.
+///
+/// Further-ref sources: `\cite*` commands in `title` and `note` fields.
+/// Depends-on sources: `\cite*` commands in `extra_note` and `crossref_bibkey`.
 pub fn collect_ref_rows(
     parsed_rows: &[ParsedBibRow],
     bibkey_to_id: &HashMap<String, i64>,
@@ -1005,17 +982,40 @@ pub fn collect_ref_rows(
         let Some(&source_id) = bibkey_to_id.get(&parsed.bibkey) else {
             continue;
         };
-        for bibkey in &parsed.further_ref_bibkeys {
+
+        let title_keys = extract_cite_keys(&parsed.title);
+        let note_keys = parsed
+            .note
+            .as_deref()
+            .map(extract_cite_keys)
+            .unwrap_or_default();
+        let further: Vec<&str> = title_keys
+            .iter()
+            .chain(note_keys.iter())
+            .map(String::as_str)
+            .collect();
+
+        let extra_keys = parsed
+            .extra_note
+            .as_deref()
+            .map(extract_cite_keys)
+            .unwrap_or_default();
+        let mut depends_on: Vec<&str> = extra_keys.iter().map(String::as_str).collect();
+        if let Some(cr) = parsed.crossref_bibkey.as_deref() {
+            depends_on.push(cr);
+        }
+
+        for bibkey in further {
             rows.push(BibitemRefInsertRow {
                 source_id,
-                target_bibkey: bibkey.clone(),
+                target_bibkey: bibkey.to_string(),
                 ref_type: RefType::FurtherRef,
             });
         }
-        for bibkey in &parsed.depends_on_bibkeys {
+        for bibkey in depends_on {
             rows.push(BibitemRefInsertRow {
                 source_id,
-                target_bibkey: bibkey.clone(),
+                target_bibkey: bibkey.to_string(),
                 ref_type: RefType::DependsOn,
             });
         }

@@ -181,11 +181,6 @@ pub fn parse_csv_row(headers: &CsvHeaders, record: &csv::StringRecord) -> RowPar
         None => None,
     };
 
-    // --- Further refs / depends on (comma-separated bibkeys) ---
-    let further_ref_bibkeys =
-        parse_bibkey_list_field(record, headers, "_further_refs", &mut errors);
-    let depends_on_bibkeys = parse_bibkey_list_field(record, headers, "_depends_on", &mut errors);
-
     // --- Metadata enums (default to None on invalid) ---
     let epoch = get_field(record, headers, "_epoch").and_then(|s| Epoch::from_str(&s).ok());
     let langid = get_field(record, headers, "_langid").and_then(|s| LangId::from_str(&s).ok());
@@ -237,8 +232,6 @@ pub fn parse_csv_row(headers: &CsvHeaders, record: &csv::StringRecord) -> RowPar
         school_name,
         series_name,
         crossref_bibkey,
-        further_ref_bibkeys,
-        depends_on_bibkeys,
         keywords,
         volume,
         number,
@@ -287,36 +280,6 @@ fn parse_people_field(
             vec![]
         }
     }
-}
-
-fn parse_bibkey_list_field(
-    record: &csv::StringRecord,
-    headers: &CsvHeaders,
-    field_name: &str,
-    errors: &mut Vec<FieldError>,
-) -> Vec<String> {
-    let raw = get_field_raw(record, headers, field_name);
-    if raw.is_empty() {
-        return vec![];
-    }
-
-    let mut bibkeys = Vec::new();
-    for part in raw.split(',') {
-        let trimmed = part.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        match parse_bibkey(trimmed) {
-            Ok(bk) => bibkeys.push(bk.full),
-            Err(e) => {
-                errors.push(FieldError {
-                    field: field_name.to_string(),
-                    error: format!("invalid bibkey '{trimmed}': {e}"),
-                });
-            }
-        }
-    }
-    bibkeys
 }
 
 // =============================================================================
@@ -491,9 +454,11 @@ mod tests {
     }
 
     #[test]
-    fn further_refs_parsing() {
-        let csv_data = "entry_type,bibkey,title,_further_refs\n\
-                        @book{,kant:1781,Title,\"smith:2024, plato:-380\"";
+    fn unknown_columns_ignored() {
+        // _further_refs and _depends_on were removed from the format; old CSVs
+        // with those columns should still parse without error.
+        let csv_data = "entry_type,bibkey,title,_further_refs,_depends_on\n\
+                        @book{,kant:1781,Title,\"smith:2024, plato:-380\",other:2000";
         let mut rdr = csv::ReaderBuilder::new()
             .has_headers(true)
             .flexible(true)
@@ -502,9 +467,7 @@ mod tests {
         let r = rdr.records().next().unwrap().unwrap();
         match parse_csv_row(&h, &r) {
             RowParseResult::Ok(parsed) => {
-                assert_eq!(parsed.further_ref_bibkeys.len(), 2);
-                assert_eq!(parsed.further_ref_bibkeys[0], "smith:2024");
-                assert_eq!(parsed.further_ref_bibkeys[1], "plato:-380");
+                assert_eq!(parsed.bibkey, "kant:1781");
             }
             RowParseResult::Err { errors, .. } => {
                 panic!("expected Ok, got errors: {errors:?}");

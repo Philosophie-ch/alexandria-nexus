@@ -5,10 +5,12 @@
 //! Accepts a JSON request body with either `ids` or `bibkeys` to select bibitems.
 //! Returns rendered HTML bibliography sorted by author, year, bibkey.
 
-use hexforge::axum_exports::{IntoResponse, Json, Response, State, StatusCode, header};
+use hexforge::axum_exports::{IntoResponse, Json, Response, State, StatusCode};
 use serde::{Deserialize, Serialize};
 
-use crate::adapters::render::{PgBibitemResolver, PgRenderAuthorFetcher, PgRenderEntityFetcher};
+use crate::adapters::render::{
+    PgBibitemResolver, PgRenderAuthorFetcher, PgRenderEntityFetcher, PgTransitiveDepsResolver,
+};
 use crate::process::render::{RenderPipelineError, RenderSelection, render_pipeline};
 use crate::state::AppState;
 
@@ -23,6 +25,17 @@ pub struct RenderRequest {
     pub ids: Option<Vec<i64>>,
     /// Select bibitems by bibkey.
     pub bibkeys: Option<Vec<String>>,
+    /// When true, include a further-references section rendered from transitive deps.
+    #[serde(default)]
+    pub include_further_refs: bool,
+}
+
+/// Response body for the render endpoint.
+#[derive(Debug, Serialize)]
+pub struct RenderResponseBody {
+    pub main_html: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub further_refs_html: Option<String>,
 }
 
 /// Error response body.
@@ -60,29 +73,32 @@ pub async fn render_bibitems(
         );
     };
 
-    // Construct adapters, call process
     let pool = state.pool.pool();
     let resolver = PgBibitemResolver::new(&state.bibitem_ds);
     let entity_fetcher = PgRenderEntityFetcher::new(pool);
     let author_fetcher = PgRenderAuthorFetcher::new(pool, &state.author_ds);
+    let deps_resolver = PgTransitiveDepsResolver::new(pool);
 
-    match render_pipeline(&resolver, &entity_fetcher, &author_fetcher, selection).await {
-        Ok(html) => html_response(html),
+    match render_pipeline(
+        &resolver,
+        &entity_fetcher,
+        &author_fetcher,
+        &deps_resolver,
+        selection,
+        req.include_further_refs,
+    )
+    .await
+    {
+        Ok(resp) => (
+            StatusCode::OK,
+            Json(RenderResponseBody {
+                main_html: resp.main_html,
+                further_refs_html: resp.further_refs_html,
+            }),
+        )
+            .into_response(),
         Err(e) => pipeline_error_to_response(e),
     }
-}
-
-// =============================================================================
-// Response helpers
-// =============================================================================
-
-fn html_response(body: String) -> Response {
-    (
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-        body,
-    )
-        .into_response()
 }
 
 fn pipeline_error_to_response(err: RenderPipelineError) -> Response {

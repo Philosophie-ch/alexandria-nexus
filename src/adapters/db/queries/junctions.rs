@@ -20,6 +20,32 @@ pub async fn fetch_bibitem_authors_batch(
     .map_err(HexforgeError::data_source)
 }
 
+pub async fn fetch_bibitem_depends_on_batch(
+    pool: &PgPool,
+    ids: &[i64],
+) -> Result<Vec<BibitemDependsOnRow>, HexforgeError> {
+    query_as::<_, BibitemDependsOnRow>(
+        "SELECT source_id, dep_id FROM bibitem_depends_on WHERE source_id = ANY($1) ORDER BY source_id"
+    )
+    .bind(ids)
+    .fetch_all(pool)
+    .await
+    .map_err(HexforgeError::data_source)
+}
+
+pub async fn fetch_bibitem_further_refs_batch(
+    pool: &PgPool,
+    ids: &[i64],
+) -> Result<Vec<BibitemFurtherRefsRow>, HexforgeError> {
+    query_as::<_, BibitemFurtherRefsRow>(
+        "SELECT source_id, dep_id FROM bibitem_further_refs WHERE source_id = ANY($1) ORDER BY source_id"
+    )
+    .bind(ids)
+    .fetch_all(pool)
+    .await
+    .map_err(HexforgeError::data_source)
+}
+
 pub async fn fetch_bibitem_keywords_batch(
     pool: &PgPool,
     ids: &[i64],
