@@ -258,18 +258,24 @@ async fn fetch_and_render(
         }
     }
 
-    // Batch-fetch related entity names
-    let journals_map = entity_fetcher.fetch_journal_names(&journal_ids).await?;
-    let publishers_map = entity_fetcher.fetch_publisher_names(&publisher_ids).await?;
-    let institutions_map = entity_fetcher
-        .fetch_institution_names(&institution_ids)
-        .await?;
-    let schools_map = entity_fetcher.fetch_school_names(&school_ids).await?;
-    let series_map = entity_fetcher.fetch_series_names(&series_ids).await?;
-    let crossrefs_map = entity_fetcher.fetch_crossref_bibkeys(&crossref_ids).await?;
-
-    // Batch-fetch author junction data
-    let author_rows = author_fetcher.fetch_bibitem_authors(&bibitem_ids).await?;
+    // Batch-fetch entity names and author junction data concurrently (all independent).
+    let (
+        journals_map,
+        publishers_map,
+        institutions_map,
+        schools_map,
+        series_map,
+        crossrefs_map,
+        author_rows,
+    ) = tokio::try_join!(
+        entity_fetcher.fetch_journal_names(&journal_ids),
+        entity_fetcher.fetch_publisher_names(&publisher_ids),
+        entity_fetcher.fetch_institution_names(&institution_ids),
+        entity_fetcher.fetch_school_names(&school_ids),
+        entity_fetcher.fetch_series_names(&series_ids),
+        entity_fetcher.fetch_crossref_bibkeys(&crossref_ids),
+        author_fetcher.fetch_bibitem_authors(&bibitem_ids),
+    )?;
 
     // Batch-fetch author entities
     let all_author_ids: Vec<i64> = author_rows

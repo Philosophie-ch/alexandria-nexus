@@ -70,18 +70,13 @@ impl BibitemResolver for PgBibitemResolver<'_> {
     }
 
     async fn find_by_bibkeys(&self, bibkeys: &[String]) -> Result<Vec<BibItem>, HexforgeError> {
-        let mut results = Vec::new();
-        for bibkey in bibkeys {
-            let found = self
-                .bibitem_ds
-                .find_one(WhereClause::new("bibkey = $1").bind(bibkey.clone()))
-                .await
-                .map_err(HexforgeError::data_source)?;
-            if let Some(item) = found {
-                results.push(item);
-            }
+        if bibkeys.is_empty() {
+            return Ok(Vec::new());
         }
-        Ok(results)
+        self.bibitem_ds
+            .find_many(WhereClause::new("bibkey = ANY($1)").bind(bibkeys.to_vec()))
+            .await
+            .map_err(HexforgeError::data_source)
     }
 }
 
