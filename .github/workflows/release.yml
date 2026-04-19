@@ -26,6 +26,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # hexforge is a private git dep — needs SSH key to fetch
+      - uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.HEXFORGE_DEPLOY_KEY }}
+
       - name: Extract version from tag
         id: version
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
@@ -44,9 +49,101 @@ jobs:
           ssh: default=${{ env.SSH_AUTH_SOCK }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-        env:
-          SSH_AUTH_SOCK: /tmp/ssh-agent.sock
 
       # Note: To make the package private, go to:
       # github.com/orgs/Philosophie-ch/packages → alexandria-nexus → Settings → Visibility → Private
       # Or use the GitHub API / org settings to default new packages to private.
+
+  deploy:
+    name: Deploy to production
+    runs-on: ubuntu-latest
+    needs: build-and-push
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        env:
+          ALEXANDRIA_DB_USER: alexandria
+          ALEXANDRIA_DB_PASSWORD: ${{ secrets.ALEXANDRIA_DB_PASSWORD }}
+          ALEXANDRIA_DB_NAME: alexandria
+          ALEXANDRIA_SEED_API_KEY: ${{ secrets.ALEXANDRIA_SEED_API_KEY }}
+          ALEXANDRIA_SEED_READ_KEY: ${{ secrets.ALEXANDRIA_SEED_READ_KEY }}
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        with:
+          host: ${{ secrets.PROD_HOST }}
+          username: ${{ secrets.PROD_USER }}
+          key: ${{ secrets.PROD_SSH_KEY }}
+          envs: ALEXANDRIA_DB_USER,ALEXANDRIA_DB_PASSWORD,ALEXANDRIA_DB_NAME,ALEXANDRIA_SEED_API_KEY,ALEXANDRIA_SEED_READ_KEY,IMAGE,GHCR_TOKEN,GHCR_USER
+          script: |
+            set -e
+
+            # Log in to ghcr.io to pull private images
+            echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
+
+            # Ensure the private network exists
+            docker network inspect private >/dev/null 2>&1 || docker network create --driver bridge private
+
+            # Ensure alexandria-db is running (idempotent — does nothing if already up)
+            if ! docker ps --format '{{.Names}}' | grep -q '^alexandria-db$'; then
+              echo "Starting alexandria-db..."
+              # Remove stopped container if it exists (volume is preserved)
+              docker rm alexandria-db 2>/dev/null || true
+              docker run -d \
+                --name alexandria-db \
+                --network private \
+                --restart unless-stopped \
+                -p 127.0.0.1:5433:5432 \
+                -v alexandria_data:/var/lib/postgresql/18/docker \
+                -e POSTGRES_USER="${ALEXANDRIA_DB_USER}" \
+                -e POSTGRES_PASSWORD="${ALEXANDRIA_DB_PASSWORD}" \
+                -e POSTGRES_DB="${ALEXANDRIA_DB_NAME}" \
+                postgres:18-alpine
+
+              echo "Waiting for alexandria-db to be ready..."
+              for i in $(seq 1 30); do
+                if docker exec alexandria-db pg_isready -U "${ALEXANDRIA_DB_USER}" -h 127.0.0.1 >/dev/null 2>&1; then
+                  echo "alexandria-db is ready"
+                  break
+                fi
+                sleep 1
+              done
+            else
+              echo "alexandria-db already running"
+            fi
+
+            # Pull the new Alexandria image
+            docker pull "${IMAGE}"
+
+            # Restart Alexandria (migrations run automatically on startup)
+            docker stop alexandria 2>/dev/null || true
+            docker rm alexandria 2>/dev/null || true
+            docker run -d \
+              --name alexandria \
+              --network private \
+              --restart unless-stopped \
+              -p 127.0.0.1:8080:8080 \
+              -e DATABASE_URL="postgres://${ALEXANDRIA_DB_USER}:${ALEXANDRIA_DB_PASSWORD}@alexandria-db:5432/${ALEXANDRIA_DB_NAME}" \
+              -e HOST=0.0.0.0 \
+              -e PORT=8080 \
+              -e ALLOWED_ORIGINS="" \
+              -e RUST_LOG=alexandria_nexus=info \
+              -e SEED_API_KEY="${ALEXANDRIA_SEED_API_KEY}" \
+              -e SEED_API_KEY_NAME="Admin Key" \
+              -e SEED_READ_KEY="${ALEXANDRIA_SEED_READ_KEY}" \
+              -e SEED_READ_KEY_NAME="Portal Read Key" \
+              "${IMAGE}"
+
+            # Wait for health check
+            echo "Waiting for Alexandria to be healthy..."
+            for i in $(seq 1 30); do
+              if curl -sf http://localhost:8080/health > /dev/null 2>&1; then
+                echo "Alexandria is healthy"
+                exit 0
+              fi
+              sleep 1
+            done
+            echo "Alexandria failed health check after 30s"
+            docker logs alexandria --tail 20
+            exit 1

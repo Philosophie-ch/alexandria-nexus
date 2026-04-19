@@ -5,3 +5,4 @@ pub mod keyword_tree;
 pub mod latex_columns;
 pub mod render;
 pub mod search;
+pub mod snapshot;

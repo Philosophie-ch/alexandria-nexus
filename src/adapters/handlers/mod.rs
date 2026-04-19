@@ -6,6 +6,8 @@ mod import;
 mod keyword_tree;
 mod render;
 mod search;
+mod snapshot;
+mod wipe;
 
 pub use export::{
     export_authors, export_bibitems, export_institutions, export_journals, export_keywords,
@@ -21,10 +23,10 @@ pub use import::{
 pub use keyword_tree::get_keyword_tree;
 pub use render::render_bibitems;
 pub use search::search_bibitems;
+pub use snapshot::snapshot_data;
+pub use wipe::wipe_data;
 
 pub use latex_columns::convert_latex_columns;
 pub use latex_to_unicode::convert_latex_to_unicode;
 mod latex_columns;
 mod latex_to_unicode;
-pub use wipe::wipe_data;
-mod wipe;

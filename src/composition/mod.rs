@@ -21,7 +21,7 @@ use crate::adapters::handlers::{
     export_schools, export_series, get_keyword_tree, import_author_name_variants, import_authors,
     import_bibitems, import_entities_from_full_csv, import_full_csv, import_institutions,
     import_journals, import_keywords, import_publishers, import_schools, import_series,
-    render_bibitems, search_bibitems, validate_full_csv, wipe_data,
+    render_bibitems, search_bibitems, snapshot_data, validate_full_csv, wipe_data,
 };
 use crate::domain::projections::{
     AuthorExpanded, BibItemCrossref, BibItemSummary, InstitutionExpanded, JournalExpanded,
@@ -302,6 +302,7 @@ pub fn build_app(
                 .post("/latex-to-unicode", convert_latex_to_unicode)
                 .post("/convert-latex-columns", convert_latex_columns)
                 .post("/wipe", wipe_data)
+                .post("/snapshot", snapshot_data)
                 .with_state(state.clone()),
         )
         // DataVersion CRUD (list is public; all mutations are admin-only)

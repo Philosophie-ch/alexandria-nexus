@@ -66,10 +66,21 @@ pub struct MissingKeywords {
 }
 
 impl ValidationReport {
-    /// Hard errors: duplicate bibkeys cause upsert conflicts and must be resolved before import.
-    /// Row-level parse errors are soft — those rows are skipped, others proceed.
+    /// Hard errors: conditions where proceeding would silently corrupt or discard data.
+    /// - Duplicate bibkeys: upsert conflict.
+    /// - Unresolved entity FK references: importing would lose journal/author/publisher/etc. links.
+    /// - Ambiguous authors: can't determine which author to assign.
+    ///
+    /// Row-level parse errors and missing cross-bibitem refs are soft — those rows are skipped.
     pub fn has_hard_errors(&self) -> bool {
         !self.duplicate_bibkeys.is_empty()
+            || !self.ambiguous_authors.is_empty()
+            || !self.missing_authors.is_empty()
+            || !self.missing_journals.is_empty()
+            || !self.missing_publishers.is_empty()
+            || !self.missing_institutions.is_empty()
+            || !self.missing_schools.is_empty()
+            || !self.missing_series.is_empty()
     }
 
     /// Any issue at all — used by the validate-only endpoint to surface everything.

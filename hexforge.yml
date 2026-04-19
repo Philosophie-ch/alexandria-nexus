@@ -693,3 +693,10 @@ operations:
     description: "Truncate all data tables in reverse dependency order. Requires ?confirm=true."
     permission: Admin
     fn_name: wipe_data
+
+  snapshot:
+    method: POST
+    path: "/admin/snapshot"
+    description: "Generate and download a ZIP snapshot of all data tables."
+    permission: Admin
+    fn_name: snapshot_data

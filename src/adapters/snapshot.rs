@@ -1,0 +1,565 @@
+//! Postgres implementation of SnapshotFetcher + ZIP builder.
+//!
+//! CSV serialization and ZIP packaging are adapter concerns — they live here,
+//! not in the process or logic layers.
+
+use std::collections::HashMap;
+use std::io::Write;
+
+use hexforge::HexforgeError;
+use hexforge::db_exports::{PgPool, query_as};
+use zip::ZipWriter;
+use zip::write::SimpleFileOptions;
+
+use crate::domain::junctions::{BibitemAuthorsRow, BibitemKeywordsRow, BibitemRefsRow};
+use crate::domain::{
+    Author, BibItem, BibitemNotes, Institution, Journal, Keyword, Publisher, School, Series,
+};
+use crate::logic::export::{
+    ExportError, build_authors_csv, build_bibitems_ids_csv, build_institutions_csv,
+    build_journals_csv, build_keywords_csv, build_publishers_csv, build_schools_csv,
+    build_series_csv, opt_str,
+};
+use crate::process::snapshot::{SnapshotData, SnapshotFetcher};
+
+// =============================================================================
+// PgSnapshotFetcher
+// =============================================================================
+
+pub struct PgSnapshotFetcher {
+    pool: PgPool,
+}
+
+impl PgSnapshotFetcher {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+impl SnapshotFetcher for PgSnapshotFetcher {
+    fn fetch_authors(
+        &self,
+    ) -> impl std::future::Future<Output = Result<Vec<Author>, HexforgeError>> + Send {
+        let pool = self.pool.clone();
+        async move {
+            query_as::<_, Author>("SELECT * FROM authors ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .map_err(HexforgeError::data_source)
+        }
+    }
+
+    fn fetch_journals(
+        &self,
+    ) -> impl std::future::Future<Output = Result<Vec<Journal>, HexforgeError>> + Send {
+        let pool = self.pool.clone();
+        async move {
+            query_as::<_, Journal>("SELECT * FROM journals ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .map_err(HexforgeError::data_source)
+        }
+    }
+
+    fn fetch_publishers(
+        &self,
+    ) -> impl std::future::Future<Output = Result<Vec<Publisher>, HexforgeError>> + Send {
+        let pool = self.pool.clone();
+        async move {
+            query_as::<_, Publisher>("SELECT * FROM publishers ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .map_err(HexforgeError::data_source)
+        }
+    }
+
+    fn fetch_institutions(
+        &self,
+    ) -> impl std::future::Future<Output = Result<Vec<Institution>, HexforgeError>> + Send {
+        let pool = self.pool.clone();
+        async move {
+            query_as::<_, Institution>("SELECT * FROM institutions ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .map_err(HexforgeError::data_source)
+        }
+    }
+
+    fn fetch_schools(
+        &self,
+    ) -> impl std::future::Future<Output = Result<Vec<School>, HexforgeError>> + Send {
+        let pool = self.pool.clone();
+        async move {
+            query_as::<_, School>("SELECT * FROM schools ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .map_err(HexforgeError::data_source)
+        }
+    }
+
+    fn fetch_series(
+        &self,
+    ) -> impl std::future::Future<Output = Result<Vec<Series>, HexforgeError>> + Send {
+        let pool = self.pool.clone();
+        async move {
+            query_as::<_, Series>("SELECT * FROM series ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .map_err(HexforgeError::data_source)
+        }
+    }
+
+    fn fetch_keywords(
+        &self,
+    ) -> impl std::future::Future<Output = Result<Vec<Keyword>, HexforgeError>> + Send {
+        let pool = self.pool.clone();
+        async move {
+            query_as::<_, Keyword>("SELECT * FROM keywords ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .map_err(HexforgeError::data_source)
+        }
+    }
+
+    fn fetch_bibitems(
+        &self,
+    ) -> impl std::future::Future<Output = Result<Vec<BibItem>, HexforgeError>> + Send {
+        let pool = self.pool.clone();
+        async move {
+            query_as::<_, BibItem>("SELECT * FROM bibitems ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .map_err(HexforgeError::data_source)
+        }
+    }
+
+    fn fetch_bibitem_authors(
+        &self,
+    ) -> impl std::future::Future<Output = Result<Vec<BibitemAuthorsRow>, HexforgeError>> + Send
+    {
+        let pool = self.pool.clone();
+        async move {
+            query_as::<_, BibitemAuthorsRow>(
+                "SELECT * FROM bibitem_authors ORDER BY bibitem_id, position",
+            )
+            .fetch_all(&pool)
+            .await
+            .map_err(HexforgeError::data_source)
+        }
+    }
+
+    fn fetch_bibitem_keywords(
+        &self,
+    ) -> impl std::future::Future<Output = Result<Vec<BibitemKeywordsRow>, HexforgeError>> + Send
+    {
+        let pool = self.pool.clone();
+        async move {
+            query_as::<_, BibitemKeywordsRow>(
+                "SELECT * FROM bibitem_keywords ORDER BY bibitem_id, keyword_id",
+            )
+            .fetch_all(&pool)
+            .await
+            .map_err(HexforgeError::data_source)
+        }
+    }
+
+    fn fetch_bibitem_refs(
+        &self,
+    ) -> impl std::future::Future<Output = Result<Vec<BibitemRefsRow>, HexforgeError>> + Send {
+        let pool = self.pool.clone();
+        async move {
+            query_as::<_, BibitemRefsRow>(
+                "SELECT * FROM bibitem_refs ORDER BY source_id, target_id",
+            )
+            .fetch_all(&pool)
+            .await
+            .map_err(HexforgeError::data_source)
+        }
+    }
+
+    fn fetch_bibitem_notes(
+        &self,
+    ) -> impl std::future::Future<Output = Result<Vec<BibitemNotes>, HexforgeError>> + Send {
+        let pool = self.pool.clone();
+        async move {
+            query_as::<_, BibitemNotes>("SELECT * FROM bibitem_notes ORDER BY bibitem_id")
+                .fetch_all(&pool)
+                .await
+                .map_err(HexforgeError::data_source)
+        }
+    }
+}
+
+// =============================================================================
+// ZIP builder
+// =============================================================================
+
+fn internal_err(msg: impl std::fmt::Display) -> HexforgeError {
+    HexforgeError::internal(msg.to_string())
+}
+
+fn export_err_to_hexforge(e: ExportError) -> HexforgeError {
+    match e {
+        ExportError::Internal(h) => h,
+        other => HexforgeError::internal(format!("{other:?}")),
+    }
+}
+
+/// 2-char lowercase prefix from a bibkey (`kant:1781` → `"ka"`).
+fn bibkey_prefix(bibkey: &str) -> String {
+    let stem = bibkey.split(':').next().unwrap_or(bibkey);
+    let lower = stem.to_lowercase();
+    let mut chars = lower.chars();
+    let c1 = chars.next().unwrap_or('_');
+    let c2 = chars.next().unwrap_or('_');
+    format!("{c1}{c2}")
+}
+
+/// 1-char lowercase prefix from an author_key.
+fn author_key_prefix(author_key: &str) -> String {
+    author_key
+        .chars()
+        .next()
+        .map(|c| c.to_lowercase().to_string())
+        .unwrap_or_else(|| "_".to_string())
+}
+
+/// Build `bibitem_authors` CSV bytes for one prefix group.
+fn build_bibitem_authors_csv(rows: &[&BibitemAuthorsRow]) -> Result<Vec<u8>, HexforgeError> {
+    let mut wtr = csv::Writer::from_writer(vec![]);
+    wtr.write_record([
+        "bibitem_id",
+        "author_id",
+        "role",
+        "position",
+        "name_variant_latex",
+        "name_variant_unicode",
+    ])
+    .map_err(internal_err)?;
+    for r in rows {
+        wtr.write_record([
+            &r.bibitem_id.to_string(),
+            &r.author_id.to_string(),
+            &r.role,
+            &r.position.to_string(),
+            opt_str(&r.name_variant_latex),
+            opt_str(&r.name_variant_unicode),
+        ])
+        .map_err(internal_err)?;
+    }
+    wtr.into_inner().map_err(internal_err)
+}
+
+/// Build `bibitem_keywords` CSV bytes for one prefix group.
+fn build_bibitem_keywords_csv(rows: &[&BibitemKeywordsRow]) -> Result<Vec<u8>, HexforgeError> {
+    let mut wtr = csv::Writer::from_writer(vec![]);
+    wtr.write_record(["bibitem_id", "keyword_id", "keyword_level"])
+        .map_err(internal_err)?;
+    for r in rows {
+        wtr.write_record([
+            &r.bibitem_id.to_string(),
+            &r.keyword_id.to_string(),
+            &r.keyword_level.to_string(),
+        ])
+        .map_err(internal_err)?;
+    }
+    wtr.into_inner().map_err(internal_err)
+}
+
+/// Build `bibitem_refs` CSV bytes (single file).
+fn build_bibitem_refs_csv(rows: &[BibitemRefsRow]) -> Result<Vec<u8>, HexforgeError> {
+    let mut wtr = csv::Writer::from_writer(vec![]);
+    wtr.write_record(["source_id", "target_id", "ref_type"])
+        .map_err(internal_err)?;
+    for r in rows {
+        wtr.write_record([
+            &r.source_id.to_string(),
+            &r.target_id.to_string(),
+            &r.ref_type,
+        ])
+        .map_err(internal_err)?;
+    }
+    wtr.into_inner().map_err(internal_err)
+}
+
+/// Build `bibitem_notes` CSV bytes (single file).
+fn build_bibitem_notes_csv(rows: &[BibitemNotes]) -> Result<Vec<u8>, HexforgeError> {
+    let mut wtr = csv::Writer::from_writer(vec![]);
+    wtr.write_record(["id", "bibitem_id", "notes"])
+        .map_err(internal_err)?;
+    for r in rows {
+        let notes_str = serde_json::to_string(&r.notes).map_err(internal_err)?;
+        wtr.write_record([&r.id.to_string(), &r.bibitem_id.to_string(), &notes_str])
+            .map_err(internal_err)?;
+    }
+    wtr.into_inner().map_err(internal_err)
+}
+
+/// Package all snapshot data into a ZIP archive.
+///
+/// Directory structure mirrors the data repo layout:
+/// - `author/{x}.csv` — split by first char of author_key
+/// - `bibitem/{xy}.csv` — split by 2-char prefix of bibkey
+/// - `{small_table}/all.csv` — journal, publisher, institution, school, series, keyword
+/// - `bibitem_authors/{xy}.csv` — split by bibitem's bibkey prefix
+/// - `bibitem_keywords/{xy}.csv` — same split
+/// - `bibitem_refs/all.csv`
+/// - `bibitem_notes/all.csv`
+pub fn build_snapshot_zip(data: SnapshotData) -> Result<Vec<u8>, HexforgeError> {
+    let cursor = std::io::Cursor::new(Vec::new());
+    let mut zip = ZipWriter::new(cursor);
+    let opts = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+
+    // ── Small tables (single file each) ───────────────────────────────────────
+    let small: &[(&str, Vec<u8>)] = &[
+        (
+            "journal/all.csv",
+            build_journals_csv(&data.journals).map_err(export_err_to_hexforge)?,
+        ),
+        (
+            "publisher/all.csv",
+            build_publishers_csv(&data.publishers).map_err(export_err_to_hexforge)?,
+        ),
+        (
+            "institution/all.csv",
+            build_institutions_csv(&data.institutions).map_err(export_err_to_hexforge)?,
+        ),
+        (
+            "school/all.csv",
+            build_schools_csv(&data.schools).map_err(export_err_to_hexforge)?,
+        ),
+        (
+            "series/all.csv",
+            build_series_csv(&data.series).map_err(export_err_to_hexforge)?,
+        ),
+        (
+            "keyword/all.csv",
+            build_keywords_csv(&data.keywords).map_err(export_err_to_hexforge)?,
+        ),
+        (
+            "bibitem_refs/all.csv",
+            build_bibitem_refs_csv(&data.bibitem_refs)?,
+        ),
+        (
+            "bibitem_notes/all.csv",
+            build_bibitem_notes_csv(&data.bibitem_notes)?,
+        ),
+    ];
+
+    for (path, bytes) in small {
+        zip.start_file(*path, opts).map_err(internal_err)?;
+        zip.write_all(bytes).map_err(internal_err)?;
+    }
+
+    // ── Authors — split by 1-char prefix ──────────────────────────────────────
+    let mut authors_by_prefix: HashMap<String, Vec<&Author>> = HashMap::new();
+    for a in &data.authors {
+        authors_by_prefix
+            .entry(author_key_prefix(&a.author_key))
+            .or_default()
+            .push(a);
+    }
+    let mut author_prefixes: Vec<&String> = authors_by_prefix.keys().collect();
+    author_prefixes.sort();
+    for prefix in author_prefixes {
+        let rows = authors_by_prefix[prefix].as_slice();
+        let owned: Vec<Author> = rows.iter().map(|a| (*a).clone()).collect();
+        let bytes = build_authors_csv(&owned).map_err(export_err_to_hexforge)?;
+        let path = format!("author/{prefix}.csv");
+        zip.start_file(&path, opts).map_err(internal_err)?;
+        zip.write_all(&bytes).map_err(internal_err)?;
+    }
+
+    // ── Bibitems — split by 2-char prefix ─────────────────────────────────────
+    // Build bibitem_id → prefix map (used later for junction splits)
+    let bibitem_id_to_prefix: HashMap<i64, String> = data
+        .bibitems
+        .iter()
+        .map(|b| (b.id, bibkey_prefix(&b.bibkey)))
+        .collect();
+
+    let mut bibitems_by_prefix: HashMap<String, Vec<&BibItem>> = HashMap::new();
+    for b in &data.bibitems {
+        bibitems_by_prefix
+            .entry(bibkey_prefix(&b.bibkey))
+            .or_default()
+            .push(b);
+    }
+    // Group junction rows by bibitem prefix (needed per-bibitem-group)
+    let mut ba_by_prefix: HashMap<String, Vec<&BibitemAuthorsRow>> = HashMap::new();
+    for r in &data.bibitem_authors {
+        if let Some(prefix) = bibitem_id_to_prefix.get(&r.bibitem_id) {
+            ba_by_prefix.entry(prefix.clone()).or_default().push(r);
+        }
+    }
+    let mut bk_by_prefix: HashMap<String, Vec<&BibitemKeywordsRow>> = HashMap::new();
+    for r in &data.bibitem_keywords {
+        if let Some(prefix) = bibitem_id_to_prefix.get(&r.bibitem_id) {
+            bk_by_prefix.entry(prefix.clone()).or_default().push(r);
+        }
+    }
+
+    let mut bib_prefixes: Vec<&String> = bibitems_by_prefix.keys().collect();
+    bib_prefixes.sort();
+    for prefix in bib_prefixes {
+        let bib_rows = bibitems_by_prefix[prefix].as_slice();
+        let owned: Vec<BibItem> = bib_rows.iter().map(|b| (*b).clone()).collect();
+        let author_rows = ba_by_prefix
+            .get(prefix)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+        let kw_rows = bk_by_prefix
+            .get(prefix)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+
+        // Clone to owned slices for the logic function
+        let author_owned: Vec<BibitemAuthorsRow> =
+            author_rows.iter().map(|r| (*r).clone()).collect();
+        let kw_owned: Vec<BibitemKeywordsRow> = kw_rows.iter().map(|r| (*r).clone()).collect();
+
+        let bib_bytes = build_bibitems_ids_csv(&owned, &author_owned, &kw_owned)
+            .map_err(export_err_to_hexforge)?;
+        let bib_path = format!("bibitem/{prefix}.csv");
+        zip.start_file(&bib_path, opts).map_err(internal_err)?;
+        zip.write_all(&bib_bytes).map_err(internal_err)?;
+
+        let ba_bytes = build_bibitem_authors_csv(author_rows)?;
+        let ba_path = format!("bibitem_authors/{prefix}.csv");
+        zip.start_file(&ba_path, opts).map_err(internal_err)?;
+        zip.write_all(&ba_bytes).map_err(internal_err)?;
+
+        let bk_bytes = build_bibitem_keywords_csv(kw_rows)?;
+        let bk_path = format!("bibitem_keywords/{prefix}.csv");
+        zip.start_file(&bk_path, opts).map_err(internal_err)?;
+        zip.write_all(&bk_bytes).map_err(internal_err)?;
+    }
+
+    let cursor = zip.finish().map_err(internal_err)?;
+    Ok(cursor.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::process::snapshot::SnapshotData;
+    use chrono::Utc;
+
+    fn empty_snapshot() -> SnapshotData {
+        SnapshotData {
+            authors: vec![],
+            journals: vec![],
+            publishers: vec![],
+            institutions: vec![],
+            schools: vec![],
+            series: vec![],
+            keywords: vec![],
+            bibitems: vec![],
+            bibitem_authors: vec![],
+            bibitem_keywords: vec![],
+            bibitem_refs: vec![],
+            bibitem_notes: vec![],
+        }
+    }
+
+    fn zip_file_names(bytes: &[u8]) -> Vec<String> {
+        let cursor = std::io::Cursor::new(bytes);
+        let mut archive = zip::ZipArchive::new(cursor).unwrap();
+        let mut names: Vec<String> = (0..archive.len())
+            .map(|i| archive.by_index(i).unwrap().name().to_string())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn bibkey_prefix_two_char() {
+        assert_eq!(bibkey_prefix("kant:1781"), "ka");
+        assert_eq!(bibkey_prefix("aristotle:350"), "ar");
+        assert_eq!(bibkey_prefix("AB:2020"), "ab");
+    }
+
+    #[test]
+    fn bibkey_prefix_short_stem() {
+        assert_eq!(bibkey_prefix("a:2020"), "a_");
+        assert_eq!(bibkey_prefix(":2020"), "__");
+    }
+
+    #[test]
+    fn bibkey_prefix_no_colon() {
+        assert_eq!(bibkey_prefix("abc"), "ab");
+    }
+
+    #[test]
+    fn author_key_prefix_first_char() {
+        assert_eq!(author_key_prefix("kant"), "k");
+        assert_eq!(author_key_prefix("Aristotle"), "a");
+    }
+
+    #[test]
+    fn author_key_prefix_empty() {
+        assert_eq!(author_key_prefix(""), "_");
+    }
+
+    #[test]
+    fn empty_snapshot_produces_valid_zip() {
+        let bytes = build_snapshot_zip(empty_snapshot()).unwrap();
+        let names = zip_file_names(&bytes);
+        assert!(names.contains(&"journal/all.csv".to_string()));
+        assert!(names.contains(&"publisher/all.csv".to_string()));
+        assert!(names.contains(&"institution/all.csv".to_string()));
+        assert!(names.contains(&"school/all.csv".to_string()));
+        assert!(names.contains(&"series/all.csv".to_string()));
+        assert!(names.contains(&"keyword/all.csv".to_string()));
+        assert!(names.contains(&"bibitem_refs/all.csv".to_string()));
+        assert!(names.contains(&"bibitem_notes/all.csv".to_string()));
+        assert_eq!(names.len(), 8); // only small tables — no prefix splits for empty data
+    }
+
+    #[test]
+    fn snapshot_splits_authors_by_prefix() {
+        let mut data = empty_snapshot();
+        data.authors = vec![
+            Author {
+                id: 1,
+                author_key: "kant".to_string(),
+                given_name_latex: None,
+                given_name_unicode: None,
+                family_name_latex: None,
+                family_name_unicode: Some("Kant".to_string()),
+                mononym_latex: None,
+                mononym_unicode: None,
+                shorthand_latex: None,
+                shorthand_unicode: None,
+                famous_name_latex: None,
+                famous_name_unicode: None,
+                name_variants_latex: None,
+                name_variants_unicode: None,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            },
+            Author {
+                id: 2,
+                author_key: "aristotle".to_string(),
+                given_name_latex: None,
+                given_name_unicode: None,
+                family_name_latex: None,
+                family_name_unicode: Some("Aristotle".to_string()),
+                mononym_latex: None,
+                mononym_unicode: None,
+                shorthand_latex: None,
+                shorthand_unicode: None,
+                famous_name_latex: None,
+                famous_name_unicode: None,
+                name_variants_latex: None,
+                name_variants_unicode: None,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            },
+        ];
+        let bytes = build_snapshot_zip(data).unwrap();
+        let names = zip_file_names(&bytes);
+        assert!(names.contains(&"author/k.csv".to_string()));
+        assert!(names.contains(&"author/a.csv".to_string()));
+    }
+}

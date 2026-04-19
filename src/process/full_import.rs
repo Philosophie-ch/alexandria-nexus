@@ -404,9 +404,9 @@ async fn create_keyword(
 /// Parse CSV, resolve all names to IDs, bulk-upsert bibitems + junctions.
 /// CSV is source of truth: bibitems in DB but not in CSV get deleted if `delete_stale=true`.
 ///
-/// Hard errors (duplicate bibkeys) return a 422 ValidationFailed.
-/// Soft issues (missing authors, journals, etc.) are skipped per-row — check the validate
-/// endpoint for the full picture.
+/// Hard errors (duplicate bibkeys, unresolved entity references, ambiguous authors) return a
+/// 422 ValidationFailed. Soft issues (missing cross-bibitem refs, missing keywords) are
+/// skipped per-row — check the validate endpoint for the full picture.
 pub async fn import_full_csv(
     author_lookup: &impl AuthorLookup,
     entity_lookup: &impl EntityLookup,
