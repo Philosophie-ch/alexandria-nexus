@@ -657,6 +657,54 @@ async fn test_import_rejects_duplicate_bibkeys() {
 }
 
 // ============================================================================
+// BIBITEM REFS EXTRACTION FROM TEXT FIELDS
+// ============================================================================
+
+#[tokio::test]
+async fn test_import_populates_further_refs_from_note() {
+    let app = TestApp::spawn().await;
+    let s = unique_suffix();
+
+    let bibkey_target = format!("ref-tgt-{s}:2000");
+    let bibkey_source = format!("ref-src-{s}:2024");
+
+    // Source cites target via \citet in the note field.
+    let csv = format!(
+        "entry_type,bibkey,title,note,date\n\
+         book,{bibkey_target},Target Book,,2000\n\
+         book,{bibkey_source},Source Book,\\citet{{{bibkey_target}}},2024"
+    );
+
+    let resp = upload_csv(&app, "/api/v1/admin/import-full-csv", &csv).await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["imported"], 2, "Both bibitems should import");
+    assert_eq!(body["failed"], 0);
+
+    // Verify: render source with include_further_refs — target must appear in further_refs_html.
+    let render_resp = app
+        .post_json(
+            "/api/v1/render",
+            &json!({ "bibkeys": [bibkey_source], "include_further_refs": true }),
+        )
+        .await;
+    assert_eq!(render_resp.status(), 200);
+
+    let render_body: serde_json::Value = render_resp.json().await.unwrap();
+    let further = render_body["further_refs_html"].as_str();
+    assert!(
+        further.is_some(),
+        "further_refs_html should be present when source cites target in note"
+    );
+    assert!(
+        further
+            .unwrap()
+            .contains(&format!("data-bibkey=\"{bibkey_target}\"")),
+        "further_refs_html should contain the cited bibitem"
+    );
+}
+
+// ============================================================================
 // EXPORT
 // ============================================================================
 

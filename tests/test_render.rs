@@ -5,6 +5,24 @@ mod common;
 use common::{TestApp, unique_suffix};
 use serde_json::json;
 
+/// Helper: upload a CSV file to an admin endpoint.
+async fn upload_csv(app: &TestApp, path: &str, csv: &str) -> reqwest::Response {
+    let form = reqwest::multipart::Form::new().part(
+        "file",
+        reqwest::multipart::Part::bytes(csv.as_bytes().to_vec())
+            .file_name("data.csv")
+            .mime_str("text/csv")
+            .unwrap(),
+    );
+    app.client
+        .post(app.url(path))
+        .header("Authorization", format!("Bearer {}", app.api_key))
+        .multipart(form)
+        .send()
+        .await
+        .expect("Failed to send multipart request")
+}
+
 /// Helper: create an author via the API and return (id, key).
 async fn create_author(
     app: &TestApp,
@@ -133,6 +151,130 @@ async fn test_render_too_many_items() {
 
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["error"], "too_many_items");
+}
+
+// =============================================================================
+// Test: include_further_refs=true returns further_refs_html
+// =============================================================================
+
+#[tokio::test]
+async fn test_render_include_further_refs_populated() {
+    let app = TestApp::spawn().await;
+    let s = unique_suffix();
+
+    // Create two bibitems: A will reference B.
+    let id_b =
+        create_bibitem_with_details(&app, &s, "fr-b", "book", "Further Ref Target", Some(2000))
+            .await;
+    let id_a =
+        create_bibitem_with_details(&app, &s, "fr-a", "book", "Further Ref Source", Some(2024))
+            .await;
+
+    // Insert a further_ref row from A to B.
+    let refs_csv = format!("source_id,target_id,ref_type\n{id_a},{id_b},further_ref");
+    let refs_resp = upload_csv(&app, "/api/v1/admin/import/bibitem-refs", &refs_csv).await;
+    assert_eq!(refs_resp.status(), 200);
+
+    // Rebuild the transitive closure.
+    let rc_resp = app
+        .client
+        .post(app.url("/api/v1/admin/recompute-deps"))
+        .header("Authorization", format!("Bearer {}", app.api_key))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(rc_resp.status(), 200);
+    let rc: serde_json::Value = rc_resp.json().await.unwrap();
+    assert_eq!(rc["further_refs"], 1);
+
+    // Render A with include_further_refs: true.
+    let bibkey_a = format!("fr-a-{s}");
+    let bibkey_b = format!("fr-b-{s}");
+    let resp = app
+        .post_json(
+            "/api/v1/render",
+            &json!({ "bibkeys": [bibkey_a], "include_further_refs": true }),
+        )
+        .await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(
+        body["main_html"].as_str().is_some(),
+        "main_html should be present"
+    );
+
+    let further = body["further_refs_html"].as_str();
+    assert!(
+        further.is_some(),
+        "further_refs_html should be present when include_further_refs=true and refs exist"
+    );
+    assert!(
+        further
+            .unwrap()
+            .contains(&format!("data-bibkey=\"{bibkey_b}\"")),
+        "further_refs_html should contain the referenced bibitem"
+    );
+}
+
+#[tokio::test]
+async fn test_render_include_further_refs_no_refs() {
+    let app = TestApp::spawn().await;
+    let s = unique_suffix();
+
+    // Create a bibitem with no references.
+    create_bibitem_with_details(&app, &s, "lonely", "book", "Lonely Book", Some(2024)).await;
+    let bibkey = format!("lonely-{s}");
+
+    let resp = app
+        .post_json(
+            "/api/v1/render",
+            &json!({ "bibkeys": [bibkey], "include_further_refs": true }),
+        )
+        .await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(body["main_html"].as_str().is_some());
+    assert!(
+        body["further_refs_html"].is_null(),
+        "further_refs_html should be null when bibitem has no further refs"
+    );
+}
+
+#[tokio::test]
+async fn test_render_include_further_refs_flag_omitted() {
+    let app = TestApp::spawn().await;
+    let s = unique_suffix();
+
+    // Set up A→B ref (same as test_render_include_further_refs_populated).
+    let id_b =
+        create_bibitem_with_details(&app, &s, "omit-b", "book", "Omit Target", Some(2000)).await;
+    let id_a =
+        create_bibitem_with_details(&app, &s, "omit-a", "book", "Omit Source", Some(2024)).await;
+
+    let refs_csv = format!("source_id,target_id,ref_type\n{id_a},{id_b},further_ref");
+    upload_csv(&app, "/api/v1/admin/import/bibitem-refs", &refs_csv).await;
+    app.client
+        .post(app.url("/api/v1/admin/recompute-deps"))
+        .header("Authorization", format!("Bearer {}", app.api_key))
+        .send()
+        .await
+        .unwrap();
+
+    // Render WITHOUT include_further_refs — further_refs_html must be null.
+    let bibkey_a = format!("omit-a-{s}");
+    let resp = app
+        .post_json("/api/v1/render", &json!({ "bibkeys": [bibkey_a] }))
+        .await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(body["main_html"].as_str().is_some());
+    assert!(
+        body["further_refs_html"].is_null(),
+        "further_refs_html should be null when include_further_refs is omitted"
+    );
 }
 
 // =============================================================================
