@@ -4,7 +4,7 @@
 //! and Postgres-specific logic lives here.
 
 use hexforge::HexforgeError;
-use hexforge::db_exports::{FromRow, PgArguments, PgPool};
+use hexforge::db_exports::{Arguments, FromRow, PgArguments, PgPool, query_as_with};
 
 use crate::domain::BibItem;
 use crate::domain::{EntryType, Epoch, LangId, PubState};
@@ -97,7 +97,7 @@ impl BibitemSearcher for PgBibitemSearcher<'_> {
         }
 
         if request.entry_type.is_some() {
-            conditions.push(format!("entry_type::text = ${param_idx}"));
+            conditions.push(format!("entry_type = ${param_idx}"));
             param_idx += 1;
         }
 
@@ -124,7 +124,7 @@ impl BibitemSearcher for PgBibitemSearcher<'_> {
         }
 
         if request.epoch.is_some() {
-            conditions.push(format!("epoch::text = ${param_idx}"));
+            conditions.push(format!("epoch = ${param_idx}"));
             param_idx += 1;
         }
 
@@ -151,14 +151,13 @@ impl BibitemSearcher for PgBibitemSearcher<'_> {
             next = param_idx + 1
         );
 
-        use sqlx::Arguments;
         let mut args = PgArguments::default();
 
         if !request.query.is_empty() {
             args.add(&request.query)
                 .map_err(|e| HexforgeError::internal(e.to_string()))?;
         }
-        if let Some(ref entry_type) = request.entry_type {
+        if let Some(entry_type) = request.entry_type {
             args.add(entry_type)
                 .map_err(|e| HexforgeError::internal(e.to_string()))?;
         }
@@ -178,7 +177,7 @@ impl BibitemSearcher for PgBibitemSearcher<'_> {
             args.add(journal_id)
                 .map_err(|e| HexforgeError::internal(e.to_string()))?;
         }
-        if let Some(ref epoch) = request.epoch {
+        if let Some(epoch) = request.epoch {
             args.add(epoch)
                 .map_err(|e| HexforgeError::internal(e.to_string()))?;
         }
@@ -187,7 +186,7 @@ impl BibitemSearcher for PgBibitemSearcher<'_> {
         args.add(offset)
             .map_err(|e| HexforgeError::internal(e.to_string()))?;
 
-        let rows: Vec<SearchRow> = sqlx::query_as_with::<_, SearchRow, _>(&sql, args)
+        let rows: Vec<SearchRow> = query_as_with::<_, SearchRow, _>(&sql, args)
             .fetch_all(self.pool)
             .await
             .map_err(HexforgeError::data_source)?;

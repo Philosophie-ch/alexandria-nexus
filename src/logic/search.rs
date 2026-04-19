@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::BibItem;
+use crate::domain::{BibItem, EntryType, Epoch};
 
 /// Search request parameters.
 #[derive(Debug, Deserialize)]
@@ -14,7 +14,7 @@ pub struct SearchRequest {
     pub query: String,
 
     /// Filter by entry type.
-    pub entry_type: Option<String>,
+    pub entry_type: Option<EntryType>,
 
     /// Filter by year range (from).
     pub year_from: Option<i16>,
@@ -29,7 +29,7 @@ pub struct SearchRequest {
     pub journal_id: Option<i64>,
 
     /// Filter by epoch.
-    pub epoch: Option<String>,
+    pub epoch: Option<Epoch>,
 
     /// Maximum number of results (default: 50, max: 100).
     #[serde(default = "default_limit")]
