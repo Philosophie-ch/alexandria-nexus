@@ -2206,7 +2206,7 @@ async fn insert_bibitem_authors(
     Ok(())
 }
 
-/// Insert bibitem-keyword junction records via the junction store.
+/// Insert bibitem–keyword junction records via the junction store.
 /// Keywords are looked up to determine their level.
 async fn insert_bibitem_keywords(
     junction_store: &impl BibitemJunctionStore,
@@ -2227,4 +2227,269 @@ async fn insert_bibitem_keywords(
     }
 
     Ok(())
+}
+
+// =============================================================================
+// BibitemRefsStore + import_bibitem_refs_from_csv
+// =============================================================================
+
+/// Contract for inserting bibitem reference rows.
+pub trait BibitemRefsStore: Send + Sync {
+    fn insert_bibitem_ref(
+        &self,
+        source_id: i64,
+        target_id: i64,
+        ref_type: &str,
+    ) -> impl Future<Output = Result<(), HexforgeError>> + Send;
+}
+
+/// Import bibitem refs from CSV bytes.
+///
+/// CSV must have columns: `source_id`, `target_id`, `ref_type`.
+/// All referenced bibitem IDs must exist; returns a validation error listing any that are missing.
+pub async fn import_bibitem_refs_from_csv(
+    refs_store: &impl BibitemRefsStore,
+    id_store: &impl ReferenceStore,
+    data: Vec<u8>,
+) -> Result<ImportResponse, HexforgeError> {
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(true)
+        .flexible(true)
+        .from_reader(std::io::Cursor::new(data));
+
+    let headers = reader
+        .headers()
+        .map_err(|e| HexforgeError::Validation(ValidationError::custom(e.to_string())))?
+        .clone();
+
+    let col_source_id = require_column(&headers, "source_id")?;
+    let col_target_id = require_column(&headers, "target_id")?;
+    let col_ref_type = require_column(&headers, "ref_type")?;
+
+    struct RefRow {
+        source_id: i64,
+        target_id: i64,
+        ref_type: String,
+    }
+
+    let mut rows: Vec<RefRow> = Vec::new();
+    let mut errors: Vec<ImportRowError> = Vec::new();
+    let mut row_num = 1usize;
+
+    for result in reader.records() {
+        row_num += 1;
+        let record = match result {
+            Ok(r) => r,
+            Err(e) => {
+                errors.push(ImportRowError {
+                    row: row_num,
+                    identifier: String::new(),
+                    error: e.to_string(),
+                });
+                continue;
+            }
+        };
+
+        let source_id = match parse_i64_field(&record, col_source_id) {
+            Some(v) => v,
+            None => {
+                let raw = get_field(&record, col_source_id).unwrap_or_default();
+                errors.push(ImportRowError {
+                    row: row_num,
+                    identifier: raw.clone(),
+                    error: format!("invalid source_id: {raw}"),
+                });
+                continue;
+            }
+        };
+
+        let target_id = match parse_i64_field(&record, col_target_id) {
+            Some(v) => v,
+            None => {
+                let raw = get_field(&record, col_target_id).unwrap_or_default();
+                errors.push(ImportRowError {
+                    row: row_num,
+                    identifier: format!("{source_id}->?"),
+                    error: format!("invalid target_id: {raw}"),
+                });
+                continue;
+            }
+        };
+
+        let ref_type = get_field(&record, col_ref_type).unwrap_or_default();
+        if !matches!(ref_type.as_str(), "further_ref" | "depends_on") {
+            errors.push(ImportRowError {
+                row: row_num,
+                identifier: format!("{source_id}->{target_id}"),
+                error: format!("unknown ref_type: {ref_type}"),
+            });
+            continue;
+        }
+
+        rows.push(RefRow {
+            source_id,
+            target_id,
+            ref_type,
+        });
+    }
+
+    if !errors.is_empty() {
+        let failed = errors.len();
+        return Ok(ImportResponse {
+            imported: 0,
+            updated: 0,
+            failed,
+            errors,
+        });
+    }
+
+    let all_ids: HashSet<i64> = rows
+        .iter()
+        .flat_map(|r| [r.source_id, r.target_id])
+        .collect();
+    if !all_ids.is_empty() {
+        let missing = id_store.find_missing_bibitem_ids(&all_ids).await?;
+        if !missing.is_empty() {
+            return Err(HexforgeError::Validation(ValidationError::custom(format!(
+                "missing bibitem IDs: {missing:?}"
+            ))));
+        }
+    }
+
+    let total = rows.len();
+    for row in &rows {
+        refs_store
+            .insert_bibitem_ref(row.source_id, row.target_id, &row.ref_type)
+            .await?;
+    }
+
+    Ok(ImportResponse {
+        imported: total,
+        updated: 0,
+        failed: 0,
+        errors: vec![],
+    })
+}
+
+// =============================================================================
+// BibitemNotesStore + import_bibitem_notes_from_csv
+// =============================================================================
+
+/// Contract for upserting bibitem notes rows.
+pub trait BibitemNotesStore: Send + Sync {
+    fn upsert_bibitem_notes(
+        &self,
+        bibitem_id: i64,
+        notes: &serde_json::Value,
+    ) -> impl Future<Output = Result<(), HexforgeError>> + Send;
+}
+
+/// Import bibitem notes from CSV bytes.
+///
+/// CSV must have columns: `bibitem_id`, `notes` (JSON string). An `id` column is
+/// accepted but ignored — notes are upserted by `bibitem_id` (unique constraint).
+/// All bibitem IDs must exist; returns a validation error listing any that are missing.
+pub async fn import_bibitem_notes_from_csv(
+    notes_store: &impl BibitemNotesStore,
+    id_store: &impl ReferenceStore,
+    data: Vec<u8>,
+) -> Result<ImportResponse, HexforgeError> {
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(true)
+        .flexible(true)
+        .from_reader(std::io::Cursor::new(data));
+
+    let headers = reader
+        .headers()
+        .map_err(|e| HexforgeError::Validation(ValidationError::custom(e.to_string())))?
+        .clone();
+
+    let col_bibitem_id = require_column(&headers, "bibitem_id")?;
+    let col_notes = require_column(&headers, "notes")?;
+
+    struct NotesRow {
+        bibitem_id: i64,
+        notes: serde_json::Value,
+    }
+
+    let mut rows: Vec<NotesRow> = Vec::new();
+    let mut errors: Vec<ImportRowError> = Vec::new();
+    let mut row_num = 1usize;
+
+    for result in reader.records() {
+        row_num += 1;
+        let record = match result {
+            Ok(r) => r,
+            Err(e) => {
+                errors.push(ImportRowError {
+                    row: row_num,
+                    identifier: String::new(),
+                    error: e.to_string(),
+                });
+                continue;
+            }
+        };
+
+        let bibitem_id = match parse_i64_field(&record, col_bibitem_id) {
+            Some(v) => v,
+            None => {
+                let raw = get_field(&record, col_bibitem_id).unwrap_or_default();
+                errors.push(ImportRowError {
+                    row: row_num,
+                    identifier: raw.clone(),
+                    error: format!("invalid bibitem_id: {raw}"),
+                });
+                continue;
+            }
+        };
+
+        let notes_str = get_field(&record, col_notes).unwrap_or_default();
+        let notes = match serde_json::from_str::<serde_json::Value>(&notes_str) {
+            Ok(v) => v,
+            Err(e) => {
+                errors.push(ImportRowError {
+                    row: row_num,
+                    identifier: bibitem_id.to_string(),
+                    error: format!("invalid notes JSON: {e}"),
+                });
+                continue;
+            }
+        };
+
+        rows.push(NotesRow { bibitem_id, notes });
+    }
+
+    if !errors.is_empty() {
+        let failed = errors.len();
+        return Ok(ImportResponse {
+            imported: 0,
+            updated: 0,
+            failed,
+            errors,
+        });
+    }
+
+    let all_ids: HashSet<i64> = rows.iter().map(|r| r.bibitem_id).collect();
+    if !all_ids.is_empty() {
+        let missing = id_store.find_missing_bibitem_ids(&all_ids).await?;
+        if !missing.is_empty() {
+            return Err(HexforgeError::Validation(ValidationError::custom(format!(
+                "missing bibitem IDs: {missing:?}"
+            ))));
+        }
+    }
+
+    let total = rows.len();
+    for row in &rows {
+        notes_store
+            .upsert_bibitem_notes(row.bibitem_id, &row.notes)
+            .await?;
+    }
+
+    Ok(ImportResponse {
+        imported: total,
+        updated: 0,
+        failed: 0,
+        errors: vec![],
+    })
 }

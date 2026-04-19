@@ -11,7 +11,8 @@ use hexforge::db_exports::{FromRow, PgPool, query, query_as, query_scalar};
 use crate::domain::AuthorRole;
 use crate::logic::import::NameVariantType;
 use crate::process::import::{
-    BibitemJunctionStore, NameVariantStore, ReferenceStore, SequenceSyncer,
+    BibitemJunctionStore, BibitemNotesStore, BibitemRefsStore, NameVariantStore, ReferenceStore,
+    SequenceSyncer,
 };
 
 // =============================================================================
@@ -285,5 +286,73 @@ impl ReferenceStore for PgReferenceStore<'_> {
         ids: &HashSet<i64>,
     ) -> Result<Vec<i64>, HexforgeError> {
         self.find_missing_in_table("bibitems", ids).await
+    }
+}
+
+// =============================================================================
+// PgBibitemRefsStore
+// =============================================================================
+
+pub struct PgBibitemRefsStore<'a> {
+    pool: &'a PgPool,
+}
+
+impl<'a> PgBibitemRefsStore<'a> {
+    pub fn new(pool: &'a PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+impl BibitemRefsStore for PgBibitemRefsStore<'_> {
+    async fn insert_bibitem_ref(
+        &self,
+        source_id: i64,
+        target_id: i64,
+        ref_type: &str,
+    ) -> Result<(), HexforgeError> {
+        query(
+            "INSERT INTO bibitem_refs (source_id, target_id, ref_type) \
+             VALUES ($1, $2, $3::ref_type) ON CONFLICT DO NOTHING",
+        )
+        .bind(source_id)
+        .bind(target_id)
+        .bind(ref_type)
+        .execute(self.pool)
+        .await
+        .map_err(HexforgeError::data_source)?;
+        Ok(())
+    }
+}
+
+// =============================================================================
+// PgBibitemNotesStore
+// =============================================================================
+
+pub struct PgBibitemNotesStore<'a> {
+    pool: &'a PgPool,
+}
+
+impl<'a> PgBibitemNotesStore<'a> {
+    pub fn new(pool: &'a PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+impl BibitemNotesStore for PgBibitemNotesStore<'_> {
+    async fn upsert_bibitem_notes(
+        &self,
+        bibitem_id: i64,
+        notes: &serde_json::Value,
+    ) -> Result<(), HexforgeError> {
+        query(
+            "INSERT INTO bibitem_notes (bibitem_id, notes) VALUES ($1, $2) \
+             ON CONFLICT (bibitem_id) DO UPDATE SET notes = EXCLUDED.notes, updated_at = NOW()",
+        )
+        .bind(bibitem_id)
+        .bind(notes)
+        .execute(self.pool)
+        .await
+        .map_err(HexforgeError::data_source)?;
+        Ok(())
     }
 }

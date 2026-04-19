@@ -10,7 +10,8 @@ use hexforge::{HexforgeError, ValidationError};
 use serde::Deserialize;
 
 use crate::adapters::import::{
-    PgBibitemJunctionStore, PgNameVariantStore, PgReferenceStore, PgSequenceSyncer,
+    PgBibitemJunctionStore, PgBibitemNotesStore, PgBibitemRefsStore, PgNameVariantStore,
+    PgReferenceStore, PgSequenceSyncer,
 };
 use crate::logic::import::{BibitemImportResult, ImportResponse};
 use crate::process::import;
@@ -199,4 +200,32 @@ pub async fn import_bibitems(
             Ok((StatusCode::UNPROCESSABLE_ENTITY, Json(missing)).into_response())
         }
     }
+}
+
+/// Import bibitem refs from CSV.
+///
+/// `POST /api/v1/admin/import/bibitem-refs`
+pub async fn import_bibitem_refs(
+    State(state): State<AppState>,
+    multipart: Multipart,
+) -> Result<Json<ImportResponse>, HexforgeError> {
+    let data = extract_csv_bytes(multipart).await?;
+    let refs_store = PgBibitemRefsStore::new(state.pool.pool());
+    let id_store = PgReferenceStore::new(state.pool.pool());
+    let result = import::import_bibitem_refs_from_csv(&refs_store, &id_store, data).await?;
+    Ok(Json(result))
+}
+
+/// Import bibitem notes from CSV.
+///
+/// `POST /api/v1/admin/import/bibitem-notes`
+pub async fn import_bibitem_notes(
+    State(state): State<AppState>,
+    multipart: Multipart,
+) -> Result<Json<ImportResponse>, HexforgeError> {
+    let data = extract_csv_bytes(multipart).await?;
+    let notes_store = PgBibitemNotesStore::new(state.pool.pool());
+    let id_store = PgReferenceStore::new(state.pool.pool());
+    let result = import::import_bibitem_notes_from_csv(&notes_store, &id_store, data).await?;
+    Ok(Json(result))
 }

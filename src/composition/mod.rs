@@ -19,9 +19,10 @@ use crate::adapters::handlers::{
     convert_latex_columns, convert_latex_to_unicode, export_authors, export_bibitems,
     export_full_csv, export_institutions, export_journals, export_keywords, export_publishers,
     export_schools, export_series, get_keyword_tree, import_author_name_variants, import_authors,
-    import_bibitems, import_entities_from_full_csv, import_full_csv, import_institutions,
-    import_journals, import_keywords, import_publishers, import_schools, import_series,
-    render_bibitems, search_bibitems, snapshot_data, validate_full_csv, wipe_data,
+    import_bibitem_notes, import_bibitem_refs, import_bibitems, import_entities_from_full_csv,
+    import_full_csv, import_institutions, import_journals, import_keywords, import_publishers,
+    import_schools, import_series, render_bibitems, search_bibitems, snapshot_data,
+    validate_full_csv, wipe_data,
 };
 use crate::domain::projections::{
     AuthorExpanded, BibItemCrossref, BibItemSummary, InstitutionExpanded, JournalExpanded,
@@ -289,6 +290,8 @@ pub fn build_app(
                 .post("/series", import_series)
                 .post("/keywords", import_keywords)
                 .post("/author-name-variants", import_author_name_variants)
+                .post("/bibitem-refs", import_bibitem_refs)
+                .post("/bibitem-notes", import_bibitem_notes)
                 .with_state(state.clone()),
         )
         // Admin: Full CSV import endpoints

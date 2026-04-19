@@ -902,6 +902,312 @@ async fn test_import_name_variant_unknown_author_errors() {
 }
 
 // ============================================================================
+// Bibitem refs import
+// ============================================================================
+
+fn zip_file_content(bytes: &[u8], path: &str) -> String {
+    use std::io::Read;
+    let cursor = std::io::Cursor::new(bytes);
+    let mut archive = zip::ZipArchive::new(cursor).unwrap();
+    let mut file = archive
+        .by_name(path)
+        .unwrap_or_else(|_| panic!("'{path}' not found in ZIP"));
+    let mut content = String::new();
+    file.read_to_string(&mut content).unwrap();
+    content
+}
+
+async fn snapshot_bytes(app: &TestApp) -> Vec<u8> {
+    app.client
+        .post(app.url("/api/v1/admin/snapshot"))
+        .header("Authorization", format!("Bearer {}", app.api_key))
+        .send()
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap()
+        .to_vec()
+}
+
+#[tokio::test]
+async fn test_import_bibitem_refs_requires_auth() {
+    let app = TestApp::spawn().await;
+    let form = reqwest::multipart::Form::new().part(
+        "file",
+        reqwest::multipart::Part::bytes(b"source_id,target_id,ref_type\n1,2,further_ref".to_vec())
+            .file_name("test.csv")
+            .mime_str("text/csv")
+            .unwrap(),
+    );
+    let resp = app
+        .client
+        .post(app.url("/api/v1/admin/import/bibitem-refs"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+}
+
+#[tokio::test]
+async fn test_import_bibitem_refs_happy_path() {
+    let app = TestApp::spawn().await;
+    let s = unique_suffix();
+
+    let bib1: serde_json::Value = app
+        .post_json(
+            "/api/v1/bibitems",
+            &json!({ "bibkey": format!("source:{s}"), "entry_type": "article",
+                      "title_latex": "S", "title_unicode": "S" }),
+        )
+        .await
+        .json()
+        .await
+        .unwrap();
+    let bib2: serde_json::Value = app
+        .post_json(
+            "/api/v1/bibitems",
+            &json!({ "bibkey": format!("target:{s}"), "entry_type": "book",
+                      "title_latex": "T", "title_unicode": "T" }),
+        )
+        .await
+        .json()
+        .await
+        .unwrap();
+    let src_id = bib1["id"].as_i64().unwrap();
+    let tgt_id = bib2["id"].as_i64().unwrap();
+
+    let csv = format!("source_id,target_id,ref_type\n{src_id},{tgt_id},further_ref");
+    let resp = upload_csv(&app, "/api/v1/admin/import/bibitem-refs", &csv).await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["imported"], 1);
+    assert_eq!(body["failed"], 0);
+
+    // Verify via snapshot
+    let zip = snapshot_bytes(&app).await;
+    let refs_csv = zip_file_content(&zip, "bibitem_refs/all.csv");
+    assert!(refs_csv.contains(&src_id.to_string()));
+    assert!(refs_csv.contains(&tgt_id.to_string()));
+    assert!(refs_csv.contains("further_ref"));
+}
+
+#[tokio::test]
+async fn test_import_bibitem_refs_idempotent() {
+    let app = TestApp::spawn().await;
+    let s = unique_suffix();
+
+    let bib1: serde_json::Value = app
+        .post_json(
+            "/api/v1/bibitems",
+            &json!({ "bibkey": format!("src2:{s}"), "entry_type": "article",
+                      "title_latex": "S", "title_unicode": "S" }),
+        )
+        .await
+        .json()
+        .await
+        .unwrap();
+    let bib2: serde_json::Value = app
+        .post_json(
+            "/api/v1/bibitems",
+            &json!({ "bibkey": format!("tgt2:{s}"), "entry_type": "book",
+                      "title_latex": "T", "title_unicode": "T" }),
+        )
+        .await
+        .json()
+        .await
+        .unwrap();
+    let src_id = bib1["id"].as_i64().unwrap();
+    let tgt_id = bib2["id"].as_i64().unwrap();
+
+    let csv = format!("source_id,target_id,ref_type\n{src_id},{tgt_id},depends_on");
+    upload_csv(&app, "/api/v1/admin/import/bibitem-refs", &csv).await;
+    let resp = upload_csv(&app, "/api/v1/admin/import/bibitem-refs", &csv).await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    // ON CONFLICT DO NOTHING — second import counts as 1 imported (row processed), 0 failed
+    assert_eq!(body["failed"], 0);
+}
+
+#[tokio::test]
+async fn test_import_bibitem_refs_missing_bibitem_ids() {
+    let app = TestApp::spawn().await;
+    let csv = "source_id,target_id,ref_type\n99991,99992,further_ref";
+    let resp = upload_csv(&app, "/api/v1/admin/import/bibitem-refs", csv).await;
+    assert!(
+        resp.status() == 400 || resp.status() == 422,
+        "missing bibitem IDs must return 4xx, got {}",
+        resp.status()
+    );
+}
+
+#[tokio::test]
+async fn test_import_bibitem_refs_invalid_ref_type() {
+    let app = TestApp::spawn().await;
+    let s = unique_suffix();
+
+    let bib1: serde_json::Value = app
+        .post_json(
+            "/api/v1/bibitems",
+            &json!({ "bibkey": format!("src3:{s}"), "entry_type": "article",
+                      "title_latex": "S", "title_unicode": "S" }),
+        )
+        .await
+        .json()
+        .await
+        .unwrap();
+    let bib2: serde_json::Value = app
+        .post_json(
+            "/api/v1/bibitems",
+            &json!({ "bibkey": format!("tgt3:{s}"), "entry_type": "book",
+                      "title_latex": "T", "title_unicode": "T" }),
+        )
+        .await
+        .json()
+        .await
+        .unwrap();
+    let src_id = bib1["id"].as_i64().unwrap();
+    let tgt_id = bib2["id"].as_i64().unwrap();
+
+    let csv = format!("source_id,target_id,ref_type\n{src_id},{tgt_id},bad_type");
+    let resp = upload_csv(&app, "/api/v1/admin/import/bibitem-refs", &csv).await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["failed"], 1);
+    assert_eq!(body["imported"], 0);
+}
+
+// ============================================================================
+// Bibitem notes import
+// ============================================================================
+
+#[tokio::test]
+async fn test_import_bibitem_notes_requires_auth() {
+    let app = TestApp::spawn().await;
+    let form = reqwest::multipart::Form::new().part(
+        "file",
+        reqwest::multipart::Part::bytes(b"bibitem_id,notes\n1,[]".to_vec())
+            .file_name("test.csv")
+            .mime_str("text/csv")
+            .unwrap(),
+    );
+    let resp = app
+        .client
+        .post(app.url("/api/v1/admin/import/bibitem-notes"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+}
+
+#[tokio::test]
+async fn test_import_bibitem_notes_happy_path() {
+    let app = TestApp::spawn().await;
+    let s = unique_suffix();
+
+    let bib: serde_json::Value = app
+        .post_json(
+            "/api/v1/bibitems",
+            &json!({ "bibkey": format!("bib-notes:{s}"), "entry_type": "book",
+                      "title_latex": "B", "title_unicode": "B" }),
+        )
+        .await
+        .json()
+        .await
+        .unwrap();
+    let bib_id = bib["id"].as_i64().unwrap();
+
+    let csv = format!("bibitem_id,notes\n{bib_id},[]");
+    let resp = upload_csv(&app, "/api/v1/admin/import/bibitem-notes", &csv).await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["imported"], 1);
+    assert_eq!(body["failed"], 0);
+
+    // Verify via snapshot
+    let zip = snapshot_bytes(&app).await;
+    let notes_csv = zip_file_content(&zip, "bibitem_notes/all.csv");
+    assert!(notes_csv.contains(&bib_id.to_string()));
+}
+
+#[tokio::test]
+async fn test_import_bibitem_notes_upsert_updates_existing() {
+    let app = TestApp::spawn().await;
+    let s = unique_suffix();
+
+    let bib: serde_json::Value = app
+        .post_json(
+            "/api/v1/bibitems",
+            &json!({ "bibkey": format!("bib-notes2:{s}"), "entry_type": "book",
+                      "title_latex": "B", "title_unicode": "B" }),
+        )
+        .await
+        .json()
+        .await
+        .unwrap();
+    let bib_id = bib["id"].as_i64().unwrap();
+
+    // First import
+    let csv1 = format!("bibitem_id,notes\n{bib_id},[]");
+    upload_csv(&app, "/api/v1/admin/import/bibitem-notes", &csv1).await;
+
+    // Second import with different notes — should upsert
+    let csv2 = format!("bibitem_id,notes\n{bib_id},[{{}}]");
+    let resp = upload_csv(&app, "/api/v1/admin/import/bibitem-notes", &csv2).await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["failed"], 0);
+
+    // Snapshot should show only one row for this bibitem
+    let zip = snapshot_bytes(&app).await;
+    let notes_csv = zip_file_content(&zip, "bibitem_notes/all.csv");
+    let count = notes_csv
+        .lines()
+        .filter(|l| l.contains(&bib_id.to_string()))
+        .count();
+    assert_eq!(count, 1, "upsert must not create a duplicate row");
+}
+
+#[tokio::test]
+async fn test_import_bibitem_notes_missing_bibitem_id() {
+    let app = TestApp::spawn().await;
+    let csv = "bibitem_id,notes\n99993,[]";
+    let resp = upload_csv(&app, "/api/v1/admin/import/bibitem-notes", csv).await;
+    assert!(
+        resp.status() == 400 || resp.status() == 422,
+        "missing bibitem ID must return 4xx, got {}",
+        resp.status()
+    );
+}
+
+#[tokio::test]
+async fn test_import_bibitem_notes_invalid_json() {
+    let app = TestApp::spawn().await;
+    let s = unique_suffix();
+
+    let bib: serde_json::Value = app
+        .post_json(
+            "/api/v1/bibitems",
+            &json!({ "bibkey": format!("bib-notes3:{s}"), "entry_type": "book",
+                      "title_latex": "B", "title_unicode": "B" }),
+        )
+        .await
+        .json()
+        .await
+        .unwrap();
+    let bib_id = bib["id"].as_i64().unwrap();
+
+    let csv = format!("bibitem_id,notes\n{bib_id},not-valid-json");
+    let resp = upload_csv(&app, "/api/v1/admin/import/bibitem-notes", &csv).await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["failed"], 1);
+    assert_eq!(body["imported"], 0);
+}
+
+// ============================================================================
 // Sequence sync after explicit-ID import
 // ============================================================================
 
