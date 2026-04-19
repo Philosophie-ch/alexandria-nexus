@@ -14,8 +14,12 @@ pub struct BibitemNotes {
     pub id: i64,
     #[crud(required)]
     pub bibitem_id: i64,
-    #[crud(required)]
-    pub notes: serde_json::Value,
+    pub change_request: Option<String>,
+    pub dltc_copyediting_note: Option<String>,
+    pub note_missing: Option<String>,
+    pub note_perso: Option<String>,
+    pub note_stock: Option<String>,
+    pub todo_general: Option<String>,
     #[crud(skip)]
     pub created_at: DateTime<Utc>,
     #[crud(skip)]

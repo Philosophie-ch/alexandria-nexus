@@ -286,12 +286,27 @@ fn build_bibitem_refs_csv(rows: &[BibitemRefsRow]) -> Result<Vec<u8>, HexforgeEr
 /// Build `bibitem_notes` CSV bytes (single file).
 fn build_bibitem_notes_csv(rows: &[BibitemNotes]) -> Result<Vec<u8>, HexforgeError> {
     let mut wtr = csv::Writer::from_writer(vec![]);
-    wtr.write_record(["id", "bibitem_id", "notes"])
-        .map_err(internal_err)?;
+    wtr.write_record([
+        "bibitem_id",
+        "note_perso",
+        "note_stock",
+        "note_missing",
+        "change_request",
+        "dltc_copyediting_note",
+        "todo_general",
+    ])
+    .map_err(internal_err)?;
     for r in rows {
-        let notes_str = serde_json::to_string(&r.notes).map_err(internal_err)?;
-        wtr.write_record([&r.id.to_string(), &r.bibitem_id.to_string(), &notes_str])
-            .map_err(internal_err)?;
+        wtr.write_record([
+            &r.bibitem_id.to_string(),
+            r.note_perso.as_deref().unwrap_or(""),
+            r.note_stock.as_deref().unwrap_or(""),
+            r.note_missing.as_deref().unwrap_or(""),
+            r.change_request.as_deref().unwrap_or(""),
+            r.dltc_copyediting_note.as_deref().unwrap_or(""),
+            r.todo_general.as_deref().unwrap_or(""),
+        ])
+        .map_err(internal_err)?;
     }
     wtr.into_inner().map_err(internal_err)
 }

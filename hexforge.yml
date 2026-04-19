@@ -504,7 +504,12 @@ models:
     table: "bibitem_notes"
     fields:
       bibitem_id: { type: "i64", required: true, unique: true }
-      notes: { type: "jsonb", required: true }
+      note_perso: { type: "string?" }
+      note_stock: { type: "string?" }
+      note_missing: { type: "string?" }
+      change_request: { type: "string?" }
+      dltc_copyediting_note: { type: "string?" }
+      todo_general: { type: "string?" }
     relations:
       bibitem:
         type: belongs_to

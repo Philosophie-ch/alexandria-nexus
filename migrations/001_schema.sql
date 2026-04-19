@@ -177,7 +177,12 @@ CREATE TABLE bibitems (
 CREATE TABLE bibitem_notes (
     id BIGSERIAL PRIMARY KEY,
     bibitem_id BIGINT NOT NULL UNIQUE REFERENCES bibitems(id),
-    notes JSONB NOT NULL,
+    change_request TEXT,
+    dltc_copyediting_note TEXT,
+    note_missing TEXT,
+    note_perso TEXT,
+    note_stock TEXT,
+    todo_general TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
