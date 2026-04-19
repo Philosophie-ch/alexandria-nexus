@@ -5,9 +5,11 @@
 use hexforge::HexforgeError;
 use hexforge::axum_exports::{Json, State};
 
+use crate::adapters::latex_citations::PgCitationResolver;
 use crate::adapters::latex_columns::PgLatexColumnConverter;
 use crate::adapters::latex_to_unicode::PyLatexConverter;
 use crate::logic::full_import::LatexConvertReport;
+use crate::process::latex_columns::convert_all_columns;
 use crate::state::AppState;
 
 /// Convert all `_latex` columns to their `_unicode` equivalents across all entity tables.
@@ -19,7 +21,9 @@ use crate::state::AppState;
 pub async fn convert_latex_columns(
     State(state): State<AppState>,
 ) -> Result<Json<LatexConvertReport>, HexforgeError> {
-    let store = PgLatexColumnConverter::new(state.pool.pool());
-    let report = store.convert_all_columns(&PyLatexConverter).await?;
+    let pool = state.pool.pool();
+    let pg = PgLatexColumnConverter::new(pool);
+    let citation_resolver = PgCitationResolver::new(pool);
+    let report = convert_all_columns(&pg, &PyLatexConverter, &citation_resolver, &pg).await?;
     Ok(Json(report))
 }

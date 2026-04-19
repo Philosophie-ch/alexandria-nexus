@@ -140,6 +140,8 @@ pub struct LatexConvertReport {
     pub columns: Vec<ColumnConvertResult>,
     pub total_updated: usize,
     pub errors: Vec<LatexConvertError>,
+    /// Bibkeys referenced by `\cite*{...}` commands in LaTeX fields but not found in the DB.
+    pub missing_citation_keys: Vec<String>,
 }
 
 /// Stats for one converted column.

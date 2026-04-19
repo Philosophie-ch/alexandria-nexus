@@ -1,4 +1,178 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+
+/// Resolved data for a single bibitem used in citation substitution.
+pub struct CitationData {
+    /// Display name (family name or mononym of first author; editor as fallback).
+    pub author: Option<String>,
+    pub year: Option<i16>,
+}
+
+// =============================================================================
+// substitute_citations
+// =============================================================================
+
+/// Replace `\cite*{...}` commands in a LaTeX string with human-readable text.
+///
+/// - `\citet{key}` → `Author (Year)` (or `A and B (Y)` for multi-key)
+/// - `\citep{key}` / `\cite{key}` → `(Author, Year)`
+/// - `\citeauthor{key}` → `Author`
+/// - `\citeyear{key}` → `Year`
+/// - Unknown / unresolved key → `[key]` placeholder
+///
+/// Unknown keys are left as `[key]` so `pylatexenc` receives clean text and the
+/// caller can surface the missing bibkeys separately.
+pub fn substitute_citations(latex: &str, resolved: &HashMap<String, CitationData>) -> String {
+    let mut result = String::with_capacity(latex.len());
+    let mut rest = latex;
+
+    loop {
+        let Some(cmd_pos) = rest.find("\\cite") else {
+            result.push_str(rest);
+            break;
+        };
+
+        result.push_str(&rest[..cmd_pos]);
+        let cmd_start = &rest[cmd_pos..]; // starts at '\'
+
+        let after_bs = &cmd_start[1..]; // skip '\'
+        let name_end = after_bs
+            .find(|c: char| !c.is_ascii_alphabetic())
+            .unwrap_or(after_bs.len());
+        let cmd_name = &after_bs[..name_end];
+
+        let mut scan = &after_bs[name_end..];
+
+        // optional star (e.g. \citet*)
+        if let Some(s) = scan.strip_prefix('*') {
+            scan = s;
+        }
+
+        // skip optional [...] args
+        while let Some(s) = scan.strip_prefix('[') {
+            if let Some(i) = s.find(']') {
+                scan = &s[i + 1..];
+            } else {
+                break;
+            }
+        }
+
+        let Some(after_brace) = scan.strip_prefix('{') else {
+            result.push_str("\\cite");
+            rest = &rest[cmd_pos + 5..];
+            continue;
+        };
+        let Some(close) = after_brace.find('}') else {
+            result.push_str("\\cite");
+            rest = &rest[cmd_pos + 5..];
+            continue;
+        };
+
+        let arg = &after_brace[..close];
+        // bytes consumed: '\' + name + optional_star_and_brackets (cmd_start.len() - scan.len() - 1)
+        // + '{' + arg + '}'
+        let cmd_len = (cmd_start.len() - scan.len()) + 1 + close + 1;
+
+        let keys: Vec<&str> = arg
+            .split(',')
+            .map(str::trim)
+            .filter(|k| !k.is_empty())
+            .collect();
+
+        if keys.is_empty() {
+            result.push_str(&cmd_start[..cmd_len]);
+        } else {
+            result.push_str(&format_cite(cmd_name, &keys, resolved));
+        }
+
+        rest = &rest[cmd_pos + cmd_len..];
+    }
+
+    result
+}
+
+fn format_cite(cmd_name: &str, keys: &[&str], resolved: &HashMap<String, CitationData>) -> String {
+    match cmd_name {
+        "citep" | "cite" => {
+            let items: Vec<String> = keys
+                .iter()
+                .map(|&k| match resolved.get(k) {
+                    Some(d) => fmt_author_comma_year(k, d),
+                    None => format!("[{k}]"),
+                })
+                .collect();
+            format!("({})", items.join("; "))
+        }
+        "citeauthor" => {
+            let items: Vec<String> = keys
+                .iter()
+                .map(|&k| match resolved.get(k) {
+                    Some(d) => d.author.clone().unwrap_or_else(|| format!("[{k}]")),
+                    None => format!("[{k}]"),
+                })
+                .collect();
+            join_and(&items)
+        }
+        "citeyear" => {
+            let items: Vec<String> = keys
+                .iter()
+                .map(|&k| match resolved.get(k) {
+                    Some(d) => d
+                        .year
+                        .map(|y| y.to_string())
+                        .unwrap_or_else(|| format!("[{k}]")),
+                    None => format!("[{k}]"),
+                })
+                .collect();
+            items.join("; ")
+        }
+        // "citet" and any unknown variant → "Author (Year)" with "and"-joining
+        _ => {
+            let items: Vec<String> = keys
+                .iter()
+                .map(|&k| match resolved.get(k) {
+                    Some(d) => fmt_author_year(k, d),
+                    None => format!("[{k}]"),
+                })
+                .collect();
+            join_and(&items)
+        }
+    }
+}
+
+fn fmt_author_year(bibkey: &str, d: &CitationData) -> String {
+    match (&d.author, d.year) {
+        (Some(a), Some(y)) => format!("{a} ({y})"),
+        (Some(a), None) => a.clone(),
+        (None, Some(y)) => format!("[{bibkey}] ({y})"),
+        (None, None) => format!("[{bibkey}]"),
+    }
+}
+
+fn fmt_author_comma_year(bibkey: &str, d: &CitationData) -> String {
+    match (&d.author, d.year) {
+        (Some(a), Some(y)) => format!("{a}, {y}"),
+        (Some(a), None) => a.clone(),
+        (None, Some(y)) => format!("[{bibkey}], {y}"),
+        (None, None) => format!("[{bibkey}]"),
+    }
+}
+
+/// Join a list of strings using Oxford-"and" format (matching the old Python behaviour).
+fn join_and(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [a] => a.clone(),
+        [a, b] => format!("{a} and {b}"),
+        _ => {
+            let (head, tail) = items.split_at(items.len() - 1);
+            format!("{}, and {}", head.join(", "), tail[0])
+        }
+    }
+}
+
+// =============================================================================
+// extract_cite_keys
+// =============================================================================
 
 /// Extract all unique bibkeys referenced by `\cite*{...}` commands in a LaTeX string.
 ///
@@ -118,5 +292,213 @@ mod tests {
     fn multiple_commands_in_prose() {
         let latex = r"As shown by \citet{a:1} and later confirmed \citep{b:2,c:3}.";
         assert_eq!(extract_cite_keys(latex), vec!["a:1", "b:2", "c:3"]);
+    }
+
+    // =============================================================================
+    // substitute_citations tests
+    // =============================================================================
+
+    fn cd(author: Option<&str>, year: Option<i16>) -> CitationData {
+        CitationData {
+            author: author.map(str::to_string),
+            year,
+        }
+    }
+
+    fn map(pairs: &[(&str, CitationData)]) -> HashMap<String, CitationData> {
+        pairs
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.to_string(),
+                    CitationData {
+                        author: v.author.clone(),
+                        year: v.year,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn substitute_no_citations() {
+        let r = substitute_citations("plain text", &HashMap::new());
+        assert_eq!(r, "plain text");
+    }
+
+    #[test]
+    fn substitute_citet_author_year() {
+        let m = map(&[("smith:2000", cd(Some("Smith"), Some(2000)))]);
+        assert_eq!(
+            substitute_citations(r"\citet{smith:2000}", &m),
+            "Smith (2000)"
+        );
+    }
+
+    #[test]
+    fn substitute_citet_no_year() {
+        let m = map(&[("smith:2000", cd(Some("Smith"), None))]);
+        assert_eq!(substitute_citations(r"\citet{smith:2000}", &m), "Smith");
+    }
+
+    #[test]
+    fn substitute_citet_no_author() {
+        let m = map(&[("x:1999", cd(None, Some(1999)))]);
+        assert_eq!(
+            substitute_citations(r"\citet{x:1999}", &m),
+            "[x:1999] (1999)"
+        );
+    }
+
+    #[test]
+    fn substitute_citep() {
+        let m = map(&[("jones:2010", cd(Some("Jones"), Some(2010)))]);
+        assert_eq!(
+            substitute_citations(r"\citep{jones:2010}", &m),
+            "(Jones, 2010)"
+        );
+    }
+
+    #[test]
+    fn substitute_cite_same_as_citep() {
+        let m = map(&[("jones:2010", cd(Some("Jones"), Some(2010)))]);
+        assert_eq!(
+            substitute_citations(r"\cite{jones:2010}", &m),
+            "(Jones, 2010)"
+        );
+    }
+
+    #[test]
+    fn substitute_citeauthor() {
+        let m = map(&[("a:1", cd(Some("Doe"), Some(2001)))]);
+        assert_eq!(substitute_citations(r"\citeauthor{a:1}", &m), "Doe");
+    }
+
+    #[test]
+    fn substitute_citeyear() {
+        let m = map(&[("a:1", cd(Some("Doe"), Some(2001)))]);
+        assert_eq!(substitute_citations(r"\citeyear{a:1}", &m), "2001");
+    }
+
+    #[test]
+    fn substitute_unknown_key_placeholder() {
+        assert_eq!(
+            substitute_citations(r"\citet{missing:key}", &HashMap::new()),
+            "[missing:key]"
+        );
+    }
+
+    #[test]
+    fn substitute_multi_key_two_authors() {
+        let m = map(&[
+            ("a:1", cd(Some("Alpha"), Some(2000))),
+            ("b:2", cd(Some("Beta"), Some(2001))),
+        ]);
+        assert_eq!(
+            substitute_citations(r"\citet{a:1,b:2}", &m),
+            "Alpha (2000) and Beta (2001)"
+        );
+    }
+
+    #[test]
+    fn substitute_multi_key_three_authors() {
+        let m = map(&[
+            ("a:1", cd(Some("A"), Some(2000))),
+            ("b:2", cd(Some("B"), Some(2001))),
+            ("c:3", cd(Some("C"), Some(2002))),
+        ]);
+        assert_eq!(
+            substitute_citations(r"\citet{a:1,b:2,c:3}", &m),
+            "A (2000), B (2001), and C (2002)"
+        );
+    }
+
+    #[test]
+    fn substitute_star_variant() {
+        let m = map(&[("s:1", cd(Some("Star"), Some(1990)))]);
+        assert_eq!(substitute_citations(r"\citet*{s:1}", &m), "Star (1990)");
+    }
+
+    #[test]
+    fn substitute_optional_args_skipped() {
+        let m = map(&[("f:1", cd(Some("Foo"), Some(2005)))]);
+        assert_eq!(
+            substitute_citations(r"\citep[see][p.5]{f:1}", &m),
+            "(Foo, 2005)"
+        );
+    }
+
+    #[test]
+    fn substitute_prose_multiple_commands() {
+        let m = map(&[
+            ("a:1", cd(Some("Alpha"), Some(2000))),
+            ("b:2", cd(Some("Beta"), Some(2001))),
+        ]);
+        let latex = r"See \citet{a:1} and also \citep{b:2}.";
+        let result = substitute_citations(latex, &m);
+        assert_eq!(result, "See Alpha (2000) and also (Beta, 2001).");
+    }
+
+    #[test]
+    fn substitute_citeyear_no_year_placeholder() {
+        let m = map(&[("a:1", cd(Some("Doe"), None))]);
+        assert_eq!(substitute_citations(r"\citeyear{a:1}", &m), "[a:1]");
+    }
+
+    #[test]
+    fn substitute_citeauthor_no_author_placeholder() {
+        let m = map(&[("a:1", cd(None, Some(2000)))]);
+        assert_eq!(substitute_citations(r"\citeauthor{a:1}", &m), "[a:1]");
+    }
+
+    #[test]
+    fn substitute_citep_multi_key() {
+        let m = map(&[
+            ("a:1", cd(Some("Alpha"), Some(2000))),
+            ("b:2", cd(Some("Beta"), Some(2001))),
+        ]);
+        assert_eq!(
+            substitute_citations(r"\citep{a:1,b:2}", &m),
+            "(Alpha, 2000; Beta, 2001)"
+        );
+    }
+
+    #[test]
+    fn substitute_multi_key_partial_unknown() {
+        // Known key expands; unknown key becomes [key] placeholder
+        let m = map(&[("known:1", cd(Some("Known"), Some(2000)))]);
+        assert_eq!(
+            substitute_citations(r"\citet{known:1,missing:x}", &m),
+            "Known (2000) and [missing:x]"
+        );
+    }
+
+    #[test]
+    fn substitute_citep_no_author_no_year() {
+        let m = map(&[("x:1", cd(None, None))]);
+        assert_eq!(substitute_citations(r"\citep{x:1}", &m), "([x:1])");
+    }
+
+    #[test]
+    fn substitute_unclosed_brace_left_verbatim() {
+        // No closing '}' — no valid command, whole string passes through unchanged
+        let result = substitute_citations(r"\citet{unclosed", &HashMap::new());
+        assert_eq!(result, r"\citet{unclosed");
+    }
+
+    #[test]
+    fn substitute_non_cite_command_untouched() {
+        // \citealp is not a standard variant we handle specially, but must not crash
+        let m = map(&[("a:1", cd(Some("A"), Some(2000)))]);
+        let result = substitute_citations(r"\citealp{a:1}", &m);
+        // Falls into the `_` arm (treated like \citet)
+        assert_eq!(result, "A (2000)");
+    }
+
+    #[test]
+    fn substitute_text_before_and_after_preserved() {
+        let m = map(&[("k:1", cd(Some("K"), Some(1)))]);
+        let result = substitute_citations(r"Before \citet{k:1} after.", &m);
+        assert_eq!(result, "Before K (1) after.");
     }
 }

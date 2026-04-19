@@ -1,15 +1,9 @@
-//! Bulk LaTeX → Unicode column converter.
-//!
-//! Knows which tables and columns to convert; delegates the actual string
-//! conversion to the process layer via `LatexBatchConverter`.
+//! Postgres implementations of `LatexColumnFetcher` and `LatexColumnWriter`.
 
 use hexforge::HexforgeError;
 use hexforge::db_exports::{FromRow, PgPool, query, query_as};
 
-use crate::logic::full_import::{
-    ColumnConvertResult, ConvertOutcome, LatexConvertError, LatexConvertReport,
-};
-use crate::process::latex_columns::{LatexBatchConverter, convert_batches};
+use crate::process::latex_columns::{ColumnBatch, LatexColumnFetcher, LatexColumnWriter};
 
 /// `(table, latex_col, unicode_col)` — all 15 pairs to process.
 const COLUMN_SPECS: &[(&str, &str, &str)] = &[
@@ -83,68 +77,31 @@ impl<'a> PgLatexColumnConverter<'a> {
             .map_err(HexforgeError::data_source)?;
         Ok(())
     }
+}
 
-    /// Convert all 15 columns in order and return a full report.
-    pub async fn convert_all_columns(
-        &self,
-        converter: &impl LatexBatchConverter,
-    ) -> Result<LatexConvertReport, HexforgeError> {
-        // 1. Fetch all columns' data
-        let mut all_ids: Vec<Vec<i64>> = Vec::with_capacity(COLUMN_SPECS.len());
-        let mut all_texts: Vec<Vec<String>> = Vec::with_capacity(COLUMN_SPECS.len());
-
-        for &(table, latex_col, _unicode_col) in COLUMN_SPECS {
+impl LatexColumnFetcher for PgLatexColumnConverter<'_> {
+    async fn fetch_all_latex_columns(&self) -> Result<Vec<ColumnBatch>, HexforgeError> {
+        let mut batches = Vec::with_capacity(COLUMN_SPECS.len());
+        for &(table, latex_col, unicode_col) in COLUMN_SPECS {
             let rows = self.fetch_column(table, latex_col).await?;
-            let (ids, texts): (Vec<i64>, Vec<String>) =
-                rows.into_iter().map(|r| (r.id, r.latex)).unzip();
-            all_ids.push(ids);
-            all_texts.push(texts);
-        }
-
-        // 2. Convert all batches via process layer
-        let all_outcomes = convert_batches(converter, all_texts).await?;
-
-        // 3. Write back results, build report
-        let mut column_results = Vec::with_capacity(COLUMN_SPECS.len());
-        let mut errors: Vec<LatexConvertError> = Vec::new();
-        let mut total_updated = 0usize;
-
-        for ((&(table, _latex_col, unicode_col), ids), outcomes) in
-            COLUMN_SPECS.iter().zip(all_ids.iter()).zip(all_outcomes)
-        {
-            let mut ok_updates: Vec<(i64, String)> = Vec::new();
-
-            for (&id, outcome) in ids.iter().zip(outcomes) {
-                match outcome {
-                    ConvertOutcome::Ok(result) => ok_updates.push((id, result)),
-                    ConvertOutcome::Err {
-                        original: _,
-                        message,
-                    } => {
-                        errors.push(LatexConvertError {
-                            table,
-                            column: unicode_col,
-                            id,
-                            error: message,
-                        });
-                    }
-                }
-            }
-
-            let updated = ok_updates.len();
-            self.update_column(table, unicode_col, &ok_updates).await?;
-            total_updated += updated;
-            column_results.push(ColumnConvertResult {
+            batches.push(ColumnBatch {
                 table,
                 column: unicode_col,
-                updated,
+                rows: rows.into_iter().map(|r| (r.id, r.latex)).collect(),
             });
         }
+        Ok(batches)
+    }
+}
 
-        Ok(LatexConvertReport {
-            columns: column_results,
-            total_updated,
-            errors,
-        })
+impl LatexColumnWriter for PgLatexColumnConverter<'_> {
+    async fn write_unicode_column(
+        &self,
+        table: &'static str,
+        column: &'static str,
+        rows: &[(i64, String)],
+    ) -> Result<usize, HexforgeError> {
+        self.update_column(table, column, rows).await?;
+        Ok(rows.len())
     }
 }
