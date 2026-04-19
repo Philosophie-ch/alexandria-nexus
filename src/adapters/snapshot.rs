@@ -441,9 +441,15 @@ pub fn build_snapshot_zip(data: SnapshotData) -> Result<Vec<u8>, HexforgeError> 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::process::snapshot::SnapshotData;
+    use std::io::Read;
+
     use chrono::Utc;
+
+    use super::*;
+    use crate::domain::{BibItem, EntryType};
+    use crate::process::snapshot::SnapshotData;
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
     fn empty_snapshot() -> SnapshotData {
         SnapshotData {
@@ -462,6 +468,79 @@ mod tests {
         }
     }
 
+    fn make_author(id: i64, author_key: &str, family_name: &str) -> Author {
+        Author {
+            id,
+            author_key: author_key.to_string(),
+            family_name_latex: Some(family_name.to_string()),
+            family_name_unicode: Some(family_name.to_string()),
+            given_name_latex: None,
+            given_name_unicode: None,
+            mononym_latex: None,
+            mononym_unicode: None,
+            shorthand_latex: None,
+            shorthand_unicode: None,
+            famous_name_latex: None,
+            famous_name_unicode: None,
+            name_variants_latex: None,
+            name_variants_unicode: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    fn make_bibitem(id: i64, bibkey: &str) -> BibItem {
+        BibItem {
+            id,
+            bibkey: bibkey.to_string(),
+            entry_type: EntryType::Book,
+            title_latex: "Title".to_string(),
+            title_unicode: "Title".to_string(),
+            date_year: None,
+            date_year_2_hyphen: None,
+            date_year_2_slash: None,
+            date_month: None,
+            date_day: None,
+            date_is_no_date: false,
+            pubstate: None,
+            booktitle_latex: None,
+            booktitle_unicode: None,
+            journal_id: None,
+            publisher_id: None,
+            address: None,
+            volume: None,
+            number: None,
+            pages: None,
+            eid: None,
+            series_id: None,
+            edition: None,
+            institution_id: None,
+            school_id: None,
+            type_field: None,
+            doi: None,
+            url: None,
+            eprint: None,
+            urn: None,
+            crossref_id: None,
+            issuetitle_latex: None,
+            issuetitle_unicode: None,
+            note_latex: None,
+            note_unicode: None,
+            extra_note_latex: None,
+            extra_note_unicode: None,
+            langid: None,
+            is_translation: false,
+            epoch: None,
+            options: None,
+            shorthand: None,
+            person_id: None,
+            has_fulltext: false,
+            fulltext_path: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
     fn zip_file_names(bytes: &[u8]) -> Vec<String> {
         let cursor = std::io::Cursor::new(bytes);
         let mut archive = zip::ZipArchive::new(cursor).unwrap();
@@ -471,6 +550,19 @@ mod tests {
         names.sort();
         names
     }
+
+    fn zip_file_content(bytes: &[u8], path: &str) -> String {
+        let cursor = std::io::Cursor::new(bytes);
+        let mut archive = zip::ZipArchive::new(cursor).unwrap();
+        let mut file = archive
+            .by_name(path)
+            .unwrap_or_else(|_| panic!("'{path}' not found in ZIP"));
+        let mut content = String::new();
+        file.read_to_string(&mut content).unwrap();
+        content
+    }
+
+    // ── Prefix helpers ────────────────────────────────────────────────────────
 
     #[test]
     fn bibkey_prefix_two_char() {
@@ -501,65 +593,129 @@ mod tests {
         assert_eq!(author_key_prefix(""), "_");
     }
 
+    // ── ZIP structure ─────────────────────────────────────────────────────────
+
     #[test]
     fn empty_snapshot_produces_valid_zip() {
         let bytes = build_snapshot_zip(empty_snapshot()).unwrap();
         let names = zip_file_names(&bytes);
-        assert!(names.contains(&"journal/all.csv".to_string()));
-        assert!(names.contains(&"publisher/all.csv".to_string()));
-        assert!(names.contains(&"institution/all.csv".to_string()));
-        assert!(names.contains(&"school/all.csv".to_string()));
-        assert!(names.contains(&"series/all.csv".to_string()));
-        assert!(names.contains(&"keyword/all.csv".to_string()));
+        for table in &[
+            "journal",
+            "publisher",
+            "institution",
+            "school",
+            "series",
+            "keyword",
+        ] {
+            assert!(
+                names.contains(&format!("{table}/all.csv")),
+                "missing {table}/all.csv"
+            );
+        }
         assert!(names.contains(&"bibitem_refs/all.csv".to_string()));
         assert!(names.contains(&"bibitem_notes/all.csv".to_string()));
-        assert_eq!(names.len(), 8); // only small tables — no prefix splits for empty data
+        assert_eq!(names.len(), 8);
     }
 
     #[test]
     fn snapshot_splits_authors_by_prefix() {
         let mut data = empty_snapshot();
         data.authors = vec![
-            Author {
-                id: 1,
-                author_key: "kant".to_string(),
-                given_name_latex: None,
-                given_name_unicode: None,
-                family_name_latex: None,
-                family_name_unicode: Some("Kant".to_string()),
-                mononym_latex: None,
-                mononym_unicode: None,
-                shorthand_latex: None,
-                shorthand_unicode: None,
-                famous_name_latex: None,
-                famous_name_unicode: None,
-                name_variants_latex: None,
-                name_variants_unicode: None,
-                created_at: Utc::now(),
-                updated_at: Utc::now(),
-            },
-            Author {
-                id: 2,
-                author_key: "aristotle".to_string(),
-                given_name_latex: None,
-                given_name_unicode: None,
-                family_name_latex: None,
-                family_name_unicode: Some("Aristotle".to_string()),
-                mononym_latex: None,
-                mononym_unicode: None,
-                shorthand_latex: None,
-                shorthand_unicode: None,
-                famous_name_latex: None,
-                famous_name_unicode: None,
-                name_variants_latex: None,
-                name_variants_unicode: None,
-                created_at: Utc::now(),
-                updated_at: Utc::now(),
-            },
+            make_author(1, "kant", "Kant"),
+            make_author(2, "aristotle", "Aristotle"),
         ];
         let bytes = build_snapshot_zip(data).unwrap();
         let names = zip_file_names(&bytes);
         assert!(names.contains(&"author/k.csv".to_string()));
         assert!(names.contains(&"author/a.csv".to_string()));
+    }
+
+    #[test]
+    fn snapshot_splits_bibitems_by_prefix() {
+        let mut data = empty_snapshot();
+        data.bibitems = vec![
+            make_bibitem(1, "kant:1781"),
+            make_bibitem(2, "aristotle:350"),
+        ];
+        let bytes = build_snapshot_zip(data).unwrap();
+        let names = zip_file_names(&bytes);
+        assert!(names.contains(&"bibitem/ka.csv".to_string()));
+        assert!(names.contains(&"bibitem/ar.csv".to_string()));
+    }
+
+    #[test]
+    fn snapshot_junction_files_follow_bibitem_prefix() {
+        let mut data = empty_snapshot();
+        data.bibitems = vec![make_bibitem(1, "kant:1781")];
+        let bytes = build_snapshot_zip(data).unwrap();
+        let names = zip_file_names(&bytes);
+        assert!(names.contains(&"bibitem_authors/ka.csv".to_string()));
+        assert!(names.contains(&"bibitem_keywords/ka.csv".to_string()));
+    }
+
+    // ── CSV content ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn snapshot_bibitem_csv_has_ids_format_headers() {
+        let mut data = empty_snapshot();
+        data.bibitems = vec![make_bibitem(1, "kant:1781")];
+        let bytes = build_snapshot_zip(data).unwrap();
+        let csv = zip_file_content(&bytes, "bibitem/ka.csv");
+        let header = csv.lines().next().unwrap();
+        assert!(header.contains("bibkey"), "missing bibkey column");
+        assert!(header.contains("entry_type"), "missing entry_type column");
+        assert!(header.contains("author_ids"), "missing author_ids column");
+        assert!(header.contains("keyword_ids"), "missing keyword_ids column");
+    }
+
+    #[test]
+    fn snapshot_bibitem_csv_contains_data_row() {
+        let mut data = empty_snapshot();
+        data.bibitems = vec![make_bibitem(42, "kant:1781")];
+        let bytes = build_snapshot_zip(data).unwrap();
+        let csv = zip_file_content(&bytes, "bibitem/ka.csv");
+        assert!(csv.contains("kant:1781"), "bibkey not found in CSV");
+        assert!(csv.contains("42"), "id not found in CSV");
+        assert!(csv.contains("book"), "entry_type not found in CSV");
+    }
+
+    #[test]
+    fn snapshot_author_csv_has_correct_headers_and_content() {
+        let mut data = empty_snapshot();
+        data.authors = vec![make_author(7, "kant", "Kant")];
+        let bytes = build_snapshot_zip(data).unwrap();
+        let csv = zip_file_content(&bytes, "author/k.csv");
+        let header = csv.lines().next().unwrap();
+        assert!(header.contains("author_key"), "missing author_key column");
+        assert!(
+            header.contains("family_name_latex"),
+            "missing family_name_latex column"
+        );
+        assert!(csv.contains("kant"), "author_key not found in CSV");
+        assert!(csv.contains("Kant"), "family_name not found in CSV");
+    }
+
+    #[test]
+    fn snapshot_bibitem_authors_csv_has_correct_headers() {
+        let mut data = empty_snapshot();
+        data.bibitems = vec![make_bibitem(1, "kant:1781")];
+        data.bibitem_authors = vec![BibitemAuthorsRow {
+            bibitem_id: 1,
+            author_id: 99,
+            role: "author".to_string(),
+            position: 1,
+            name_variant_latex: None,
+            name_variant_unicode: None,
+        }];
+        let bytes = build_snapshot_zip(data).unwrap();
+        let csv = zip_file_content(&bytes, "bibitem_authors/ka.csv");
+        let header = csv.lines().next().unwrap();
+        assert!(header.contains("bibitem_id"));
+        assert!(header.contains("author_id"));
+        assert!(header.contains("role"));
+        assert!(header.contains("position"));
+        // Data row
+        assert!(csv.contains("99"), "author_id not found in CSV");
+        assert!(csv.contains("author"), "role not found in CSV");
     }
 }
