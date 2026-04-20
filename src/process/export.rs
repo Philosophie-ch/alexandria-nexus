@@ -93,7 +93,7 @@ async fn fetch_and_build<T>(
     all: bool,
     ids: Option<Vec<i64>>,
     keys: Option<Vec<String>>,
-    build_csv: impl FnOnce(&[T]) -> Vec<Vec<String>>,
+    build_rows: impl FnOnce(&[T]) -> Vec<Vec<String>>,
 ) -> Result<Vec<Vec<String>>, ExportError> {
     let entities = if all {
         fetcher.fetch_all().await?
@@ -105,7 +105,7 @@ async fn fetch_and_build<T>(
         return Err(ExportError::BadRequest);
     };
 
-    Ok(build_csv(&entities))
+    Ok(build_rows(&entities))
 }
 
 /// Export authors as CSV rows.
@@ -213,9 +213,9 @@ pub async fn export_bibitems(
     };
 
     match req.format {
-        ExportFormat::Ids => assemble_bibitems_ids_csv(&bibitems, junction_fetcher).await,
+        ExportFormat::Ids => assemble_bibitem_id_rows(&bibitems, junction_fetcher).await,
         ExportFormat::Expanded => {
-            assemble_bibitems_expanded_csv(
+            assemble_bibitem_expanded_rows(
                 &bibitems,
                 junction_fetcher,
                 author_batch,
@@ -233,7 +233,7 @@ pub async fn export_bibitems(
 }
 
 /// Fetch junction data and build bibitems IDs CSV rows.
-async fn assemble_bibitems_ids_csv(
+async fn assemble_bibitem_id_rows(
     bibitems: &[BibItem],
     junction_fetcher: &impl ExportJunctionFetcher,
 ) -> Result<Vec<Vec<String>>, ExportError> {
@@ -263,7 +263,7 @@ async fn assemble_bibitems_ids_csv(
 
 /// Fetch all related data and build bibitems expanded CSV rows.
 #[allow(clippy::too_many_arguments)]
-async fn assemble_bibitems_expanded_csv(
+async fn assemble_bibitem_expanded_rows(
     bibitems: &[BibItem],
     junction_fetcher: &impl ExportJunctionFetcher,
     author_batch: &impl EntityBatchFetcher<Author>,
