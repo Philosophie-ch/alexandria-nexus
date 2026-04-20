@@ -10,11 +10,11 @@ use hexforge::{HexforgeError, ValidationError};
 use serde::Deserialize;
 
 use crate::adapters::import::{
-    PgBibitemJunctionStore, PgBibitemNotesStore, PgBibitemRefsStore, PgNameVariantStore,
-    PgReferenceStore, PgSequenceSyncer, parse_authors_csv, parse_bibitem_notes_csv,
-    parse_bibitem_refs_csv, parse_bibitems_csv, parse_institutions_csv, parse_journals_csv,
-    parse_keywords_csv, parse_name_variants_csv, parse_publishers_csv, parse_schools_csv,
-    parse_series_csv,
+    PgBibitemJunctionStore, PgBibitemNotesStore, PgBibitemRefsStore, PgEntityBatchLookup,
+    PgNameVariantStore, PgReferenceStore, PgSequenceSyncer, parse_authors_csv,
+    parse_bibitem_notes_csv, parse_bibitem_refs_csv, parse_bibitems_csv, parse_institutions_csv,
+    parse_journals_csv, parse_keywords_csv, parse_name_variants_csv, parse_publishers_csv,
+    parse_schools_csv, parse_series_csv,
 };
 use crate::logic::import::{BibitemImportResult, ImportResponse};
 use crate::process::import;
@@ -65,9 +65,11 @@ pub async fn import_authors(
 ) -> Result<Json<ImportResponse>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
     let (rows, errors) = parse_authors_csv(&data)?;
+    let batch_lookup = PgEntityBatchLookup::new(&state.author_ds);
     let syncer = PgSequenceSyncer::new(state.pool.pool());
     let result = import::import_authors(
         &state.author_ds,
+        &batch_lookup,
         &syncer,
         rows,
         errors,
@@ -87,9 +89,11 @@ pub async fn import_journals(
 ) -> Result<Json<ImportResponse>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
     let (rows, errors) = parse_journals_csv(&data)?;
+    let batch_lookup = PgEntityBatchLookup::new(&state.journal_ds);
     let syncer = PgSequenceSyncer::new(state.pool.pool());
     let result = import::import_journals(
         &state.journal_ds,
+        &batch_lookup,
         &syncer,
         rows,
         errors,
@@ -109,9 +113,11 @@ pub async fn import_publishers(
 ) -> Result<Json<ImportResponse>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
     let (rows, errors) = parse_publishers_csv(&data)?;
+    let batch_lookup = PgEntityBatchLookup::new(&state.publisher_ds);
     let syncer = PgSequenceSyncer::new(state.pool.pool());
     let result = import::import_publishers(
         &state.publisher_ds,
+        &batch_lookup,
         &syncer,
         rows,
         errors,
@@ -130,8 +136,11 @@ pub async fn import_institutions(
 ) -> Result<Json<ImportResponse>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
     let (rows, errors) = parse_institutions_csv(&data)?;
+    let batch_lookup = PgEntityBatchLookup::new(&state.institution_ds);
     let syncer = PgSequenceSyncer::new(state.pool.pool());
-    let result = import::import_institutions(&state.institution_ds, &syncer, rows, errors).await?;
+    let result =
+        import::import_institutions(&state.institution_ds, &batch_lookup, &syncer, rows, errors)
+            .await?;
     Ok(Json(result))
 }
 
@@ -144,8 +153,10 @@ pub async fn import_schools(
 ) -> Result<Json<ImportResponse>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
     let (rows, errors) = parse_schools_csv(&data)?;
+    let batch_lookup = PgEntityBatchLookup::new(&state.school_ds);
     let syncer = PgSequenceSyncer::new(state.pool.pool());
-    let result = import::import_schools(&state.school_ds, &syncer, rows, errors).await?;
+    let result =
+        import::import_schools(&state.school_ds, &batch_lookup, &syncer, rows, errors).await?;
     Ok(Json(result))
 }
 
@@ -158,8 +169,10 @@ pub async fn import_series(
 ) -> Result<Json<ImportResponse>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
     let (rows, errors) = parse_series_csv(&data)?;
+    let batch_lookup = PgEntityBatchLookup::new(&state.series_ds);
     let syncer = PgSequenceSyncer::new(state.pool.pool());
-    let result = import::import_series(&state.series_ds, &syncer, rows, errors).await?;
+    let result =
+        import::import_series(&state.series_ds, &batch_lookup, &syncer, rows, errors).await?;
     Ok(Json(result))
 }
 
@@ -172,8 +185,10 @@ pub async fn import_keywords(
 ) -> Result<Json<ImportResponse>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
     let (rows, errors) = parse_keywords_csv(&data)?;
+    let batch_lookup = PgEntityBatchLookup::new(&state.keyword_ds);
     let syncer = PgSequenceSyncer::new(state.pool.pool());
-    let result = import::import_keywords(&state.keyword_ds, &syncer, rows, errors).await?;
+    let result =
+        import::import_keywords(&state.keyword_ds, &batch_lookup, &syncer, rows, errors).await?;
     Ok(Json(result))
 }
 

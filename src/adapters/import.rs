@@ -8,7 +8,7 @@
 use std::collections::HashSet;
 
 use hexforge::db_exports::{FromRow, PgPool, query, query_as, query_scalar};
-use hexforge::{HexforgeError, ValidationError};
+use hexforge::{DataStore, HexforgeError, ValidationError};
 
 use crate::domain::{AuthorRole, CreateBibItem, EntryType};
 use crate::logic::import::{
@@ -17,8 +17,8 @@ use crate::logic::import::{
     ParsedNameVariantRow, ParsedPublisherRow, ParsedSchoolRow, ParsedSeriesRow,
 };
 use crate::process::import::{
-    BibitemJunctionStore, BibitemNotesData, BibitemNotesStore, BibitemRefsStore, NameVariantStore,
-    ReferenceStore, SequenceSyncer,
+    BibitemJunctionStore, BibitemNotesData, BibitemNotesStore, BibitemRefsStore, EntityBatchLookup,
+    NameVariantStore, ReferenceStore, SequenceSyncer,
 };
 
 // =============================================================================
@@ -374,6 +374,34 @@ impl BibitemNotesStore for PgBibitemNotesStore<'_> {
         .await
         .map_err(HexforgeError::data_source)?;
         Ok(())
+    }
+}
+
+// =============================================================================
+// PgEntityBatchLookup — batch fetch entities by IDs for import
+// =============================================================================
+
+/// Postgres implementation of [`EntityBatchLookup`].
+pub struct PgEntityBatchLookup<'a, T: hexforge::PgEntity, Q> {
+    ds: &'a DataStore<T, Q>,
+}
+
+impl<'a, T: hexforge::PgEntity, Q> PgEntityBatchLookup<'a, T, Q> {
+    pub fn new(ds: &'a DataStore<T, Q>) -> Self {
+        Self { ds }
+    }
+}
+
+impl<T, Q> EntityBatchLookup<T> for PgEntityBatchLookup<'_, T, Q>
+where
+    T: hexforge::PgEntity + Clone + Send + Sync + Unpin,
+    Q: hexforge::PgQuery + 'static,
+{
+    async fn find_by_ids(&self, ids: &[i64]) -> Result<Vec<T>, HexforgeError> {
+        self.ds
+            .find_by_ids(ids)
+            .await
+            .map_err(HexforgeError::data_source)
     }
 }
 

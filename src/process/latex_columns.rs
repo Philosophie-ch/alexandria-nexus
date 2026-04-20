@@ -97,10 +97,9 @@ pub async fn convert_all_columns(
     // Convert via subprocess
     let all_outcomes = convert_batches(converter, per_batch).await?;
 
-    // Write back and accumulate report
-    let mut column_results = Vec::with_capacity(batches.len());
+    // Process outcomes into per-column updates and errors (no I/O)
+    let mut per_batch_updates: Vec<Vec<(i64, String)>> = Vec::with_capacity(batches.len());
     let mut errors: Vec<LatexConvertError> = Vec::new();
-    let mut total_updated = 0usize;
 
     for (batch, outcomes) in batches.iter().zip(all_outcomes) {
         let mut ok_updates: Vec<(i64, String)> = Vec::new();
@@ -115,17 +114,26 @@ pub async fn convert_all_columns(
                 }),
             }
         }
-        let updated = ok_updates.len();
-        writer
-            .write_unicode_column(batch.table, batch.column, &ok_updates)
-            .await?;
-        total_updated += updated;
-        column_results.push(ColumnConvertResult {
+        per_batch_updates.push(ok_updates);
+    }
+
+    // Write all columns concurrently
+    let write_counts =
+        futures::future::try_join_all(batches.iter().zip(per_batch_updates.iter()).map(
+            |(batch, updates)| writer.write_unicode_column(batch.table, batch.column, updates),
+        ))
+        .await?;
+
+    let total_updated: usize = write_counts.iter().sum();
+    let column_results: Vec<ColumnConvertResult> = batches
+        .iter()
+        .zip(write_counts)
+        .map(|(batch, updated)| ColumnConvertResult {
             table: batch.table,
             column: batch.column,
             updated,
-        });
-    }
+        })
+        .collect();
 
     Ok(LatexConvertReport {
         columns: column_results,

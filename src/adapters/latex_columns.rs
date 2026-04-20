@@ -81,16 +81,18 @@ impl<'a> PgLatexColumnConverter<'a> {
 
 impl LatexColumnFetcher for PgLatexColumnConverter<'_> {
     async fn fetch_all_latex_columns(&self) -> Result<Vec<ColumnBatch>, HexforgeError> {
-        let mut batches = Vec::with_capacity(COLUMN_SPECS.len());
-        for &(table, latex_col, unicode_col) in COLUMN_SPECS {
-            let rows = self.fetch_column(table, latex_col).await?;
-            batches.push(ColumnBatch {
-                table,
-                column: unicode_col,
-                rows: rows.into_iter().map(|r| (r.id, r.latex)).collect(),
-            });
-        }
-        Ok(batches)
+        let fetcher = self;
+        futures::future::try_join_all(COLUMN_SPECS.iter().map(
+            |&(table, latex_col, unicode_col)| async move {
+                let rows = fetcher.fetch_column(table, latex_col).await?;
+                Ok::<ColumnBatch, HexforgeError>(ColumnBatch {
+                    table,
+                    column: unicode_col,
+                    rows: rows.into_iter().map(|r| (r.id, r.latex)).collect(),
+                })
+            },
+        ))
+        .await
     }
 }
 

@@ -6,7 +6,7 @@
 //! **Architecture:** This module defines WHAT operations are needed via traits.
 //! Concrete I/O implementations live in `crate::adapters::import`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 
 use crate::domain::{
@@ -38,6 +38,14 @@ use hexforge::{DataSource, HexforgeError, ValidationError};
 // =============================================================================
 // Traits — contracts for I/O operations that adapters implement
 // =============================================================================
+
+/// Contract for batch-fetching entities by IDs.
+pub trait EntityBatchLookup<T>: Send + Sync {
+    fn find_by_ids(
+        &self,
+        ids: &[i64],
+    ) -> impl Future<Output = Result<Vec<T>, HexforgeError>> + Send;
+}
 
 /// Contract for syncing a PostgreSQL sequence to the current max ID after bulk insert.
 pub trait SequenceSyncer: Send + Sync {
@@ -136,6 +144,7 @@ pub trait ReferenceStore: Send + Sync {
 /// Import authors from parsed CSV rows.
 pub async fn import_authors(
     author_ds: &impl DataSource<crate::domain::Author, Id = i64, Error = hexforge::DataSourceError>,
+    batch_lookup: &impl EntityBatchLookup<crate::domain::Author>,
     syncer: &impl SequenceSyncer,
     rows: Vec<ParsedAuthorRow>,
     mut errors: Vec<ImportRowError>,
@@ -144,14 +153,21 @@ pub async fn import_authors(
     let mut imported = 0usize;
     let mut updated = 0usize;
 
+    let source_ids: Vec<i64> = rows.iter().filter_map(|r| r.source_id).collect();
+    let existing_map: HashMap<i64, crate::domain::Author> = batch_lookup
+        .find_by_ids(&source_ids)
+        .await?
+        .into_iter()
+        .map(|e| (e.id, e))
+        .collect();
+
     for row in rows {
         let row_num = row.row_num;
         let author_key = row.author_key;
 
-        // Check if this is an update (CSV has ID that exists in DB)
         if let Some(id) = row.source_id {
-            match author_ds.find_by_id(&id).await {
-                Ok(Some(existing)) => {
+            match existing_map.get(&id) {
+                Some(existing) => {
                     if existing.author_key != author_key {
                         let msg = format!(
                             "ID {id} exists but has key '{}', CSV has '{author_key}'",
@@ -187,7 +203,7 @@ pub async fn import_authors(
                         });
                         continue;
                     }
-                    let merged = update_author_transform(update_dto, existing);
+                    let merged = update_author_transform(update_dto, existing.clone());
                     match author_ds.update(&id, merged).await {
                         Ok(_) => updated += 1,
                         Err(e) => errors.push(ImportRowError {
@@ -198,7 +214,7 @@ pub async fn import_authors(
                     }
                     continue;
                 }
-                Ok(None) => {
+                None => {
                     // ID not in DB — create with this ID
                     let dto = CreateAuthor {
                         author_key: author_key.clone(),
@@ -233,14 +249,6 @@ pub async fn import_authors(
                             error: format_insert_error(e),
                         }),
                     }
-                    continue;
-                }
-                Err(e) => {
-                    errors.push(ImportRowError {
-                        row: row_num,
-                        identifier: author_key,
-                        error: format!("DB lookup error: {e}"),
-                    });
                     continue;
                 }
             }
@@ -310,6 +318,7 @@ pub async fn import_authors(
 /// Import journals from parsed CSV rows.
 pub async fn import_journals(
     journal_ds: &impl DataSource<crate::domain::Journal, Id = i64, Error = hexforge::DataSourceError>,
+    batch_lookup: &impl EntityBatchLookup<crate::domain::Journal>,
     syncer: &impl SequenceSyncer,
     rows: Vec<ParsedJournalRow>,
     mut errors: Vec<ImportRowError>,
@@ -318,14 +327,21 @@ pub async fn import_journals(
     let mut imported = 0usize;
     let mut updated = 0usize;
 
+    let source_ids: Vec<i64> = rows.iter().filter_map(|r| r.source_id).collect();
+    let existing_map: HashMap<i64, crate::domain::Journal> = batch_lookup
+        .find_by_ids(&source_ids)
+        .await?
+        .into_iter()
+        .map(|e| (e.id, e))
+        .collect();
+
     for row in rows {
         let row_num = row.row_num;
         let journal_key = row.journal_key;
 
-        // Check if this is an update (CSV has ID that exists in DB)
         if let Some(id) = row.source_id {
-            match journal_ds.find_by_id(&id).await {
-                Ok(Some(existing)) => {
+            match existing_map.get(&id) {
+                Some(existing) => {
                     if existing.journal_key != journal_key {
                         let msg = format!(
                             "ID {id} exists but has key '{}', CSV has '{journal_key}'",
@@ -353,7 +369,7 @@ pub async fn import_journals(
                         });
                         continue;
                     }
-                    let merged = update_journal_transform(update_dto, existing);
+                    let merged = update_journal_transform(update_dto, existing.clone());
                     match journal_ds.update(&id, merged).await {
                         Ok(_) => updated += 1,
                         Err(e) => errors.push(ImportRowError {
@@ -364,7 +380,7 @@ pub async fn import_journals(
                     }
                     continue;
                 }
-                Ok(None) => {
+                None => {
                     // ID not in DB — create with this ID
                     let dto = CreateJournal {
                         journal_key: journal_key.clone(),
@@ -391,14 +407,6 @@ pub async fn import_journals(
                             error: format_insert_error(e),
                         }),
                     }
-                    continue;
-                }
-                Err(e) => {
-                    errors.push(ImportRowError {
-                        row: row_num,
-                        identifier: journal_key,
-                        error: format!("DB lookup error: {e}"),
-                    });
                     continue;
                 }
             }
@@ -464,6 +472,7 @@ pub async fn import_publishers(
         Id = i64,
         Error = hexforge::DataSourceError,
     >,
+    batch_lookup: &impl EntityBatchLookup<crate::domain::Publisher>,
     syncer: &impl SequenceSyncer,
     rows: Vec<ParsedPublisherRow>,
     mut errors: Vec<ImportRowError>,
@@ -472,14 +481,21 @@ pub async fn import_publishers(
     let mut imported = 0usize;
     let mut updated = 0usize;
 
+    let source_ids: Vec<i64> = rows.iter().filter_map(|r| r.source_id).collect();
+    let existing_map: HashMap<i64, crate::domain::Publisher> = batch_lookup
+        .find_by_ids(&source_ids)
+        .await?
+        .into_iter()
+        .map(|e| (e.id, e))
+        .collect();
+
     for row in rows {
         let row_num = row.row_num;
         let publisher_key = row.publisher_key;
 
-        // Check if this is an update (CSV has ID that exists in DB)
         if let Some(id) = row.source_id {
-            match publisher_ds.find_by_id(&id).await {
-                Ok(Some(existing)) => {
+            match existing_map.get(&id) {
+                Some(existing) => {
                     if existing.publisher_key != publisher_key {
                         let msg = format!(
                             "ID {id} exists but has key '{}', CSV has '{publisher_key}'",
@@ -506,7 +522,7 @@ pub async fn import_publishers(
                         });
                         continue;
                     }
-                    let merged = update_publisher_transform(update_dto, existing);
+                    let merged = update_publisher_transform(update_dto, existing.clone());
                     match publisher_ds.update(&id, merged).await {
                         Ok(_) => updated += 1,
                         Err(e) => errors.push(ImportRowError {
@@ -517,7 +533,7 @@ pub async fn import_publishers(
                     }
                     continue;
                 }
-                Ok(None) => {
+                None => {
                     // ID not in DB — create with this ID
                     let dto = CreatePublisher {
                         publisher_key: publisher_key.clone(),
@@ -543,14 +559,6 @@ pub async fn import_publishers(
                             error: format_insert_error(e),
                         }),
                     }
-                    continue;
-                }
-                Err(e) => {
-                    errors.push(ImportRowError {
-                        row: row_num,
-                        identifier: publisher_key,
-                        error: format!("DB lookup error: {e}"),
-                    });
                     continue;
                 }
             }
@@ -615,6 +623,7 @@ pub async fn import_institutions(
         Id = i64,
         Error = hexforge::DataSourceError,
     >,
+    batch_lookup: &impl EntityBatchLookup<crate::domain::Institution>,
     syncer: &impl SequenceSyncer,
     rows: Vec<ParsedInstitutionRow>,
     mut errors: Vec<ImportRowError>,
@@ -622,14 +631,21 @@ pub async fn import_institutions(
     let mut imported = 0usize;
     let mut updated = 0usize;
 
+    let source_ids: Vec<i64> = rows.iter().filter_map(|r| r.source_id).collect();
+    let existing_map: HashMap<i64, crate::domain::Institution> = batch_lookup
+        .find_by_ids(&source_ids)
+        .await?
+        .into_iter()
+        .map(|e| (e.id, e))
+        .collect();
+
     for row in rows {
         let row_num = row.row_num;
         let institution_key = row.institution_key;
 
-        // Check if this is an update (CSV has ID that exists in DB)
         if let Some(id) = row.source_id {
-            match institution_ds.find_by_id(&id).await {
-                Ok(Some(existing)) => {
+            match existing_map.get(&id) {
+                Some(existing) => {
                     if existing.institution_key != institution_key {
                         let msg = format!(
                             "ID {id} exists but has key '{}', CSV has '{institution_key}'",
@@ -656,7 +672,7 @@ pub async fn import_institutions(
                         });
                         continue;
                     }
-                    let merged = update_institution_transform(update_dto, existing);
+                    let merged = update_institution_transform(update_dto, existing.clone());
                     match institution_ds.update(&id, merged).await {
                         Ok(_) => updated += 1,
                         Err(e) => errors.push(ImportRowError {
@@ -667,7 +683,7 @@ pub async fn import_institutions(
                     }
                     continue;
                 }
-                Ok(None) => {
+                None => {
                     // ID not in DB — create with this ID
                     let dto = CreateInstitution {
                         institution_key: institution_key.clone(),
@@ -693,14 +709,6 @@ pub async fn import_institutions(
                             error: format_insert_error(e),
                         }),
                     }
-                    continue;
-                }
-                Err(e) => {
-                    errors.push(ImportRowError {
-                        row: row_num,
-                        identifier: institution_key,
-                        error: format!("DB lookup error: {e}"),
-                    });
                     continue;
                 }
             }
@@ -752,6 +760,7 @@ pub async fn import_institutions(
 /// Import schools from parsed CSV rows.
 pub async fn import_schools(
     school_ds: &impl DataSource<crate::domain::School, Id = i64, Error = hexforge::DataSourceError>,
+    batch_lookup: &impl EntityBatchLookup<crate::domain::School>,
     syncer: &impl SequenceSyncer,
     rows: Vec<ParsedSchoolRow>,
     mut errors: Vec<ImportRowError>,
@@ -759,14 +768,21 @@ pub async fn import_schools(
     let mut imported = 0usize;
     let mut updated = 0usize;
 
+    let source_ids: Vec<i64> = rows.iter().filter_map(|r| r.source_id).collect();
+    let existing_map: HashMap<i64, crate::domain::School> = batch_lookup
+        .find_by_ids(&source_ids)
+        .await?
+        .into_iter()
+        .map(|e| (e.id, e))
+        .collect();
+
     for row in rows {
         let row_num = row.row_num;
         let school_key = row.school_key;
 
-        // Check if this is an update (CSV has ID that exists in DB)
         if let Some(id) = row.source_id {
-            match school_ds.find_by_id(&id).await {
-                Ok(Some(existing)) => {
+            match existing_map.get(&id) {
+                Some(existing) => {
                     if existing.school_key != school_key {
                         let msg = format!(
                             "ID {id} exists but has key '{}', CSV has '{school_key}'",
@@ -792,7 +808,7 @@ pub async fn import_schools(
                         });
                         continue;
                     }
-                    let merged = update_school_transform(update_dto, existing);
+                    let merged = update_school_transform(update_dto, existing.clone());
                     match school_ds.update(&id, merged).await {
                         Ok(_) => updated += 1,
                         Err(e) => errors.push(ImportRowError {
@@ -803,7 +819,7 @@ pub async fn import_schools(
                     }
                     continue;
                 }
-                Ok(None) => {
+                None => {
                     // ID not in DB — create with this ID
                     let dto = CreateSchool {
                         school_key: school_key.clone(),
@@ -828,14 +844,6 @@ pub async fn import_schools(
                             error: format_insert_error(e),
                         }),
                     }
-                    continue;
-                }
-                Err(e) => {
-                    errors.push(ImportRowError {
-                        row: row_num,
-                        identifier: school_key,
-                        error: format!("DB lookup error: {e}"),
-                    });
                     continue;
                 }
             }
@@ -886,6 +894,7 @@ pub async fn import_schools(
 /// Import series from parsed CSV rows.
 pub async fn import_series(
     series_ds: &impl DataSource<crate::domain::Series, Id = i64, Error = hexforge::DataSourceError>,
+    batch_lookup: &impl EntityBatchLookup<crate::domain::Series>,
     syncer: &impl SequenceSyncer,
     rows: Vec<ParsedSeriesRow>,
     mut errors: Vec<ImportRowError>,
@@ -893,14 +902,21 @@ pub async fn import_series(
     let mut imported = 0usize;
     let mut updated = 0usize;
 
+    let source_ids: Vec<i64> = rows.iter().filter_map(|r| r.source_id).collect();
+    let existing_map: HashMap<i64, crate::domain::Series> = batch_lookup
+        .find_by_ids(&source_ids)
+        .await?
+        .into_iter()
+        .map(|e| (e.id, e))
+        .collect();
+
     for row in rows {
         let row_num = row.row_num;
         let series_key = row.series_key;
 
-        // Check if this is an update (CSV has ID that exists in DB)
         if let Some(id) = row.source_id {
-            match series_ds.find_by_id(&id).await {
-                Ok(Some(existing)) => {
+            match existing_map.get(&id) {
+                Some(existing) => {
                     if existing.series_key != series_key {
                         let msg = format!(
                             "ID {id} exists but has key '{}', CSV has '{series_key}'",
@@ -926,7 +942,7 @@ pub async fn import_series(
                         });
                         continue;
                     }
-                    let merged = update_series_transform(update_dto, existing);
+                    let merged = update_series_transform(update_dto, existing.clone());
                     match series_ds.update(&id, merged).await {
                         Ok(_) => updated += 1,
                         Err(e) => errors.push(ImportRowError {
@@ -937,7 +953,7 @@ pub async fn import_series(
                     }
                     continue;
                 }
-                Ok(None) => {
+                None => {
                     // ID not in DB — create with this ID
                     let dto = CreateSeries {
                         series_key: series_key.clone(),
@@ -962,14 +978,6 @@ pub async fn import_series(
                             error: format_insert_error(e),
                         }),
                     }
-                    continue;
-                }
-                Err(e) => {
-                    errors.push(ImportRowError {
-                        row: row_num,
-                        identifier: series_key,
-                        error: format!("DB lookup error: {e}"),
-                    });
                     continue;
                 }
             }
@@ -1020,12 +1028,21 @@ pub async fn import_series(
 /// Import keywords from parsed CSV rows.
 pub async fn import_keywords(
     keyword_ds: &impl DataSource<crate::domain::Keyword, Id = i64, Error = hexforge::DataSourceError>,
+    batch_lookup: &impl EntityBatchLookup<crate::domain::Keyword>,
     syncer: &impl SequenceSyncer,
     rows: Vec<ParsedKeywordRow>,
     mut errors: Vec<ImportRowError>,
 ) -> Result<ImportResponse, HexforgeError> {
     let mut imported = 0usize;
     let mut updated = 0usize;
+
+    let source_ids: Vec<i64> = rows.iter().filter_map(|r| r.source_id).collect();
+    let existing_map: HashMap<i64, crate::domain::Keyword> = batch_lookup
+        .find_by_ids(&source_ids)
+        .await?
+        .into_iter()
+        .map(|e| (e.id, e))
+        .collect();
 
     for row in rows {
         let row_num = row.row_num;
@@ -1034,8 +1051,8 @@ pub async fn import_keywords(
 
         // Check if this is an update (CSV has ID that exists in DB)
         if let Some(id) = row.source_id {
-            match keyword_ds.find_by_id(&id).await {
-                Ok(Some(existing)) => {
+            match existing_map.get(&id) {
+                Some(existing) => {
                     if existing.name != name {
                         let msg = format!(
                             "ID {id} exists but has key '{}', CSV has '{name}'",
@@ -1060,7 +1077,7 @@ pub async fn import_keywords(
                         });
                         continue;
                     }
-                    let merged = update_keyword_transform(update_dto, existing);
+                    let merged = update_keyword_transform(update_dto, existing.clone());
                     match keyword_ds.update(&id, merged).await {
                         Ok(_) => updated += 1,
                         Err(e) => errors.push(ImportRowError {
@@ -1071,7 +1088,7 @@ pub async fn import_keywords(
                     }
                     continue;
                 }
-                Ok(None) => {
+                None => {
                     // ID not in DB — create with this ID
                     let dto = CreateKeyword {
                         name: name.clone(),
@@ -1095,14 +1112,6 @@ pub async fn import_keywords(
                             error: format_insert_error(e),
                         }),
                     }
-                    continue;
-                }
-                Err(e) => {
-                    errors.push(ImportRowError {
-                        row: row_num,
-                        identifier: name,
-                        error: format!("DB lookup error: {e}"),
-                    });
                     continue;
                 }
             }
@@ -1511,16 +1520,25 @@ async fn check_all_references(
     keyword_ids: &HashSet<i64>,
     crossref_ids: &HashSet<i64>,
 ) -> Result<MissingReferencesError, HexforgeError> {
-    let missing_authors = ref_store.find_missing_author_ids(author_ids).await?;
-    let missing_journals = ref_store.find_missing_journal_ids(journal_ids).await?;
-    let missing_publishers = ref_store.find_missing_publisher_ids(publisher_ids).await?;
-    let missing_institutions = ref_store
-        .find_missing_institution_ids(institution_ids)
-        .await?;
-    let missing_schools = ref_store.find_missing_school_ids(school_ids).await?;
-    let missing_series = ref_store.find_missing_series_ids(series_ids).await?;
-    let missing_keywords = ref_store.find_missing_keyword_ids(keyword_ids).await?;
-    let missing_crossrefs = ref_store.find_missing_bibitem_ids(crossref_ids).await?;
+    let (
+        missing_authors,
+        missing_journals,
+        missing_publishers,
+        missing_institutions,
+        missing_schools,
+        missing_series,
+        missing_keywords,
+        missing_crossrefs,
+    ) = tokio::try_join!(
+        ref_store.find_missing_author_ids(author_ids),
+        ref_store.find_missing_journal_ids(journal_ids),
+        ref_store.find_missing_publisher_ids(publisher_ids),
+        ref_store.find_missing_institution_ids(institution_ids),
+        ref_store.find_missing_school_ids(school_ids),
+        ref_store.find_missing_series_ids(series_ids),
+        ref_store.find_missing_keyword_ids(keyword_ids),
+        ref_store.find_missing_bibitem_ids(crossref_ids),
+    )?;
 
     Ok(MissingReferencesError {
         error: "missing_references",
