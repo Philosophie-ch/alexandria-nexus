@@ -1,7 +1,7 @@
 //! Import types and pure helpers — response types, parsed row structs, DTO helpers.
 //!
 //! This module contains ONLY pure types and functions (no async, no database, no I/O,
-//! no CSV format dependency). CSV parsing lives in `crate::adapters::import`.
+//! no format dependency). Row parsing lives in `crate::adapters::import`.
 //! Orchestration logic lives in `crate::process::import`.
 
 use serde::Serialize;

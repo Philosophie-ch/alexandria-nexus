@@ -1,7 +1,7 @@
-//! Export process — orchestrates entity fetching and CSV generation.
+//! Export process — orchestrates entity fetching and row building.
 //!
 //! Defines traits for I/O operations and coordinates between data fetching
-//! (via traits) and CSV formatting (via pure logic functions).
+//! (via traits) and row building (via pure logic functions).
 //! No AppState, no PgPool, no sqlx, no SQL — only abstract contracts.
 //!
 //! **Architecture:** This module defines WHAT operations are needed via traits.
@@ -107,7 +107,7 @@ pub trait BibitemFetcher: Send + Sync {
 // Entity export orchestration
 // =============================================================================
 
-/// Fetch entities by request criteria and build CSV rows.
+/// Fetch entities by request criteria and build rows.
 async fn fetch_and_build<T>(
     fetcher: &impl KeyedEntityFetcher<T>,
     all: bool,
@@ -128,7 +128,7 @@ async fn fetch_and_build<T>(
     Ok(build_rows(&entities))
 }
 
-/// Export authors as CSV rows.
+/// Export author rows.
 pub async fn export_authors(
     fetcher: &impl KeyedEntityFetcher<Author>,
     all: bool,
@@ -138,7 +138,7 @@ pub async fn export_authors(
     fetch_and_build(fetcher, all, ids, keys, build_author_rows).await
 }
 
-/// Export journals as CSV rows.
+/// Export journal rows.
 pub async fn export_journals(
     fetcher: &impl KeyedEntityFetcher<Journal>,
     all: bool,
@@ -148,7 +148,7 @@ pub async fn export_journals(
     fetch_and_build(fetcher, all, ids, keys, build_journal_rows).await
 }
 
-/// Export publishers as CSV rows.
+/// Export publisher rows.
 pub async fn export_publishers(
     fetcher: &impl KeyedEntityFetcher<Publisher>,
     all: bool,
@@ -158,7 +158,7 @@ pub async fn export_publishers(
     fetch_and_build(fetcher, all, ids, keys, build_publisher_rows).await
 }
 
-/// Export institutions as CSV rows.
+/// Export institution rows.
 pub async fn export_institutions(
     fetcher: &impl KeyedEntityFetcher<Institution>,
     all: bool,
@@ -168,7 +168,7 @@ pub async fn export_institutions(
     fetch_and_build(fetcher, all, ids, keys, build_institution_rows).await
 }
 
-/// Export schools as CSV rows.
+/// Export school rows.
 pub async fn export_schools(
     fetcher: &impl KeyedEntityFetcher<School>,
     all: bool,
@@ -178,7 +178,7 @@ pub async fn export_schools(
     fetch_and_build(fetcher, all, ids, keys, build_school_rows).await
 }
 
-/// Export series as CSV rows.
+/// Export series rows.
 pub async fn export_series(
     fetcher: &impl KeyedEntityFetcher<Series>,
     all: bool,
@@ -188,7 +188,7 @@ pub async fn export_series(
     fetch_and_build(fetcher, all, ids, keys, build_series_rows).await
 }
 
-/// Export keywords as CSV rows.
+/// Export keyword rows.
 pub async fn export_keywords(
     fetcher: &impl KeyedEntityFetcher<Keyword>,
     all: bool,
@@ -202,7 +202,7 @@ pub async fn export_keywords(
 // Bibitem export orchestration
 // =============================================================================
 
-/// Export bibitems as CSV rows.
+/// Export bibitem rows.
 ///
 /// Supports two formats:
 /// - `Expanded`: human-readable with resolved names
@@ -252,7 +252,7 @@ pub async fn export_bibitems(
     }
 }
 
-/// Fetch junction data and build bibitems IDs CSV rows.
+/// Fetch junction data and build bibitem ID rows.
 async fn assemble_bibitem_id_rows(
     bibitems: &[BibItem],
     junction_fetcher: &impl ExportJunctionFetcher,
@@ -281,7 +281,7 @@ async fn assemble_bibitem_id_rows(
     Ok(build_bibitem_id_rows(bibitems, &author_rows, &keyword_rows))
 }
 
-/// Fetch all related data and build bibitems expanded CSV rows.
+/// Fetch all related data and build bibitem expanded rows.
 #[allow(clippy::too_many_arguments)]
 async fn assemble_bibitem_expanded_rows(
     bibitems: &[BibItem],

@@ -1,4 +1,4 @@
-//! Full CSV import process -- orchestrates validation, entity creation, and bibitem import.
+//! Full import process — orchestrates validation, entity creation, and bibitem import.
 //!
 //! Defines traits for I/O operations and coordinates between data fetching
 //! (via traits) and pure logic functions (from `crate::logic::full_import`).
@@ -120,7 +120,7 @@ pub trait TransitiveDepsComputer: Send + Sync {
 }
 
 /// Contract for fetching all bibitems (for export).
-pub trait FullCsvBibitemFetcher: Send + Sync {
+pub trait BibitemFetcher: Send + Sync {
     fn fetch_all_bibitems(
         &self,
     ) -> impl Future<Output = Result<Vec<BibItem>, HexforgeError>> + Send;
@@ -149,7 +149,7 @@ pub trait KeywordNameFetcher: Send + Sync {
 }
 
 /// Contract for batch-fetching junction data for export.
-pub trait FullCsvJunctionFetcher: Send + Sync {
+pub trait JunctionFetcher: Send + Sync {
     fn fetch_bibitem_authors_batch(
         &self,
         ids: &[i64],
@@ -613,20 +613,20 @@ fn build_all_bibitem_entities(
 }
 
 // =============================================================================
-// Full CSV export orchestration
+// Export orchestration
 // =============================================================================
 
-/// Export all bibitems as raw rows matching the full import CSV format.
+/// Export all bibitems as raw rows in the full import format.
 ///
 /// Returns one `Vec<String>` per bibitem (fields in column order). The caller
-/// is responsible for serialising to whatever output format is needed (CSV,
+/// is responsible for serialising to whatever output format is needed (tabular,
 /// JSON, etc.).
 pub async fn fetch_export_rows(
-    bibitem_fetcher: &impl FullCsvBibitemFetcher,
+    bibitem_fetcher: &impl BibitemFetcher,
     author_name_fetcher: &impl AuthorNameFetcher,
     reverse_name_fetcher: &impl ReverseNameMapFetcher,
     keyword_name_fetcher: &impl KeywordNameFetcher,
-    junction_fetcher: &impl FullCsvJunctionFetcher,
+    junction_fetcher: &impl JunctionFetcher,
     notes_fetcher: &impl BibitemNotesFetcher,
 ) -> Result<Vec<Vec<String>>, HexforgeError> {
     // Fetch all bibitems

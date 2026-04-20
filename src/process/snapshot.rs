@@ -1,7 +1,7 @@
 //! Snapshot process — defines traits for full-database fetching.
 //!
 //! The snapshot endpoint generates a ZIP of all data tables. This module
-//! defines the I/O contracts. CSV serialization and ZIP packaging live in
+//! defines the I/O contracts. Serialization and ZIP packaging live in
 //! the adapter layer.
 //!
 //! No AppState, no PgPool, no sqlx, no SQL — only abstract contracts.

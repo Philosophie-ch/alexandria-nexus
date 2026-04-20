@@ -1,6 +1,6 @@
-//! Export logic — pure types and CSV formatting helpers.
+//! Export logic — pure types and row-building helpers.
 //!
-//! Contains request/response types, CSV header constants, and pure
+//! Contains request/response types, header constants, and pure
 //! formatting functions used by the export process layer.
 //! No async, no database, no I/O — only pure transformations.
 
@@ -47,7 +47,7 @@ pub struct EntityExportRequest {
 }
 
 // =============================================================================
-// CSV formatting helpers (pure functions)
+// Row-building helpers (pure functions)
 // =============================================================================
 
 pub fn opt_str(v: &Option<String>) -> &str {
@@ -155,7 +155,7 @@ pub fn format_keywords_at_level(
 }
 
 // =============================================================================
-// CSV header constants
+// Header constants
 // =============================================================================
 
 /// IDs format header columns.
@@ -250,10 +250,10 @@ pub const EXPANDED_FORMAT_HEADER: &[&str] = &[
 ];
 
 // =============================================================================
-// CSV building helpers (pure, synchronous)
+// Row-building helpers (pure, synchronous)
 // =============================================================================
 
-/// Build authors CSV rows from pre-fetched data (header row + data rows).
+/// Build author data rows from pre-fetched data.
 pub fn build_author_rows(authors: &[Author]) -> Vec<Vec<String>> {
     let mut rows = Vec::with_capacity(authors.len() + 1);
     rows.push(vec![
@@ -289,7 +289,7 @@ pub fn build_author_rows(authors: &[Author]) -> Vec<Vec<String>> {
     rows
 }
 
-/// Build journals CSV rows from pre-fetched data (header row + data rows).
+/// Build journal data rows from pre-fetched data.
 pub fn build_journal_rows(journals: &[Journal]) -> Vec<Vec<String>> {
     let mut rows = Vec::with_capacity(journals.len() + 1);
     rows.push(vec![
@@ -313,7 +313,7 @@ pub fn build_journal_rows(journals: &[Journal]) -> Vec<Vec<String>> {
     rows
 }
 
-/// Build publishers CSV rows from pre-fetched data (header row + data rows).
+/// Build publisher data rows from pre-fetched data.
 pub fn build_publisher_rows(publishers: &[Publisher]) -> Vec<Vec<String>> {
     let mut rows = Vec::with_capacity(publishers.len() + 1);
     rows.push(vec![
@@ -335,7 +335,7 @@ pub fn build_publisher_rows(publishers: &[Publisher]) -> Vec<Vec<String>> {
     rows
 }
 
-/// Build institutions CSV rows from pre-fetched data (header row + data rows).
+/// Build institution data rows from pre-fetched data.
 pub fn build_institution_rows(institutions: &[Institution]) -> Vec<Vec<String>> {
     let mut rows = Vec::with_capacity(institutions.len() + 1);
     rows.push(vec![
@@ -357,7 +357,7 @@ pub fn build_institution_rows(institutions: &[Institution]) -> Vec<Vec<String>> 
     rows
 }
 
-/// Build schools CSV rows from pre-fetched data (header row + data rows).
+/// Build school data rows from pre-fetched data.
 pub fn build_school_rows(schools: &[School]) -> Vec<Vec<String>> {
     let mut rows = Vec::with_capacity(schools.len() + 1);
     rows.push(vec![
@@ -377,7 +377,7 @@ pub fn build_school_rows(schools: &[School]) -> Vec<Vec<String>> {
     rows
 }
 
-/// Build series CSV rows from pre-fetched data (header row + data rows).
+/// Build series data rows from pre-fetched data.
 pub fn build_series_rows(series_list: &[Series]) -> Vec<Vec<String>> {
     let mut rows = Vec::with_capacity(series_list.len() + 1);
     rows.push(vec![
@@ -397,7 +397,7 @@ pub fn build_series_rows(series_list: &[Series]) -> Vec<Vec<String>> {
     rows
 }
 
-/// Build keywords CSV rows from pre-fetched data (header row + data rows).
+/// Build keyword data rows from pre-fetched data.
 pub fn build_keyword_rows(keywords: &[Keyword]) -> Vec<Vec<String>> {
     let mut rows = Vec::with_capacity(keywords.len() + 1);
     rows.push(vec!["id".into(), "name".into(), "level".into()]);
@@ -411,7 +411,7 @@ pub fn build_keyword_rows(keywords: &[Keyword]) -> Vec<Vec<String>> {
     rows
 }
 
-/// Build bibitems CSV rows in IDs format (header row + data rows).
+/// Build bibitem data rows in IDs format (header row + data rows).
 ///
 /// All junction data must be pre-fetched and passed in.
 pub fn build_bibitem_id_rows(
@@ -504,7 +504,7 @@ pub fn build_bibitem_id_rows(
     rows
 }
 
-/// Build bibitems CSV rows in expanded format from pre-fetched data (header row + data rows).
+/// Build bibitem data rows in expanded format from pre-fetched data.
 ///
 /// All entity maps and junction data must be pre-fetched and passed in.
 #[allow(clippy::too_many_arguments)]

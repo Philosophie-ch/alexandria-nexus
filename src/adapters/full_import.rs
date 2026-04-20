@@ -17,10 +17,9 @@ use crate::logic::full_import::{
 };
 use crate::logic::transitive_closure::transitive_closure;
 use crate::process::full_import::{
-    AuthorLookup, AuthorNameFetcher, BibitemDeleter, BibitemNotesFetcher, BibkeyLookup,
-    BulkBibitemInsert, BulkJunctionInsert, EntityLookup, FullCsvBibitemFetcher,
-    FullCsvJunctionFetcher, KeywordLookup, KeywordNameFetcher, NamedEntity, ReverseNameMapFetcher,
-    TransitiveDepsComputer,
+    AuthorLookup, AuthorNameFetcher, BibitemDeleter, BibitemFetcher, BibitemNotesFetcher,
+    BibkeyLookup, BulkBibitemInsert, BulkJunctionInsert, EntityLookup, JunctionFetcher,
+    KeywordLookup, KeywordNameFetcher, NamedEntity, ReverseNameMapFetcher, TransitiveDepsComputer,
 };
 use crate::process::import::{BibitemNotesData, BibitemNotesStore};
 
@@ -550,10 +549,10 @@ impl BulkJunctionInsert for PgFullImportStore<'_> {
 }
 
 // =============================================================================
-// FullCsvBibitemFetcher
+// BibitemFetcher
 // =============================================================================
 
-impl FullCsvBibitemFetcher for PgFullImportStore<'_> {
+impl BibitemFetcher for PgFullImportStore<'_> {
     async fn fetch_all_bibitems(&self) -> Result<Vec<BibItem>, HexforgeError> {
         query_as("SELECT * FROM bibitems ORDER BY bibkey")
             .fetch_all(self.pool)
@@ -636,7 +635,7 @@ impl KeywordNameFetcher for PgFullImportStore<'_> {
 }
 
 // =============================================================================
-// FullCsvJunctionFetcher
+// JunctionFetcher
 // =============================================================================
 
 impl TransitiveDepsComputer for PgFullImportStore<'_> {
@@ -703,7 +702,7 @@ async fn compute_and_insert_closure(
     Ok(usize::try_from(rows).unwrap_or(usize::MAX))
 }
 
-impl FullCsvJunctionFetcher for PgFullImportStore<'_> {
+impl JunctionFetcher for PgFullImportStore<'_> {
     async fn fetch_bibitem_authors_batch(
         &self,
         ids: &[i64],

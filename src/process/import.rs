@@ -1,4 +1,4 @@
-//! Import process — orchestrates CSV parsing, validation, and entity insertion.
+//! Import process — orchestrates row parsing, validation, and entity insertion.
 //!
 //! Receives I/O dependencies as params (DataStore, trait impls). No AppState.
 //! Pure types and helpers are imported from `crate::logic::import`.
@@ -141,7 +141,7 @@ pub trait ReferenceStore: Send + Sync {
 // Author import
 // =============================================================================
 
-/// Import authors from parsed CSV rows.
+/// Import authors from parsed rows.
 pub async fn import_authors(
     author_ds: &impl DataSource<crate::domain::Author, Id = i64, Error = hexforge::DataSourceError>,
     batch_lookup: &impl EntityBatchLookup<crate::domain::Author>,
@@ -170,7 +170,7 @@ pub async fn import_authors(
                 Some(existing) => {
                     if existing.author_key != author_key {
                         let msg = format!(
-                            "ID {id} exists but has key '{}', CSV has '{author_key}'",
+                            "ID {id} exists but has key '{}', input has '{author_key}'",
                             existing.author_key
                         );
                         errors.push(ImportRowError {
@@ -318,7 +318,7 @@ pub async fn import_authors(
 // Journal import
 // =============================================================================
 
-/// Import journals from parsed CSV rows.
+/// Import journals from parsed rows.
 pub async fn import_journals(
     journal_ds: &impl DataSource<crate::domain::Journal, Id = i64, Error = hexforge::DataSourceError>,
     batch_lookup: &impl EntityBatchLookup<crate::domain::Journal>,
@@ -347,7 +347,7 @@ pub async fn import_journals(
                 Some(existing) => {
                     if existing.journal_key != journal_key {
                         let msg = format!(
-                            "ID {id} exists but has key '{}', CSV has '{journal_key}'",
+                            "ID {id} exists but has key '{}', input has '{journal_key}'",
                             existing.journal_key
                         );
                         errors.push(ImportRowError {
@@ -468,7 +468,7 @@ pub async fn import_journals(
 // Publisher import
 // =============================================================================
 
-/// Import publishers from parsed CSV rows.
+/// Import publishers from parsed rows.
 pub async fn import_publishers(
     publisher_ds: &impl DataSource<
         crate::domain::Publisher,
@@ -501,7 +501,7 @@ pub async fn import_publishers(
                 Some(existing) => {
                     if existing.publisher_key != publisher_key {
                         let msg = format!(
-                            "ID {id} exists but has key '{}', CSV has '{publisher_key}'",
+                            "ID {id} exists but has key '{}', input has '{publisher_key}'",
                             existing.publisher_key
                         );
                         errors.push(ImportRowError {
@@ -619,7 +619,7 @@ pub async fn import_publishers(
 // Institution import
 // =============================================================================
 
-/// Import institutions from parsed CSV rows.
+/// Import institutions from parsed rows.
 pub async fn import_institutions(
     institution_ds: &impl DataSource<
         crate::domain::Institution,
@@ -651,7 +651,7 @@ pub async fn import_institutions(
                 Some(existing) => {
                     if existing.institution_key != institution_key {
                         let msg = format!(
-                            "ID {id} exists but has key '{}', CSV has '{institution_key}'",
+                            "ID {id} exists but has key '{}', input has '{institution_key}'",
                             existing.institution_key
                         );
                         errors.push(ImportRowError {
@@ -760,7 +760,7 @@ pub async fn import_institutions(
 // School import
 // =============================================================================
 
-/// Import schools from parsed CSV rows.
+/// Import schools from parsed rows.
 pub async fn import_schools(
     school_ds: &impl DataSource<crate::domain::School, Id = i64, Error = hexforge::DataSourceError>,
     batch_lookup: &impl EntityBatchLookup<crate::domain::School>,
@@ -788,7 +788,7 @@ pub async fn import_schools(
                 Some(existing) => {
                     if existing.school_key != school_key {
                         let msg = format!(
-                            "ID {id} exists but has key '{}', CSV has '{school_key}'",
+                            "ID {id} exists but has key '{}', input has '{school_key}'",
                             existing.school_key
                         );
                         errors.push(ImportRowError {
@@ -894,7 +894,7 @@ pub async fn import_schools(
 // Series import
 // =============================================================================
 
-/// Import series from parsed CSV rows.
+/// Import series from parsed rows.
 pub async fn import_series(
     series_ds: &impl DataSource<crate::domain::Series, Id = i64, Error = hexforge::DataSourceError>,
     batch_lookup: &impl EntityBatchLookup<crate::domain::Series>,
@@ -922,7 +922,7 @@ pub async fn import_series(
                 Some(existing) => {
                     if existing.series_key != series_key {
                         let msg = format!(
-                            "ID {id} exists but has key '{}', CSV has '{series_key}'",
+                            "ID {id} exists but has key '{}', input has '{series_key}'",
                             existing.series_key
                         );
                         errors.push(ImportRowError {
@@ -1028,7 +1028,7 @@ pub async fn import_series(
 // Keyword import
 // =============================================================================
 
-/// Import keywords from parsed CSV rows.
+/// Import keywords from parsed rows.
 pub async fn import_keywords(
     keyword_ds: &impl DataSource<crate::domain::Keyword, Id = i64, Error = hexforge::DataSourceError>,
     batch_lookup: &impl EntityBatchLookup<crate::domain::Keyword>,
@@ -1052,13 +1052,13 @@ pub async fn import_keywords(
         let name = row.name;
         let level = row.level;
 
-        // Check if this is an update (CSV has ID that exists in DB)
+        // Check if this is an update (input row has an existing DB ID)
         if let Some(id) = row.source_id {
             match existing_map.get(&id) {
                 Some(existing) => {
                     if existing.name != name {
                         let msg = format!(
-                            "ID {id} exists but has key '{}', CSV has '{name}'",
+                            "ID {id} exists but has key '{}', input has '{name}'",
                             existing.name
                         );
                         errors.push(ImportRowError {
@@ -1161,7 +1161,7 @@ pub async fn import_keywords(
 // Author name variants import
 // =============================================================================
 
-/// Import author name variants from parsed CSV rows.
+/// Import author name variants from parsed rows.
 ///
 /// Appends each variant to the author's `name_variants_latex` or
 /// `name_variants_unicode` array. Variants must be unique per author per type.
@@ -1180,7 +1180,7 @@ pub async fn import_author_name_variants(
         let variant_type = row.variant_type;
         let variant = row.variant;
 
-        // Deduplicate within this CSV
+        // Deduplicate within this batch
         if !seen.insert((profile_id, variant_type.clone(), variant.clone())) {
             continue;
         }
@@ -1246,7 +1246,7 @@ pub async fn import_author_name_variants(
 // Bibitem import (IDs format)
 // =============================================================================
 
-/// Import bibitems from parsed CSV rows (IDs format).
+/// Import bibitems from parsed rows.
 ///
 /// Before inserting, validates ALL referenced IDs exist. If any are missing,
 /// returns all missing IDs in a `MissingReferences` result and inserts nothing.
@@ -1364,7 +1364,7 @@ pub async fn import_bibitems(
                             row: row.row_num,
                             identifier: row.bibkey.clone(),
                             error: format!(
-                                "ID {id} exists but has bibkey '{}', CSV has '{}'",
+                                "ID {id} exists but has bibkey '{}', input has '{}'",
                                 existing.bibkey, row.bibkey
                             ),
                         });
@@ -1419,7 +1419,7 @@ pub async fn import_bibitems(
                 }
             }
         } else {
-            // No CSV ID — insert normally
+            // No input ID — insert normally
             let bibitem = create_bib_item_transform(row.dto.clone());
             match bibitem_ds.insert(bibitem).await {
                 Ok(inserted) => (inserted.id, false),
@@ -1618,7 +1618,7 @@ pub trait BibitemRefsStore: Send + Sync {
     ) -> impl Future<Output = Result<(), HexforgeError>> + Send;
 }
 
-/// Import bibitem refs from parsed CSV rows.
+/// Import bibitem refs from parsed rows.
 ///
 /// All referenced bibitem IDs must exist; returns a validation error listing any that are missing.
 pub async fn import_bibitem_refs(
@@ -1687,7 +1687,7 @@ pub trait BibitemNotesStore: Send + Sync {
     ) -> impl Future<Output = Result<(), HexforgeError>> + Send;
 }
 
-/// Import bibitem notes from parsed CSV rows.
+/// Import bibitem notes from parsed rows.
 ///
 /// Notes are upserted by `bibitem_id`. All bibitem IDs must exist.
 pub async fn import_bibitem_notes(

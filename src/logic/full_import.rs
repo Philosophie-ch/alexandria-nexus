@@ -1,4 +1,4 @@
-//! Full import — pure types and business logic for human-readable CSV import.
+//! Full import — pure types and business logic for bulk bibitem import.
 //!
 //! This module contains ZERO async, ZERO database access, ZERO AppState.
 //! All I/O orchestration lives in `crate::process::full_import`.
@@ -601,7 +601,7 @@ pub fn generate_key(name: &str) -> String {
 
 /// Resolve a `_person` entry to a famous author ID.
 ///
-/// Only matches authors marked `famous = true`. The name string from the CSV
+/// Only matches authors marked `famous = true`. The name string from the input
 /// (e.g. "Kant", "Aristotle") is looked up directly in `famous_person_resolve`,
 /// which is indexed by stripped mononym or family name for famous authors only.
 pub fn resolve_person_id(person: &ParsedAuthor, ctx: &ResolutionCtx) -> Option<i64> {
@@ -775,7 +775,7 @@ pub fn assemble_validation_report(
         level_3: find_missing_keywords(&collected.keywords_l3, 3, &maps.keywords),
     };
 
-    // Classify bibkey references (check against DB + CSV bibkeys)
+    // Classify bibkey references (check against DB + input bibkeys)
     let all_known_bibkeys: HashSet<String> = maps.bibkeys.union(&file_bibkeys).cloned().collect();
     let missing_crossrefs = find_missing_bibkeys(&collected.crossref_bibkeys, &all_known_bibkeys);
     let missing_further_refs =
@@ -783,7 +783,7 @@ pub fn assemble_validation_report(
     let missing_depends_on =
         find_missing_bibkeys(&collected.depends_on_bibkeys, &all_known_bibkeys);
 
-    // Stale bibitems: in DB but not in CSV
+    // Stale bibitems: in DB but not in input
     let mut stale_bibitems: Vec<String> = maps.bibkeys.difference(&file_bibkeys).cloned().collect();
     stale_bibitems.sort();
 
@@ -808,10 +808,10 @@ pub fn assemble_validation_report(
 }
 
 // =============================================================================
-// Full CSV export helpers (pure)
+// Export helpers (pure)
 // =============================================================================
 
-/// Pre-resolved lookup data for building CSV export records.
+/// Pre-resolved lookup data for building export records.
 pub struct ExportContext<'a> {
     pub author_names: &'a HashMap<i64, String>,
     pub journal_names: &'a HashMap<i64, String>,
@@ -826,10 +826,10 @@ pub struct ExportContext<'a> {
     pub notes_by_bib: &'a HashMap<i64, crate::domain::BibitemNotes>,
 }
 
-/// Build the CSV record for a single bibitem.
+/// Build the record for a single bibitem.
 ///
 /// Takes pre-resolved data (name maps, junction data indexed by bibitem ID)
-/// and produces a `Vec<String>` of CSV field values.
+/// and produces a `Vec<String>` of field values.
 pub fn build_export_record(bib: &crate::domain::BibItem, ctx: &ExportContext<'_>) -> Vec<String> {
     let authors_for_role = |role: AuthorRole| -> String {
         let role_str = role.to_string();
