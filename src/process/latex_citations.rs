@@ -133,11 +133,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_key_reported_and_placeholder_in_output() {
+    async fn missing_key_reported_and_omitted_from_output() {
         let resolver = MockResolver(HashMap::new());
         let input = vec![s(r"See \citet{ghost:1999}.")];
         let (texts, missing) = pre_compile_citations(&input, &resolver).await.unwrap();
-        assert_eq!(texts, vec!["See [ghost:1999]."]);
+        assert_eq!(texts, vec!["See ."]);
         assert_eq!(missing, vec!["ghost:1999"]);
     }
 
@@ -148,7 +148,7 @@ mod tests {
         let resolver = MockResolver(db);
         let input = vec![s(r"\citet{known:2000} and \citet{missing:x}")];
         let (texts, missing) = pre_compile_citations(&input, &resolver).await.unwrap();
-        assert_eq!(texts, vec!["Known (2000) and [missing:x]"]);
+        assert_eq!(texts, vec!["Known (2000) and "]);
         assert_eq!(missing, vec!["missing:x"]);
     }
 
@@ -179,7 +179,7 @@ mod tests {
         let resolver = MockResolver(HashMap::new());
         let input = vec![s(r"\citet{a:1} \citet{b:2} \citet{c:3}")];
         let (texts, missing) = pre_compile_citations(&input, &resolver).await.unwrap();
-        assert_eq!(texts, vec!["[a:1] [b:2] [c:3]"]);
+        assert_eq!(texts, vec!["  "]);
         assert_eq!(missing.len(), 3);
         assert!(missing.contains(&s("a:1")));
         assert!(missing.contains(&s("b:2")));

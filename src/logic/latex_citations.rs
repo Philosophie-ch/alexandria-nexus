@@ -95,65 +95,72 @@ fn format_cite(cmd_name: &str, keys: &[&str], resolved: &HashMap<String, Citatio
         "citep" | "cite" => {
             let items: Vec<String> = keys
                 .iter()
-                .map(|&k| match resolved.get(k) {
-                    Some(d) => fmt_author_comma_year(k, d),
-                    None => format!("[{k}]"),
+                .map(|&k| {
+                    fmt_author_comma_year(resolved.get(k).unwrap_or(&CitationData {
+                        author: None,
+                        year: None,
+                    }))
                 })
                 .collect();
-            format!("({})", items.join("; "))
+            if items.iter().any(|s| s.is_empty()) {
+                String::new()
+            } else {
+                format!("({})", items.join("; "))
+            }
         }
         "citeauthor" => {
-            let items: Vec<String> = keys
+            let items: Vec<Option<String>> = keys
                 .iter()
-                .map(|&k| match resolved.get(k) {
-                    Some(d) => d.author.clone().unwrap_or_else(|| format!("[{k}]")),
-                    None => format!("[{k}]"),
-                })
+                .map(|&k| resolved.get(k).and_then(|d| d.author.clone()))
                 .collect();
-            join_and(&items)
+            if items.iter().any(|s| s.is_none()) {
+                String::new()
+            } else {
+                join_and(&items.into_iter().flatten().collect::<Vec<_>>())
+            }
         }
         "citeyear" => {
-            let items: Vec<String> = keys
+            let items: Vec<Option<String>> = keys
                 .iter()
-                .map(|&k| match resolved.get(k) {
-                    Some(d) => d
-                        .year
-                        .map(|y| y.to_string())
-                        .unwrap_or_else(|| format!("[{k}]")),
-                    None => format!("[{k}]"),
-                })
+                .map(|&k| resolved.get(k).and_then(|d| d.year.map(|y| y.to_string())))
                 .collect();
-            items.join("; ")
+            if items.iter().any(|s| s.is_none()) {
+                String::new()
+            } else {
+                items.into_iter().flatten().collect::<Vec<_>>().join("; ")
+            }
         }
         // "citet" and any unknown variant → "Author (Year)" with "and"-joining
         _ => {
             let items: Vec<String> = keys
                 .iter()
-                .map(|&k| match resolved.get(k) {
-                    Some(d) => fmt_author_year(k, d),
-                    None => format!("[{k}]"),
+                .map(|&k| {
+                    fmt_author_year(resolved.get(k).unwrap_or(&CitationData {
+                        author: None,
+                        year: None,
+                    }))
                 })
                 .collect();
-            join_and(&items)
+            if items.iter().any(|s| s.is_empty()) {
+                String::new()
+            } else {
+                join_and(&items)
+            }
         }
     }
 }
 
-fn fmt_author_year(bibkey: &str, d: &CitationData) -> String {
+fn fmt_author_year(d: &CitationData) -> String {
     match (&d.author, d.year) {
         (Some(a), Some(y)) => format!("{a} ({y})"),
-        (Some(a), None) => a.clone(),
-        (None, Some(y)) => format!("[{bibkey}] ({y})"),
-        (None, None) => format!("[{bibkey}]"),
+        _ => String::new(),
     }
 }
 
-fn fmt_author_comma_year(bibkey: &str, d: &CitationData) -> String {
+fn fmt_author_comma_year(d: &CitationData) -> String {
     match (&d.author, d.year) {
         (Some(a), Some(y)) => format!("{a}, {y}"),
-        (Some(a), None) => a.clone(),
-        (None, Some(y)) => format!("[{bibkey}], {y}"),
-        (None, None) => format!("[{bibkey}]"),
+        _ => String::new(),
     }
 }
 
@@ -449,16 +456,13 @@ mod tests {
     #[test]
     fn substitute_citet_no_year() {
         let m = map(&[("smith:2000", cd(Some("Smith"), None))]);
-        assert_eq!(substitute_citations(r"\citet{smith:2000}", &m), "Smith");
+        assert_eq!(substitute_citations(r"\citet{smith:2000}", &m), "");
     }
 
     #[test]
     fn substitute_citet_no_author() {
         let m = map(&[("x:1999", cd(None, Some(1999)))]);
-        assert_eq!(
-            substitute_citations(r"\citet{x:1999}", &m),
-            "[x:1999] (1999)"
-        );
+        assert_eq!(substitute_citations(r"\citet{x:1999}", &m), "");
     }
 
     #[test]
@@ -492,10 +496,10 @@ mod tests {
     }
 
     #[test]
-    fn substitute_unknown_key_placeholder() {
+    fn substitute_unknown_key_empty() {
         assert_eq!(
             substitute_citations(r"\citet{missing:key}", &HashMap::new()),
-            "[missing:key]"
+            ""
         );
     }
 
@@ -551,15 +555,15 @@ mod tests {
     }
 
     #[test]
-    fn substitute_citeyear_no_year_placeholder() {
+    fn substitute_citeyear_no_year_empty() {
         let m = map(&[("a:1", cd(Some("Doe"), None))]);
-        assert_eq!(substitute_citations(r"\citeyear{a:1}", &m), "[a:1]");
+        assert_eq!(substitute_citations(r"\citeyear{a:1}", &m), "");
     }
 
     #[test]
-    fn substitute_citeauthor_no_author_placeholder() {
+    fn substitute_citeauthor_no_author_empty() {
         let m = map(&[("a:1", cd(None, Some(2000)))]);
-        assert_eq!(substitute_citations(r"\citeauthor{a:1}", &m), "[a:1]");
+        assert_eq!(substitute_citations(r"\citeauthor{a:1}", &m), "");
     }
 
     #[test]
@@ -576,18 +580,15 @@ mod tests {
 
     #[test]
     fn substitute_multi_key_partial_unknown() {
-        // Known key expands; unknown key becomes [key] placeholder
+        // Any missing key in a multi-key cite → entire cite renders nothing
         let m = map(&[("known:1", cd(Some("Known"), Some(2000)))]);
-        assert_eq!(
-            substitute_citations(r"\citet{known:1,missing:x}", &m),
-            "Known (2000) and [missing:x]"
-        );
+        assert_eq!(substitute_citations(r"\citet{known:1,missing:x}", &m), "");
     }
 
     #[test]
     fn substitute_citep_no_author_no_year() {
         let m = map(&[("x:1", cd(None, None))]);
-        assert_eq!(substitute_citations(r"\citep{x:1}", &m), "([x:1])");
+        assert_eq!(substitute_citations(r"\citep{x:1}", &m), "");
     }
 
     #[test]
@@ -611,6 +612,68 @@ mod tests {
         let m = map(&[("k:1", cd(Some("K"), Some(1)))]);
         let result = substitute_citations(r"Before \citet{k:1} after.", &m);
         assert_eq!(result, "Before K (1) after.");
+    }
+
+    // --- missing data: nothing renders ---
+
+    #[test]
+    fn substitute_citet_no_author_in_prose_leaves_no_placeholder() {
+        // The exact scenario: a title like "Review of \citet{gaskin_r:2008}"
+        // where the cited bibitem has no author — must not leave "[key] (year)" in output
+        let m = map(&[("gaskin_r:2008", cd(None, Some(2008)))]);
+        let result = substitute_citations(r"Review of \citet{gaskin_r:2008}", &m);
+        assert_eq!(result, "Review of ");
+        assert!(!result.contains('['));
+    }
+
+    #[test]
+    fn substitute_citep_no_author_empty_not_parens() {
+        // Missing author in \citep → empty string, not "()"
+        let m = map(&[("x:1", cd(None, Some(2001)))]);
+        assert_eq!(substitute_citations(r"\citep{x:1}", &m), "");
+    }
+
+    #[test]
+    fn substitute_citep_no_year_empty_not_parens() {
+        let m = map(&[("x:1", cd(Some("Doe"), None))]);
+        assert_eq!(substitute_citations(r"\citep{x:1}", &m), "");
+    }
+
+    #[test]
+    fn substitute_multi_key_all_missing_empty() {
+        // All keys in a multi-key cite have incomplete data → empty, not "(; )" or "and"
+        let m = map(&[
+            ("a:1", cd(None, Some(2000))),
+            ("b:2", cd(Some("Beta"), None)),
+        ]);
+        assert_eq!(substitute_citations(r"\citet{a:1,b:2}", &m), "");
+        assert_eq!(substitute_citations(r"\citep{a:1,b:2}", &m), "");
+    }
+
+    #[test]
+    fn substitute_multi_key_one_complete_one_missing_author() {
+        // Any key missing data → entire multi-key cite renders nothing
+        let m = map(&[
+            ("a:1", cd(Some("Alpha"), Some(2000))),
+            ("b:2", cd(None, Some(2001))), // missing author
+        ]);
+        assert_eq!(substitute_citations(r"\citet{a:1,b:2}", &m), "");
+    }
+
+    #[test]
+    fn substitute_citeauthor_unknown_key_empty() {
+        assert_eq!(
+            substitute_citations(r"\citeauthor{missing:key}", &HashMap::new()),
+            ""
+        );
+    }
+
+    #[test]
+    fn substitute_citeyear_unknown_key_empty() {
+        assert_eq!(
+            substitute_citations(r"\citeyear{missing:key}", &HashMap::new()),
+            ""
+        );
     }
 
     // --- substitute_citations malformed input ---
