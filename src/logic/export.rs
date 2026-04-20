@@ -6,7 +6,6 @@
 
 use std::collections::HashMap;
 
-use hexforge::HexforgeError;
 use serde::Deserialize;
 
 use crate::domain::junctions::{BibitemAuthorsRow, BibitemKeywordsRow};
@@ -45,31 +44,6 @@ pub struct EntityExportRequest {
     pub all: bool,
     pub ids: Option<Vec<i64>>,
     pub keys: Option<Vec<String>>,
-}
-
-// =============================================================================
-// Error result types (structured, not HTTP responses)
-// =============================================================================
-
-/// Export error that the adapter layer converts into HTTP responses.
-#[derive(Debug)]
-pub enum ExportError {
-    /// Requested IDs were not found.
-    MissingIds(Vec<i64>),
-    /// Requested keys were not found.
-    MissingKeys(Vec<String>),
-    /// Requested bibkeys were not found.
-    MissingBibkeys(Vec<String>),
-    /// Bad request (no selection criteria provided).
-    BadRequest,
-    /// Internal error.
-    Internal(HexforgeError),
-}
-
-impl From<HexforgeError> for ExportError {
-    fn from(e: HexforgeError) -> Self {
-        ExportError::Internal(e)
-    }
 }
 
 // =============================================================================

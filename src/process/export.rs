@@ -15,10 +15,30 @@ use hexforge::HexforgeError;
 use crate::domain::junctions::{BibitemAuthorsRow, BibitemKeywordsRow};
 use crate::domain::{Author, BibItem, Institution, Journal, Keyword, Publisher, School, Series};
 use crate::logic::export::{
-    BibitemExportRequest, ExportError, ExportFormat, build_author_rows,
-    build_bibitem_expanded_rows, build_bibitem_id_rows, build_institution_rows, build_journal_rows,
-    build_keyword_rows, build_publisher_rows, build_school_rows, build_series_rows,
+    BibitemExportRequest, ExportFormat, build_author_rows, build_bibitem_expanded_rows,
+    build_bibitem_id_rows, build_institution_rows, build_journal_rows, build_keyword_rows,
+    build_publisher_rows, build_school_rows, build_series_rows,
 };
+
+// =============================================================================
+// Error type
+// =============================================================================
+
+/// Export error that the handler layer converts into HTTP responses.
+#[derive(Debug)]
+pub enum ExportError {
+    MissingIds(Vec<i64>),
+    MissingKeys(Vec<String>),
+    MissingBibkeys(Vec<String>),
+    BadRequest,
+    Internal(HexforgeError),
+}
+
+impl From<HexforgeError> for ExportError {
+    fn from(e: HexforgeError) -> Self {
+        ExportError::Internal(e)
+    }
+}
 
 // =============================================================================
 // Traits — contracts for I/O operations that adapters implement

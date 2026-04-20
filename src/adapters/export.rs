@@ -10,9 +10,8 @@ use hexforge::{DataStore, HexforgeError, WhereClause};
 
 use crate::domain::junctions::{BibitemAuthorsRow, BibitemKeywordsRow};
 use crate::domain::{Author, BibItem, Institution, Journal, Keyword, Publisher, School, Series};
-use crate::logic::export::ExportError;
 use crate::process::export::{
-    BibitemFetcher, EntityBatchFetcher, ExportJunctionFetcher, KeyedEntityFetcher,
+    BibitemFetcher, EntityBatchFetcher, ExportError, ExportJunctionFetcher, KeyedEntityFetcher,
 };
 
 // =============================================================================

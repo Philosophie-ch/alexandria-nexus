@@ -12,8 +12,9 @@ use crate::adapters::export::{
     PgBibitemFetcher, PgEntityBatchFetcher, PgExportJunctionFetcher, PgKeyedEntityFetcher,
     PgKeywordFetcher,
 };
-use crate::logic::export::{BibitemExportRequest, EntityExportRequest, ExportError};
+use crate::logic::export::{BibitemExportRequest, EntityExportRequest};
 use crate::process::export;
+use crate::process::export::ExportError;
 use crate::state::AppState;
 
 // =============================================================================
