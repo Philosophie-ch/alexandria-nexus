@@ -167,11 +167,9 @@ All entity files are generator-owned (Regenerate policy).
 
 Pure functions. No `async`. No database. No `AppState`. No pool.
 
-- `validation/` — input validation per entity
-- `csv_parsing/` — pure parsers for CSV fields
-- `render/` — HTML bibliography renderer (takes pre-resolved `RenderContext`, produces HTML)
-- `search.rs` — pure types: `SearchRequest`, `SearchResponse`
-- `import.rs` — pure types: `ImportResponse`, `ImportRowError`, CSV helpers
+Contains: validation rules, pure rendering, request/response types, parsed row types, pure transformation helpers.
+
+**CSV parsing does NOT live here.** Parsing an external format (CSV, JSON, XML) is a boundary concern — exactly like SQL. It belongs in the adapters layer. The logic layer only sees already-typed structs.
 
 **Test**: if a function in `logic/` has `async` or imports anything from `adapters/`, `process/`, or `composition/`, it's in the wrong layer.
 
@@ -188,12 +186,12 @@ Orchestration. Defines **what** needs to happen via traits. Receives I/O as inje
 
 ### Adapters (`src/adapters/`)
 
-Concrete I/O implementations.
+Concrete I/O implementations. **All format-specific parsing (CSV, JSON, wire formats) lives here** — parsing external formats is a boundary concern, exactly like SQL queries. The process layer only sees typed structs; only adapters see raw bytes or format-specific APIs.
 
-- `auth.rs` — API key validator
-- `db/` — database enum mappings, query filters, junction batch-fetch functions (all generated)
-- `handlers/` — **thin** HTTP handlers + process trait implementations
-- Implements traits defined by the process layer with Postgres-specific code
+- `db/` — database enum mappings, query filters (all generated)
+- `field_parsing/` — CSV field parsers for the full-CSV import pipeline
+- Root files (`search.rs`, `render.rs`, `import.rs`, etc.) — implement process-layer traits with Postgres-specific code
+- `handlers/` — **thin** HTTP handlers only: extract request → construct adapter impls → call process → format response. No business logic.
 
 ### Composition (`src/composition/`)
 
@@ -221,4 +219,4 @@ Schema source of truth: `hexforge.yml`
 - `bibitem_keywords` — BibItem↔Keyword with keyword_level
 - `bibitem_refs` — BibItem↔BibItem with ref_type
 
-**2 internal entities:** ApiKey, BibitemNotes
+**3 internal entities:** ApiKey, BibitemNotes, DataVersion
