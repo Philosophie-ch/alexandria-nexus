@@ -486,7 +486,7 @@ async fn test_import_full_csv_updates_existing() {
 }
 
 #[tokio::test]
-async fn test_import_full_csv_fails_on_missing_entities() {
+async fn test_import_full_csv_skips_row_with_missing_journal() {
     let app = TestApp::spawn().await;
     let s = unique_suffix();
 
@@ -496,19 +496,25 @@ async fn test_import_full_csv_fails_on_missing_entities() {
     );
 
     let resp = upload_csv(&app, "/api/v1/admin/import-full-csv", &csv).await;
-    assert_eq!(resp.status(), 422);
+    assert_eq!(resp.status(), 200);
 
     let body: serde_json::Value = resp.json().await.unwrap();
-    let missing = body["missing_journals"].as_array().unwrap();
-    assert_eq!(missing.len(), 1);
+    assert_eq!(body["imported"], 0);
+    assert_eq!(body["skipped"], 1);
+
+    // Verify the bibkey was not inserted
+    let get = app
+        .get(&format!("/api/v1/bibitems/by-key/test{s}:2024"))
+        .await;
+    assert_eq!(get.status(), 404);
 }
 
 #[tokio::test]
-async fn test_import_full_csv_fails_on_ambiguous_author() {
+async fn test_import_full_csv_skips_row_with_ambiguous_author() {
     let app = TestApp::spawn().await;
     let s = unique_suffix();
 
-    // Two authors with same name
+    // Two authors with the same name → ambiguous, cannot resolve
     seed_author(&app, &format!("dup1-{s}"), "Duplicate", "Name").await;
     seed_author(&app, &format!("dup2-{s}"), "Duplicate", "Name").await;
 
@@ -518,10 +524,17 @@ async fn test_import_full_csv_fails_on_ambiguous_author() {
     );
 
     let resp = upload_csv(&app, "/api/v1/admin/import-full-csv", &csv).await;
-    assert_eq!(resp.status(), 422);
+    assert_eq!(resp.status(), 200);
 
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(body["ambiguous_authors"].as_array().unwrap().len(), 1);
+    assert_eq!(body["imported"], 0);
+    assert_eq!(body["skipped"], 1);
+
+    // Verify the bibkey was not inserted
+    let get = app
+        .get(&format!("/api/v1/bibitems/by-key/dup{s}:2024"))
+        .await;
+    assert_eq!(get.status(), 404);
 }
 
 #[tokio::test]
