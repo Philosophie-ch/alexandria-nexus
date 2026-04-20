@@ -194,9 +194,13 @@ pub fn extract_cite_keys(latex: &str) -> Vec<String> {
         let after_cmd = after_cmd.strip_prefix('*').unwrap_or(after_cmd);
 
         // skip all optional [...] arguments (cite commands can have two: [prenote][postnote])
+        // If a closing ']' is missing (malformed input), break to avoid an infinite loop.
         let mut after_opt = after_cmd;
         while let Some(s) = after_opt.strip_prefix('[') {
-            after_opt = s.find(']').map(|i| &s[i + 1..]).unwrap_or(after_opt);
+            match s.find(']') {
+                Some(i) => after_opt = &s[i + 1..],
+                None => break,
+            }
         }
 
         // required {key} argument
@@ -294,8 +298,115 @@ mod tests {
         assert_eq!(extract_cite_keys(latex), vec!["a:1", "b:2", "c:3"]);
     }
 
+    #[test]
+    fn unclosed_bracket_does_not_hang() {
+        // \citet[215--244{key} — missing closing ']', infinite loop without the fix
+        let keys = extract_cite_keys(r"Translated in \citet[215--244{schmid_hb:2009}");
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn unclosed_bracket_with_valid_cite_after() {
+        let keys = extract_cite_keys(r"\citet[no-close{bad} and \citet{good:key}");
+        assert_eq!(keys, vec!["good:key"]);
+    }
+
+    // --- Malformed: unclosed/missing braces ---
+
+    #[test]
+    fn unclosed_brace_returns_empty() {
+        // \citet{unclosed — no closing '}'
+        assert!(extract_cite_keys(r"\citet{unclosed").is_empty());
+    }
+
+    #[test]
+    fn cite_with_no_args_returns_empty() {
+        // \cite immediately followed by space/end-of-string
+        assert!(extract_cite_keys(r"\cite ").is_empty());
+        assert!(extract_cite_keys(r"\cite").is_empty());
+    }
+
+    #[test]
+    fn empty_braces_returns_empty() {
+        // \citet{} — empty required arg
+        assert!(extract_cite_keys(r"\citet{}").is_empty());
+    }
+
+    #[test]
+    fn whitespace_only_in_braces_returns_empty() {
+        assert!(extract_cite_keys(r"\citet{   }").is_empty());
+    }
+
+    #[test]
+    fn empty_optional_arg_with_valid_key() {
+        // \citet[]{key} — empty optional arg should still work
+        assert_eq!(extract_cite_keys(r"\citet[]{key:1}"), vec!["key:1"]);
+    }
+
+    // --- Malformed: second optional arg unclosed ---
+
+    #[test]
+    fn two_optional_args_second_unclosed() {
+        // \citep[pre][no-close{key} — second optional arg has no ']'
+        assert!(extract_cite_keys(r"\citep[pre][no-close{key}").is_empty());
+    }
+
+    #[test]
+    fn two_optional_args_both_valid() {
+        // \citep[pre][post]{key} — two closed optional args
+        assert_eq!(
+            extract_cite_keys(r"\citep[pre][post]{key:1}"),
+            vec!["key:1"]
+        );
+    }
+
+    // --- Malformed: star variant edge cases ---
+
+    #[test]
+    fn star_with_unclosed_bracket() {
+        // \citet*[bad{key} — star + unclosed bracket
+        assert!(extract_cite_keys(r"\citet*[bad{key}").is_empty());
+    }
+
+    #[test]
+    fn star_with_no_args() {
+        // \citet* — star but no required arg
+        assert!(extract_cite_keys(r"\citet*").is_empty());
+    }
+
+    // --- Malformed: keys with commas/whitespace ---
+
+    #[test]
+    fn key_with_leading_comma_ignored() {
+        // \citet{,b:2} — leading comma → empty string filtered out
+        assert_eq!(extract_cite_keys(r"\citet{,b:2}"), vec!["b:2"]);
+    }
+
+    #[test]
+    fn key_with_trailing_comma_ignored() {
+        // \citet{a:1,} — trailing comma → empty string filtered out
+        assert_eq!(extract_cite_keys(r"\citet{a:1,}"), vec!["a:1"]);
+    }
+
+    // --- Malformed: \cite at end of string ---
+
+    #[test]
+    fn cite_at_end_of_string() {
+        // String ends with backslash — no hang, no keys
+        assert!(extract_cite_keys(r"text \cite").is_empty());
+    }
+
+    // --- Multiple malformed cites: only valid ones extracted ---
+
+    #[test]
+    fn multiple_malformed_with_valid_interleaved() {
+        // Three malformed cites and one valid cite
+        let text = r"\citet[no-close \citet{} \citet{  } \citet{real:key}";
+        assert_eq!(extract_cite_keys(text), vec!["real:key"]);
+    }
+
     // =============================================================================
-    // substitute_citations tests
+    // substitute_citations malformed tests
     // =============================================================================
 
     fn cd(author: Option<&str>, year: Option<i16>) -> CitationData {
@@ -500,5 +611,47 @@ mod tests {
         let m = map(&[("k:1", cd(Some("K"), Some(1)))]);
         let result = substitute_citations(r"Before \citet{k:1} after.", &m);
         assert_eq!(result, "Before K (1) after.");
+    }
+
+    // --- substitute_citations malformed input ---
+
+    #[test]
+    fn substitute_unclosed_bracket_does_not_hang() {
+        // \citet[215--244{key} — unclosed '[', must not hang
+        let result = substitute_citations(
+            r"Translated in \citet[215--244{schmid_hb:2009}",
+            &HashMap::new(),
+        );
+        // Malformed command: \cite verbatim + rest of string unchanged
+        assert!(result.contains("\\cite"));
+    }
+
+    #[test]
+    fn substitute_unclosed_bracket_with_valid_cite_after() {
+        let m = map(&[("good:1", cd(Some("Good"), Some(2000)))]);
+        let result = substitute_citations(r"\citet[no-close{bad} text \citet{good:1}", &m);
+        assert!(result.contains("Good (2000)"));
+    }
+
+    #[test]
+    fn substitute_empty_braces_left_verbatim() {
+        // \citet{} — empty key, no substitution
+        let result = substitute_citations(r"\citet{}", &HashMap::new());
+        assert_eq!(result, r"\citet{}");
+    }
+
+    #[test]
+    fn substitute_cite_no_args_left_verbatim() {
+        // \cite with no braces — left as \cite
+        let result = substitute_citations(r"text \cite more", &HashMap::new());
+        assert_eq!(result, r"text \cite more");
+    }
+
+    #[test]
+    fn substitute_multiple_malformed_with_valid() {
+        let m = map(&[("real:1", cd(Some("Real"), Some(2001)))]);
+        let text = r"\citet{} \citet[no-close \citet{real:1}";
+        let result = substitute_citations(text, &m);
+        assert!(result.contains("Real (2001)"));
     }
 }
