@@ -1171,10 +1171,9 @@ pub fn parse_bibitem_refs_csv(
 
     let mut rows = Vec::new();
     let mut errors = Vec::new();
-    let mut row_num = 1usize;
 
-    for result in reader.records() {
-        row_num += 1;
+    for (i, result) in (2usize..).zip(reader.records()) {
+        let row_num = i;
         let record = match result {
             Ok(r) => r,
             Err(e) => {
@@ -1249,10 +1248,9 @@ pub fn parse_bibitem_notes_csv(
 
     let mut rows = Vec::new();
     let mut errors = Vec::new();
-    let mut row_num = 1usize;
 
-    for result in reader.records() {
-        row_num += 1;
+    for (i, result) in (2usize..).zip(reader.records()) {
+        let row_num = i;
         let record = match result {
             Ok(r) => r,
             Err(e) => {
