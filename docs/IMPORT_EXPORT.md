@@ -234,7 +234,21 @@ The CSV is the **source of truth**:
 - Existing bibitems (same bibkey) are updated
 - Bibitems in the DB but NOT in the CSV are **deleted**
 
-Returns 422 if any entities can't be resolved (missing or ambiguous). Nothing is modified until all references are validated.
+Rows whose entity references (author, journal, publisher, etc.) cannot be resolved are **skipped individually** — the rest of the import continues. Skipped rows are reported in `errors`. The only hard failure is duplicate bibkeys within the CSV itself (returns 422 with no changes).
+
+Response:
+```json
+{
+  "imported": 1200,
+  "updated": 50,
+  "deleted": 3,
+  "failed": 0,
+  "skipped": 12,
+  "errors": [
+    { "row": 42, "identifier": "bad:2024", "error": "unresolvable entity: journal 'Nonexistent Review'" }
+  ]
+}
+```
 
 ### CSV format
 
