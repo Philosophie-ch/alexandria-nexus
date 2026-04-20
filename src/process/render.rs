@@ -202,7 +202,7 @@ pub async fn render_pipeline(
             .filter(|id| !main_id_set.contains(id))
             .collect();
         if novel_dep_ids.is_empty() {
-            Some(String::new())
+            None
         } else {
             let dep_bibitems = resolver.find_by_ids(&novel_dep_ids).await?;
             Some(fetch_and_render(entity_fetcher, author_fetcher, dep_bibitems).await?)

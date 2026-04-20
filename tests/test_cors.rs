@@ -2,6 +2,10 @@
 //!
 //! Verifies that `CorsConfig::origins(...)` correctly restricts cross-origin access
 //! and that permissive mode allows any origin.
+//!
+//! CORS middleware is applied to API routes (`/api/v1/*`). The `/health` endpoint
+//! is mounted on the outer router and is intentionally outside the CORS layer
+//! (health checks are for infrastructure, not browser clients).
 
 mod common;
 
@@ -13,6 +17,10 @@ const ALLOWED_ORIGIN: &str = "https://philosophie.ch";
 const OTHER_ALLOWED_ORIGIN: &str = "https://alexandria.philosophie.ch";
 const DISALLOWED_ORIGIN: &str = "https://evil.example.com";
 
+// Use a stable, lightweight API route for all CORS checks.
+// Keywords tree returns 200 with an empty list when no data is present.
+const TEST_PATH: &str = "/api/v1/keywords/tree";
+
 // =============================================================================
 // Permissive CORS
 // =============================================================================
@@ -23,7 +31,8 @@ async fn test_permissive_cors_any_origin_gets_acao_header() {
 
     let resp = app
         .client
-        .get(app.url("/health"))
+        .get(app.url(TEST_PATH))
+        .header("Authorization", format!("Bearer {}", app.api_key))
         .header("Origin", DISALLOWED_ORIGIN)
         .send()
         .await
@@ -41,9 +50,10 @@ async fn test_permissive_cors_any_origin_gets_acao_header() {
 async fn test_permissive_cors_preflight_succeeds_for_any_origin() {
     let app = TestApp::spawn().await;
 
+    // Preflight is handled by CorsLayer before auth — no auth header needed.
     let resp = app
         .client
-        .request(Method::OPTIONS, app.url("/health"))
+        .request(Method::OPTIONS, app.url(TEST_PATH))
         .header("Origin", DISALLOWED_ORIGIN)
         .header("Access-Control-Request-Method", "GET")
         .send()
@@ -73,7 +83,8 @@ async fn test_restricted_cors_allows_listed_origin() {
 
     let resp = app
         .client
-        .get(app.url("/health"))
+        .get(app.url(TEST_PATH))
+        .header("Authorization", format!("Bearer {}", app.api_key))
         .header("Origin", ALLOWED_ORIGIN)
         .send()
         .await
@@ -98,7 +109,8 @@ async fn test_restricted_cors_allows_second_listed_origin() {
 
     let resp = app
         .client
-        .get(app.url("/health"))
+        .get(app.url(TEST_PATH))
+        .header("Authorization", format!("Bearer {}", app.api_key))
         .header("Origin", OTHER_ALLOWED_ORIGIN)
         .send()
         .await
@@ -122,14 +134,15 @@ async fn test_restricted_cors_blocks_unlisted_origin() {
 
     let resp = app
         .client
-        .get(app.url("/health"))
+        .get(app.url(TEST_PATH))
+        .header("Authorization", format!("Bearer {}", app.api_key))
         .header("Origin", DISALLOWED_ORIGIN)
         .send()
         .await
         .unwrap();
 
-    // The request itself still returns 200 — CORS doesn't block server-side.
-    // What matters is that the ACAO header is absent or doesn't match the disallowed origin.
+    // CORS doesn't block server-side — the request still returns 200.
+    // What matters is that the ACAO header is absent or doesn't reflect the disallowed origin.
     assert_eq!(resp.status(), 200);
     let acao = resp
         .headers()
@@ -147,7 +160,7 @@ async fn test_restricted_cors_preflight_succeeds_for_allowed_origin() {
 
     let resp = app
         .client
-        .request(Method::OPTIONS, app.url("/health"))
+        .request(Method::OPTIONS, app.url(TEST_PATH))
         .header("Origin", ALLOWED_ORIGIN)
         .header("Access-Control-Request-Method", "GET")
         .send()
@@ -176,7 +189,7 @@ async fn test_restricted_cors_preflight_blocked_for_disallowed_origin() {
 
     let resp = app
         .client
-        .request(Method::OPTIONS, app.url("/health"))
+        .request(Method::OPTIONS, app.url(TEST_PATH))
         .header("Origin", DISALLOWED_ORIGIN)
         .header("Access-Control-Request-Method", "GET")
         .send()
