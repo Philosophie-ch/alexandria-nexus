@@ -57,8 +57,7 @@ pub struct BibItem {
     pub shorthand: Option<String>,
     #[crud(required)]
     pub title_latex: String,
-    #[crud(required)]
-    pub title_unicode: String,
+    pub title_unicode: Option<String>,
     pub type_field: Option<String>,
     pub url: Option<String>,
     pub urn: Option<String>,
@@ -69,14 +68,12 @@ pub struct BibItem {
     pub updated_at: DateTime<Utc>,
 }
 
-use crate::domain::{bib_string_normalize, bib_string_normalize_required};
+use crate::domain::bib_string_normalize;
 
 fn pre_create_bib_item(input: &mut CreateBibItem) {
     bib_string_normalize(&input.booktitle_latex, &mut input.booktitle_unicode);
-    bib_string_normalize_required(&input.title_latex, &mut input.title_unicode);
 }
 
 fn pre_update_bib_item(input: &mut UpdateBibItem) {
     bib_string_normalize(&input.booktitle_latex, &mut input.booktitle_unicode);
-    bib_string_normalize(&input.title_latex, &mut input.title_unicode);
 }

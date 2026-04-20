@@ -156,6 +156,7 @@ models:
       mononym: { type: bib_string }
       shorthand: { type: bib_string }
       famous_name: { type: bib_string }
+      famous: { type: bool, default: false }
       name_variants_latex: { type: "string[]?" }
       name_variants_unicode: { type: "string[]?" }
     constraints:
@@ -291,8 +292,9 @@ models:
       date_is_no_date: { type: bool }
       pubstate: { type: "PubState?" }
 
-      # Title (required bib_string)
-      title: { type: bib_string, required: true }
+      # Title: latex required, unicode optional (not auto-derived)
+      title_latex: { type: string, required: true }
+      title_unicode: { type: "string?" }
 
       # Booktitle (optional bib_string)
       booktitle: { type: bib_string }

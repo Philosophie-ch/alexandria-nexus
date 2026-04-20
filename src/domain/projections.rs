@@ -17,7 +17,7 @@ pub struct BibItemSummary {
     pub id: i64,
     pub bibkey: String,
     pub entry_type: EntryType,
-    pub title_unicode: String,
+    pub title_unicode: Option<String>,
     pub date_year: Option<i16>,
     pub pubstate: Option<PubState>,
 }
@@ -40,7 +40,7 @@ pub struct BibItemCrossref {
     pub id: i64,
     pub bibkey: String,
     pub entry_type: EntryType,
-    pub title_unicode: String,
+    pub title_unicode: Option<String>,
     pub date_year: Option<i16>,
 }
 

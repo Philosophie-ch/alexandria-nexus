@@ -118,7 +118,7 @@ pub fn build_bibitem_update_dto(create: &CreateBibItem) -> UpdateBibItem {
         date_is_no_date: Some(create.date_is_no_date),
         pubstate: create.pubstate,
         title_latex: Some(create.title_latex.clone()),
-        title_unicode: Some(create.title_unicode.clone()),
+        title_unicode: create.title_unicode.clone(),
         booktitle_latex: create.booktitle_latex.clone(),
         booktitle_unicode: create.booktitle_unicode.clone(),
         journal_id: create.journal_id,
@@ -183,6 +183,7 @@ pub struct ParsedAuthorRow {
     pub shorthand_unicode: Option<String>,
     pub famous_name_latex: Option<String>,
     pub famous_name_unicode: Option<String>,
+    pub famous: bool,
     pub name_variants_latex: Option<Vec<String>>,
     pub name_variants_unicode: Option<Vec<String>>,
 }

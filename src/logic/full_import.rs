@@ -376,8 +376,8 @@ pub struct AuthorLookupResult {
     pub id_map: HashMap<AuthorNameKey, Vec<i64>>,
     /// AuthorNameKey -> variant info (only for keys matched via a name variant)
     pub variant_map: HashMap<AuthorNameKey, VariantInfo>,
-    /// family_name_latex -> author IDs (fallback for _person resolution)
-    pub family_name_only_map: HashMap<String, Vec<i64>>,
+    /// name string -> author IDs, famous authors only (for _person resolution)
+    pub famous_person_map: HashMap<String, Vec<i64>>,
 }
 
 // =============================================================================
@@ -405,8 +405,8 @@ pub struct ResolutionCtx {
     pub author_resolve: HashMap<AuthorNameKey, i64>,
     /// For keys that matched via a name variant, stores the variant strings.
     pub author_variants: HashMap<AuthorNameKey, VariantInfo>,
-    /// Unambiguous family-name → author ID, used as fallback for _person resolution.
-    pub person_family_name_resolve: HashMap<String, i64>,
+    /// Unambiguous famous-author name → ID, used exclusively for _person resolution.
+    pub famous_person_resolve: HashMap<String, i64>,
     pub journal_map: HashMap<String, i64>,
     pub publisher_map: HashMap<String, i64>,
     pub institution_map: HashMap<String, i64>,
@@ -420,9 +420,9 @@ impl ResolutionCtx {
     /// Build a ResolutionCtx from LookupMaps (consumes the maps).
     pub fn from_lookup_maps(maps: LookupMaps) -> Self {
         let author_variants = maps.authors.variant_map;
-        let person_family_name_resolve = maps
+        let famous_person_resolve = maps
             .authors
-            .family_name_only_map
+            .famous_person_map
             .into_iter()
             .filter_map(|(k, ids)| {
                 if ids.len() == 1 {
@@ -446,7 +446,7 @@ impl ResolutionCtx {
                 })
                 .collect(),
             author_variants,
-            person_family_name_resolve,
+            famous_person_resolve,
             journal_map: maps.journals,
             publisher_map: maps.publishers,
             institution_map: maps.institutions,
@@ -599,23 +599,17 @@ pub fn generate_key(name: &str) -> String {
 // Person resolution (three-step fallback)
 // =============================================================================
 
-/// Resolve a `_person` entry to an author ID.
+/// Resolve a `_person` entry to a famous author ID.
 ///
-/// Steps:
-/// 1. Exact key in `author_resolve` — handles mononym authors and name variants.
-/// 2. Family-name-only fallback — `Mononym("Kant")` matches `Named { family_name: "Kant", ... }`
-///    when exactly one such author exists.
+/// Only matches authors marked `famous = true`. The name string from the CSV
+/// (e.g. "Kant", "Aristotle") is looked up directly in `famous_person_resolve`,
+/// which is indexed by stripped mononym or family name for famous authors only.
 pub fn resolve_person_id(person: &ParsedAuthor, ctx: &ResolutionCtx) -> Option<i64> {
-    let key = AuthorNameKey::from_parsed(person);
-    if let Some(&id) = ctx.author_resolve.get(&key) {
-        return Some(id);
-    }
-    if let AuthorNameKey::Mononym(m) = &key {
-        if let Some(&id) = ctx.person_family_name_resolve.get(m) {
-            return Some(id);
-        }
-    }
-    None
+    let name = match person {
+        ParsedAuthor::Mononym(m) => m.as_str(),
+        ParsedAuthor::Named { family_name, .. } => family_name.as_str(),
+    };
+    ctx.famous_person_resolve.get(name).copied()
 }
 
 // =============================================================================
@@ -636,7 +630,7 @@ pub fn build_bibitem_dto(row: &ParsedBibRow, ctx: &ResolutionCtx) -> Result<Crea
         date_is_no_date: false,
         pubstate: row.pubstate,
         title_latex: row.title.clone(),
-        title_unicode: String::new(),
+        title_unicode: None,
         booktitle_latex: row.booktitle.clone(),
         booktitle_unicode: None,
         journal_id: row
@@ -1152,11 +1146,11 @@ fn collect_missing_for_row(row: &ParsedBibRow, ctx: &ResolutionCtx) -> Vec<Strin
             missing.push(format!("unresolved author: {}", format_author_key(&key)));
         }
     }
-    if let Some(p) = &row.person {
-        if resolve_person_id(p, ctx).is_none() {
-            let key = AuthorNameKey::from_parsed(p);
-            missing.push(format!("unresolved person: {}", format_author_key(&key)));
-        }
+    if let Some(p) = &row.person
+        && resolve_person_id(p, ctx).is_none()
+    {
+        let key = AuthorNameKey::from_parsed(p);
+        missing.push(format!("unresolved person: {}", format_author_key(&key)));
     }
     if let Some(n) = &row.journal_name
         && !ctx.journal_map.contains_key(n)
@@ -1248,50 +1242,15 @@ mod tests {
     // resolve_person_id
     // -------------------------------------------------------------------------
 
-    fn ctx_with(
-        mononyms: &[(&str, i64)],
-        named: &[(&str, Option<&str>, i64)],
-        variants: &[(&str, i64)],
-    ) -> ResolutionCtx {
-        let mut author_resolve: HashMap<AuthorNameKey, i64> = HashMap::new();
-        let mut family_name_only_map: HashMap<String, Vec<i64>> = HashMap::new();
-
-        for (m, id) in mononyms {
-            author_resolve.insert(AuthorNameKey::Mononym(m.to_string()), *id);
-        }
-        for (family, given, id) in named {
-            author_resolve.insert(
-                AuthorNameKey::Named {
-                    family_name: family.to_string(),
-                    given_name: given.map(|s| s.to_string()),
-                },
-                *id,
-            );
-            family_name_only_map
-                .entry(family.to_string())
-                .or_default()
-                .push(*id);
-        }
-        for (variant, id) in variants {
-            // Simulate a name variant stored as a Mononym key
-            author_resolve.insert(AuthorNameKey::Mononym(variant.to_string()), *id);
-        }
-
-        let person_family_name_resolve = family_name_only_map
-            .into_iter()
-            .filter_map(|(k, ids)| {
-                if ids.len() == 1 {
-                    Some((k, ids[0]))
-                } else {
-                    None
-                }
-            })
+    fn ctx_with_famous(famous: &[(&str, i64)]) -> ResolutionCtx {
+        let famous_person_resolve = famous
+            .iter()
+            .map(|(name, id)| (name.to_string(), *id))
             .collect();
-
         ResolutionCtx {
-            author_resolve,
+            author_resolve: HashMap::new(),
             author_variants: HashMap::new(),
-            person_family_name_resolve,
+            famous_person_resolve,
             journal_map: HashMap::new(),
             publisher_map: HashMap::new(),
             institution_map: HashMap::new(),
@@ -1307,54 +1266,35 @@ mod tests {
     }
 
     #[test]
-    fn person_resolved_by_exact_mononym() {
-        // Author stored with mononym_latex = "Aristotle"
-        let ctx = ctx_with(&[("Aristotle", 1)], &[], &[]);
+    fn person_resolved_by_famous_mononym() {
+        let ctx = ctx_with_famous(&[("Aristotle", 1)]);
         assert_eq!(resolve_person_id(&mononym("Aristotle"), &ctx), Some(1));
     }
 
     #[test]
-    fn person_resolved_by_family_name_fallback() {
-        // Author stored as Named { family_name: "Kierkegaard", given_name: Some("Søren") }
-        // _person = "Kierkegaard" → should resolve via family-name fallback
-        let ctx = ctx_with(&[], &[("Kierkegaard", Some("S{\\o}ren"), 42)], &[]);
+    fn person_resolved_by_famous_family_name() {
+        // Famous named author indexed by family name
+        let ctx = ctx_with_famous(&[("Kierkegaard", 42)]);
         assert_eq!(resolve_person_id(&mononym("Kierkegaard"), &ctx), Some(42));
     }
 
     #[test]
-    fn person_resolved_by_name_variant() {
-        // Author has a name variant "Locke" registered in author_resolve
-        let ctx = ctx_with(&[], &[], &[("Locke", 7)]);
-        assert_eq!(resolve_person_id(&mononym("Locke"), &ctx), Some(7));
-    }
-
-    #[test]
-    fn person_ambiguous_family_name_returns_none() {
-        // Two different authors share family name "Müller" → ambiguous, no resolution
-        let ctx = ctx_with(
-            &[],
-            &[("Müller", Some("Hans"), 10), ("Müller", Some("Karl"), 11)],
-            &[],
-        );
+    fn person_not_famous_returns_none() {
+        // "Müller" not in famous map → no resolution regardless of how many Müllers exist
+        let ctx = ctx_with_famous(&[("Kant", 1)]);
         assert_eq!(resolve_person_id(&mononym("Müller"), &ctx), None);
     }
 
     #[test]
     fn person_not_found_returns_none() {
-        let ctx = ctx_with(&[("Aristotle", 1)], &[], &[]);
+        let ctx = ctx_with_famous(&[("Aristotle", 1)]);
         assert_eq!(resolve_person_id(&mononym("Plato"), &ctx), None);
     }
 
     #[test]
-    fn person_exact_mononym_takes_priority_over_family_name() {
-        // Mononym author "Kant" (id=1) plus a Named "Kant, Immanuel" (id=2).
-        // Exact mononym wins; family-name fallback kicks in when mononym is absent.
-        let mut ctx = ctx_with(&[("Kant", 1)], &[("Kant", Some("Immanuel"), 2)], &[]);
-        assert_eq!(resolve_person_id(&mononym("Kant"), &ctx), Some(1));
-        // Remove the mononym entry: family-name fallback resolves to Named author.
-        ctx.author_resolve
-            .remove(&AuthorNameKey::Mononym("Kant".into()));
-        assert_eq!(resolve_person_id(&mononym("Kant"), &ctx), Some(2));
+    fn person_empty_famous_map_returns_none() {
+        let ctx = ctx_with_famous(&[]);
+        assert_eq!(resolve_person_id(&mononym("Kant"), &ctx), None);
     }
 
     // -------------------------------------------------------------------------

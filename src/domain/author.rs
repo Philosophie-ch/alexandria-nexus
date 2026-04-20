@@ -17,6 +17,7 @@ pub struct Author {
     pub author_key: String,
     pub family_name_latex: Option<String>,
     pub family_name_unicode: Option<String>,
+    pub famous: bool,
     pub famous_name_latex: Option<String>,
     pub famous_name_unicode: Option<String>,
     pub given_name_latex: Option<String>,

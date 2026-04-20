@@ -34,6 +34,7 @@ struct AuthorRow {
     family_name_latex: Option<String>,
     given_name_latex: Option<String>,
     mononym_latex: Option<String>,
+    famous: bool,
     name_variants_latex: Option<Vec<String>>,
     name_variants_unicode: Option<Vec<String>>,
 }
@@ -80,7 +81,7 @@ impl<'a> PgFullImportStore<'a> {
 impl AuthorLookup for PgFullImportStore<'_> {
     async fn batch_lookup_authors(&self) -> Result<AuthorLookupResult, HexforgeError> {
         let rows: Vec<AuthorRow> = query_as(
-            "SELECT id, family_name_latex, given_name_latex, mononym_latex, name_variants_latex, name_variants_unicode FROM authors",
+            "SELECT id, family_name_latex, given_name_latex, mononym_latex, famous, name_variants_latex, name_variants_unicode FROM authors",
         )
         .fetch_all(self.pool)
         .await
@@ -88,7 +89,9 @@ impl AuthorLookup for PgFullImportStore<'_> {
 
         let mut id_map: HashMap<AuthorNameKey, Vec<i64>> = HashMap::new();
         let mut variant_map: HashMap<AuthorNameKey, VariantInfo> = HashMap::new();
-        let mut family_name_only_map: HashMap<String, Vec<i64>> = HashMap::new();
+        // Famous-only map for _person resolution: name string → author IDs.
+        // Indexed by stripped mononym OR family name, famous authors only.
+        let mut famous_person_map: HashMap<String, Vec<i64>> = HashMap::new();
 
         for row in &rows {
             // Primary name key
@@ -104,12 +107,16 @@ impl AuthorLookup for PgFullImportStore<'_> {
             };
             id_map.entry(key).or_default().push(row.id);
 
-            // Family-name-only index for _person fallback resolution
-            if let Some(family) = &row.family_name_latex {
-                family_name_only_map
-                    .entry(family.clone())
-                    .or_default()
-                    .push(row.id);
+            // Famous-only index for _person resolution
+            if row.famous {
+                let name = if let Some(mononym) = &row.mononym_latex {
+                    strip_outer_braces(mononym)
+                } else if let Some(family) = &row.family_name_latex {
+                    family.clone()
+                } else {
+                    continue;
+                };
+                famous_person_map.entry(name).or_default().push(row.id);
             }
 
             // LaTeX name variants
@@ -147,7 +154,7 @@ impl AuthorLookup for PgFullImportStore<'_> {
         Ok(AuthorLookupResult {
             id_map,
             variant_map,
-            family_name_only_map,
+            famous_person_map,
         })
     }
 }
@@ -283,7 +290,7 @@ impl BulkBibitemInsert for PgFullImportStore<'_> {
         let mut series_id: Vec<Option<i64>> = Vec::new();
         let mut shorthand: Vec<Option<String>> = Vec::new();
         let mut title_latex: Vec<String> = Vec::new();
-        let mut title_unicode: Vec<String> = Vec::new();
+        let mut title_unicode: Vec<Option<String>> = Vec::new();
         let mut type_field: Vec<Option<String>> = Vec::new();
         let mut url: Vec<Option<String>> = Vec::new();
         let mut urn: Vec<Option<String>> = Vec::new();

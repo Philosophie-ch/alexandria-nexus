@@ -484,6 +484,7 @@ pub fn parse_authors_csv(
     let col_shorthand_unicode = column_index(&headers, "shorthand_unicode");
     let col_famous_name_latex = column_index(&headers, "famous_name_latex");
     let col_famous_name_unicode = column_index(&headers, "famous_name_unicode");
+    let col_famous = column_index(&headers, "famous");
     let col_name_variants_latex = column_index(&headers, "name_variants_latex");
     let col_name_variants_unicode = column_index(&headers, "name_variants_unicode");
 
@@ -541,6 +542,10 @@ pub fn parse_authors_csv(
             shorthand_unicode: col_shorthand_unicode.and_then(|i| get_field(&record, i)),
             famous_name_latex: col_famous_name_latex.and_then(|i| get_field(&record, i)),
             famous_name_unicode: col_famous_name_unicode.and_then(|i| get_field(&record, i)),
+            famous: col_famous
+                .and_then(|i| get_field(&record, i))
+                .map(|s| matches!(s.to_uppercase().as_str(), "TRUE" | "1" | "YES"))
+                .unwrap_or(false),
             name_variants_latex: parse_variants(col_name_variants_latex),
             name_variants_unicode: parse_variants(col_name_variants_unicode),
         });
@@ -1079,9 +1084,7 @@ pub fn parse_bibitems_csv(
         let title_latex = col_title_latex
             .and_then(|i| get_field(&record, i))
             .unwrap_or_default();
-        let title_unicode = col_title_unicode
-            .and_then(|i| get_field(&record, i))
-            .unwrap_or_else(|| title_latex.clone());
+        let title_unicode = col_title_unicode.and_then(|i| get_field(&record, i));
 
         let dto = CreateBibItem {
             bibkey: bibkey.clone(),

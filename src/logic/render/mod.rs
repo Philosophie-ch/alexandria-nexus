@@ -213,7 +213,7 @@ mod tests {
             date_is_no_date: year.is_none(),
             pubstate: None,
             title_latex: title.to_string(),
-            title_unicode: title.to_string(),
+            title_unicode: Some(title.to_string()),
             booktitle_latex: None,
             booktitle_unicode: None,
             journal_id: None,

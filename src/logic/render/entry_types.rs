@@ -54,7 +54,10 @@ pub fn render_article(item: &BibItem, ctx: &RenderContext) -> String {
     push_segment(&mut parts, render_date(item));
 
     // "TITLE." + JOURNAL VOLUME(NUMBER): PAGES
-    let title = render_title(&item.title_unicode, true);
+    let title = render_title(
+        item.title_unicode.as_deref().unwrap_or(&item.title_latex),
+        true,
+    );
     let journal = render_journal(ctx.journal_name.as_deref());
     let vol_num = render_volume_number(item.volume.as_deref(), item.number.as_deref());
 
@@ -129,7 +132,13 @@ pub fn render_book(item: &BibItem, ctx: &RenderContext) -> String {
     push_segment(&mut parts, render_date(item));
 
     // TITLE (italicized for books)
-    push_segment(&mut parts, render_title(&item.title_unicode, false));
+    push_segment(
+        &mut parts,
+        render_title(
+            item.title_unicode.as_deref().unwrap_or(&item.title_latex),
+            false,
+        ),
+    );
 
     // EDITION (only for authored books per spec)
     if has_authors {
@@ -171,7 +180,10 @@ pub fn render_chapter(item: &BibItem, ctx: &RenderContext) -> String {
     push_segment(&mut parts, render_date(item));
 
     // "TITLE." In BOOKTITLE, [edited by EDITOR,] pp. PAGES. ADDRESS: PUBLISHER
-    let title = render_title(&item.title_unicode, true);
+    let title = render_title(
+        item.title_unicode.as_deref().unwrap_or(&item.title_latex),
+        true,
+    );
     let booktitle = render_booktitle(item.booktitle_unicode.as_deref());
 
     let mut container_parts: Vec<String> = Vec::new();
@@ -290,7 +302,10 @@ pub fn render_thesis(item: &BibItem, ctx: &RenderContext) -> String {
     push_segment(&mut parts, render_date(item));
 
     // "TITLE." TYPE, SCHOOL
-    let title = render_title(&item.title_unicode, true);
+    let title = render_title(
+        item.title_unicode.as_deref().unwrap_or(&item.title_latex),
+        true,
+    );
 
     let thesis_type = item.type_field.as_deref().unwrap_or(match item.entry_type {
         crate::domain::EntryType::Phdthesis => "PhD thesis",
@@ -334,7 +349,10 @@ pub fn render_unpublished(item: &BibItem, ctx: &RenderContext) -> String {
     push_segment(&mut parts, render_date(item));
 
     // "TITLE."
-    let title = render_title(&item.title_unicode, true);
+    let title = render_title(
+        item.title_unicode.as_deref().unwrap_or(&item.title_latex),
+        true,
+    );
 
     // NOTE
     let note = render_note(item.note_unicode.as_deref());
@@ -365,7 +383,13 @@ pub fn render_generic(item: &BibItem, ctx: &RenderContext) -> String {
     push_segment(&mut parts, render_date(item));
 
     // TITLE (not quoted for generic types)
-    push_segment(&mut parts, render_title(&item.title_unicode, false));
+    push_segment(
+        &mut parts,
+        render_title(
+            item.title_unicode.as_deref().unwrap_or(&item.title_latex),
+            false,
+        ),
+    );
 
     // NOTE
     let note = render_note(item.note_unicode.as_deref());

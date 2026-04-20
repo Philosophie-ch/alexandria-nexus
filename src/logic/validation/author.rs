@@ -67,6 +67,7 @@ mod tests {
             shorthand_unicode: None,
             famous_name_latex: None,
             famous_name_unicode: None,
+            famous: false,
             name_variants_latex: None,
             name_variants_unicode: None,
         };
@@ -87,6 +88,7 @@ mod tests {
             shorthand_unicode: None,
             famous_name_latex: None,
             famous_name_unicode: None,
+            famous: false,
             name_variants_latex: None,
             name_variants_unicode: None,
         };
@@ -107,6 +109,7 @@ mod tests {
             shorthand_unicode: None,
             famous_name_latex: None,
             famous_name_unicode: None,
+            famous: false,
             name_variants_latex: None,
             name_variants_unicode: None,
         };

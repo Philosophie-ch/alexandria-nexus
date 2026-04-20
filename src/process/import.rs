@@ -192,6 +192,7 @@ pub async fn import_authors(
                         shorthand_unicode: row.shorthand_unicode.clone(),
                         famous_name_latex: row.famous_name_latex.clone(),
                         famous_name_unicode: row.famous_name_unicode.clone(),
+                        famous: Some(row.famous),
                         name_variants_latex: row.name_variants_latex.clone(),
                         name_variants_unicode: row.name_variants_unicode.clone(),
                     };
@@ -228,6 +229,7 @@ pub async fn import_authors(
                         shorthand_unicode: row.shorthand_unicode.clone(),
                         famous_name_latex: row.famous_name_latex.clone(),
                         famous_name_unicode: row.famous_name_unicode.clone(),
+                        famous: row.famous,
                         name_variants_latex: row.name_variants_latex.clone(),
                         name_variants_unicode: row.name_variants_unicode.clone(),
                     };
@@ -276,6 +278,7 @@ pub async fn import_authors(
             shorthand_unicode: row.shorthand_unicode,
             famous_name_latex: row.famous_name_latex,
             famous_name_unicode: row.famous_name_unicode,
+            famous: row.famous,
             name_variants_latex: row.name_variants_latex,
             name_variants_unicode: row.name_variants_unicode,
         };
