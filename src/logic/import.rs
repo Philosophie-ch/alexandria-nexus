@@ -1,9 +1,9 @@
-//! Import types and pure helpers — CSV field parsing, column mapping, DTO construction.
+//! Import types and pure helpers — response types, parsed row structs, DTO helpers.
 //!
-//! This module contains ONLY pure types and functions (no async, no database, no I/O).
+//! This module contains ONLY pure types and functions (no async, no database, no I/O,
+//! no CSV format dependency). CSV parsing lives in `crate::adapters::import`.
 //! Orchestration logic lives in `crate::process::import`.
 
-use hexforge::{HexforgeError, ValidationError};
 use serde::Serialize;
 
 use crate::domain::{CreateBibItem, UpdateBibItem};
@@ -102,57 +102,6 @@ impl NameVariantType {
 }
 
 // =============================================================================
-// CSV field helpers (pure functions)
-// =============================================================================
-
-/// Get a trimmed, non-empty string from a CSV record at the given index.
-pub fn get_field(record: &csv::StringRecord, idx: usize) -> Option<String> {
-    record
-        .get(idx)
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-}
-
-/// Parse an i16 from a CSV field.
-pub fn parse_i16_field(record: &csv::StringRecord, idx: usize) -> Option<i16> {
-    get_field(record, idx).and_then(|s| s.parse().ok())
-}
-
-/// Parse an i64 from a CSV field.
-pub fn parse_i64_field(record: &csv::StringRecord, idx: usize) -> Option<i64> {
-    get_field(record, idx).and_then(|s| s.parse().ok())
-}
-
-/// Parse comma-separated i64 IDs from a CSV field.
-pub fn parse_id_list(record: &csv::StringRecord, idx: usize) -> Vec<i64> {
-    get_field(record, idx)
-        .map(|s| {
-            s.split(',')
-                .filter_map(|part| part.trim().parse().ok())
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-// =============================================================================
-// Column mapping helpers
-// =============================================================================
-
-/// Build a column index map from CSV headers.
-pub fn column_index(headers: &csv::StringRecord, name: &str) -> Option<usize> {
-    headers.iter().position(|h| h.trim() == name)
-}
-
-/// Require a column, returning a validation error if not found.
-pub fn require_column(headers: &csv::StringRecord, name: &str) -> Result<usize, HexforgeError> {
-    column_index(headers, name).ok_or_else(|| {
-        HexforgeError::Validation(ValidationError::custom(format!(
-            "Missing required column: {name}"
-        )))
-    })
-}
-
-// =============================================================================
 // DTO helpers
 // =============================================================================
 
@@ -214,4 +163,111 @@ pub fn format_insert_error(e: hexforge::DataSourceError) -> String {
     } else {
         msg
     }
+}
+
+// =============================================================================
+// Parsed row types
+// =============================================================================
+
+pub struct ParsedAuthorRow {
+    pub row_num: usize,
+    pub source_id: Option<i64>,
+    pub author_key: String,
+    pub given_name_latex: Option<String>,
+    pub given_name_unicode: Option<String>,
+    pub family_name_latex: Option<String>,
+    pub family_name_unicode: Option<String>,
+    pub mononym_latex: Option<String>,
+    pub mononym_unicode: Option<String>,
+    pub shorthand_latex: Option<String>,
+    pub shorthand_unicode: Option<String>,
+    pub famous_name_latex: Option<String>,
+    pub famous_name_unicode: Option<String>,
+    pub name_variants_latex: Option<Vec<String>>,
+    pub name_variants_unicode: Option<Vec<String>>,
+}
+
+pub struct ParsedJournalRow {
+    pub row_num: usize,
+    pub source_id: Option<i64>,
+    pub journal_key: String,
+    pub name_latex: Option<String>,
+    pub name_unicode: Option<String>,
+    pub issn_print: Option<String>,
+    pub issn_electronic: Option<String>,
+}
+
+pub struct ParsedPublisherRow {
+    pub row_num: usize,
+    pub source_id: Option<i64>,
+    pub publisher_key: String,
+    pub name_latex: Option<String>,
+    pub name_unicode: Option<String>,
+    pub default_address: Option<String>,
+}
+
+pub struct ParsedInstitutionRow {
+    pub row_num: usize,
+    pub source_id: Option<i64>,
+    pub institution_key: String,
+    pub name_latex: Option<String>,
+    pub name_unicode: Option<String>,
+    pub default_address: Option<String>,
+}
+
+pub struct ParsedSchoolRow {
+    pub row_num: usize,
+    pub source_id: Option<i64>,
+    pub school_key: String,
+    pub name_latex: Option<String>,
+    pub name_unicode: Option<String>,
+}
+
+pub struct ParsedSeriesRow {
+    pub row_num: usize,
+    pub source_id: Option<i64>,
+    pub series_key: String,
+    pub name_latex: Option<String>,
+    pub name_unicode: Option<String>,
+}
+
+pub struct ParsedKeywordRow {
+    pub row_num: usize,
+    pub source_id: Option<i64>,
+    pub name: String,
+    pub level: i16,
+}
+
+pub struct ParsedNameVariantRow {
+    pub row_num: usize,
+    pub profile_id: i64,
+    pub variant_type: NameVariantType,
+    pub variant: String,
+}
+
+pub struct ParsedBibitemRow {
+    pub row_num: usize,
+    pub source_id: Option<i64>,
+    pub bibkey: String,
+    pub dto: CreateBibItem,
+    pub author_ids: Vec<i64>,
+    pub editor_ids: Vec<i64>,
+    pub guesteditor_ids: Vec<i64>,
+    pub keyword_ids: Vec<i64>,
+}
+
+pub struct ParsedBibitemRefRow {
+    pub source_id: i64,
+    pub target_id: i64,
+    pub ref_type: String,
+}
+
+pub struct ParsedBibitemNotesRow {
+    pub bibitem_id: i64,
+    pub note_perso: Option<String>,
+    pub note_stock: Option<String>,
+    pub note_missing: Option<String>,
+    pub change_request: Option<String>,
+    pub dltc_copyediting_note: Option<String>,
+    pub todo_general: Option<String>,
 }

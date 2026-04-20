@@ -1,4 +1,4 @@
-use super::types::{DateRangeSeparator, ParsedDate};
+use crate::logic::full_import::{DateRangeSeparator, ParsedDate};
 
 /// Parse a date string from ODS/CSV format.
 ///
@@ -20,7 +20,6 @@ pub fn parse_date(text: &str) -> Result<ParsedDate, String> {
         return Ok(ParsedDate::NoDate);
     }
 
-    // Slash-separated range: "YYYY/YYYY"
     if trimmed.contains('/') {
         let parts: Vec<&str> = trimmed.split('/').collect();
         if parts.len() != 2 {
@@ -35,19 +34,15 @@ pub fn parse_date(text: &str) -> Result<ParsedDate, String> {
         });
     }
 
-    // Check if it contains hyphens (but first handle negative years)
     if trimmed.contains('-') {
         return parse_hyphenated(trimmed);
     }
 
-    // Single year
     let year = parse_year(trimmed)?;
     Ok(ParsedDate::Year(year))
 }
 
 fn parse_hyphenated(text: &str) -> Result<ParsedDate, String> {
-    // Split carefully: the first character might be '-' for negative years.
-    // Strategy: if starts with '-', strip it, split on '-', then negate first part.
     let (is_negative, rest) = if let Some(stripped) = text.strip_prefix('-') {
         (true, stripped)
     } else {
@@ -58,7 +53,6 @@ fn parse_hyphenated(text: &str) -> Result<ParsedDate, String> {
 
     match parts.len() {
         1 => {
-            // Negative year only: "-380"
             if is_negative {
                 let year = negate_year(parse_year_raw(parts[0])?)?;
                 Ok(ParsedDate::Year(year))
@@ -76,7 +70,6 @@ fn parse_hyphenated(text: &str) -> Result<ParsedDate, String> {
                     separator: DateRangeSeparator::Hyphen,
                 })
             } else {
-                // "YYYY-YYYY" range
                 let year = parse_year(parts[0])?;
                 let year2 = parse_year(parts[1])?;
                 Ok(ParsedDate::YearRange {
@@ -87,7 +80,6 @@ fn parse_hyphenated(text: &str) -> Result<ParsedDate, String> {
             }
         }
         3 => {
-            // Could be "YYYY-MM-DD" (with or without negative year prefix)
             let year_str = if is_negative {
                 format!("-{}", parts[0])
             } else {
@@ -95,7 +87,6 @@ fn parse_hyphenated(text: &str) -> Result<ParsedDate, String> {
             };
             let year = parse_year(&year_str)?;
 
-            // Month and day parts should be short (1-2 chars)
             if parts[1].len() <= 2 && parts[2].len() <= 2 {
                 let month: i16 = parts[1]
                     .parse()

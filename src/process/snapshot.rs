@@ -71,20 +71,47 @@ pub trait SnapshotFetcher: Send + Sync {
 // Orchestration
 // =============================================================================
 
-/// Fetch all data for a snapshot (sequential — each table is independent).
+/// Fetch all data for a snapshot — all 12 tables are independent, run concurrently.
 pub async fn fetch_snapshot(fetcher: &impl SnapshotFetcher) -> Result<SnapshotData, HexforgeError> {
+    let (
+        authors,
+        journals,
+        publishers,
+        institutions,
+        schools,
+        series,
+        keywords,
+        bibitems,
+        bibitem_authors,
+        bibitem_keywords,
+        bibitem_refs,
+        bibitem_notes,
+    ) = tokio::try_join!(
+        fetcher.fetch_authors(),
+        fetcher.fetch_journals(),
+        fetcher.fetch_publishers(),
+        fetcher.fetch_institutions(),
+        fetcher.fetch_schools(),
+        fetcher.fetch_series(),
+        fetcher.fetch_keywords(),
+        fetcher.fetch_bibitems(),
+        fetcher.fetch_bibitem_authors(),
+        fetcher.fetch_bibitem_keywords(),
+        fetcher.fetch_bibitem_refs(),
+        fetcher.fetch_bibitem_notes(),
+    )?;
     Ok(SnapshotData {
-        authors: fetcher.fetch_authors().await?,
-        journals: fetcher.fetch_journals().await?,
-        publishers: fetcher.fetch_publishers().await?,
-        institutions: fetcher.fetch_institutions().await?,
-        schools: fetcher.fetch_schools().await?,
-        series: fetcher.fetch_series().await?,
-        keywords: fetcher.fetch_keywords().await?,
-        bibitems: fetcher.fetch_bibitems().await?,
-        bibitem_authors: fetcher.fetch_bibitem_authors().await?,
-        bibitem_keywords: fetcher.fetch_bibitem_keywords().await?,
-        bibitem_refs: fetcher.fetch_bibitem_refs().await?,
-        bibitem_notes: fetcher.fetch_bibitem_notes().await?,
+        authors,
+        journals,
+        publishers,
+        institutions,
+        schools,
+        series,
+        keywords,
+        bibitems,
+        bibitem_authors,
+        bibitem_keywords,
+        bibitem_refs,
+        bibitem_notes,
     })
 }

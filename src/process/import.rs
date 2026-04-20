@@ -10,20 +10,21 @@ use std::collections::HashSet;
 use std::future::Future;
 
 use crate::domain::{
-    AuthorRole, CreateAuthor, CreateBibItem, CreateInstitution, CreateJournal, CreateKeyword,
-    CreatePublisher, CreateSchool, CreateSeries, EntryType, UpdateAuthor, UpdateInstitution,
-    UpdateJournal, UpdateKeyword, UpdatePublisher, UpdateSchool, UpdateSeries,
-    create_author_transform, create_bib_item_transform, create_institution_transform,
-    create_journal_transform, create_keyword_transform, create_publisher_transform,
-    create_school_transform, create_series_transform, update_author_transform,
-    update_bib_item_transform, update_institution_transform, update_journal_transform,
-    update_keyword_transform, update_publisher_transform, update_school_transform,
-    update_series_transform,
+    AuthorRole, CreateAuthor, CreateInstitution, CreateJournal, CreateKeyword, CreatePublisher,
+    CreateSchool, CreateSeries, UpdateAuthor, UpdateInstitution, UpdateJournal, UpdateKeyword,
+    UpdatePublisher, UpdateSchool, UpdateSeries, create_author_transform,
+    create_bib_item_transform, create_institution_transform, create_journal_transform,
+    create_keyword_transform, create_publisher_transform, create_school_transform,
+    create_series_transform, update_author_transform, update_bib_item_transform,
+    update_institution_transform, update_journal_transform, update_keyword_transform,
+    update_publisher_transform, update_school_transform, update_series_transform,
 };
 use crate::logic::import::{
     BibitemImportResult, ImportResponse, ImportRowError, MissingReferencesError, NameVariantType,
-    build_bibitem_update_dto, column_index, format_insert_error, get_field, parse_i16_field,
-    parse_i64_field, parse_id_list, require_column,
+    ParsedAuthorRow, ParsedBibitemNotesRow, ParsedBibitemRefRow, ParsedBibitemRow,
+    ParsedInstitutionRow, ParsedJournalRow, ParsedKeywordRow, ParsedNameVariantRow,
+    ParsedPublisherRow, ParsedSchoolRow, ParsedSeriesRow, build_bibitem_update_dto,
+    format_insert_error,
 };
 use crate::validation::{
     validate_create_author, validate_create_bibitem, validate_create_institution,
@@ -132,85 +133,23 @@ pub trait ReferenceStore: Send + Sync {
 // Author import
 // =============================================================================
 
-/// Import authors from CSV bytes.
-pub async fn import_authors_from_csv(
+/// Import authors from parsed CSV rows.
+pub async fn import_authors(
     author_ds: &impl DataSource<crate::domain::Author, Id = i64, Error = hexforge::DataSourceError>,
     syncer: &impl SequenceSyncer,
-    data: Vec<u8>,
+    rows: Vec<ParsedAuthorRow>,
+    mut errors: Vec<ImportRowError>,
     auto_assign_ids: bool,
 ) -> Result<ImportResponse, HexforgeError> {
-    let mut reader = csv::ReaderBuilder::new()
-        .has_headers(true)
-        .flexible(true)
-        .from_reader(std::io::Cursor::new(data));
-
-    let headers = reader
-        .headers()
-        .map_err(|e| HexforgeError::Validation(ValidationError::custom(e.to_string())))?
-        .clone();
-
-    let col_id = column_index(&headers, "id");
-    let col_author_key = require_column(&headers, "author_key")?;
-    let col_given_name_latex = column_index(&headers, "given_name_latex");
-    let col_given_name_unicode = column_index(&headers, "given_name_unicode");
-    let col_family_name_latex = column_index(&headers, "family_name_latex");
-    let col_family_name_unicode = column_index(&headers, "family_name_unicode");
-    let col_mononym_latex = column_index(&headers, "mononym_latex");
-    let col_mononym_unicode = column_index(&headers, "mononym_unicode");
-    let col_shorthand_latex = column_index(&headers, "shorthand_latex");
-    let col_shorthand_unicode = column_index(&headers, "shorthand_unicode");
-    let col_famous_name_latex = column_index(&headers, "famous_name_latex");
-    let col_famous_name_unicode = column_index(&headers, "famous_name_unicode");
-    let col_name_variants_latex = column_index(&headers, "name_variants_latex");
-    let col_name_variants_unicode = column_index(&headers, "name_variants_unicode");
-
     let mut imported = 0usize;
     let mut updated = 0usize;
-    let mut errors = Vec::new();
 
-    for (idx, result) in reader.records().enumerate() {
-        let row_num = idx + 2;
-        let record = match result {
-            Ok(r) => r,
-            Err(e) => {
-                errors.push(ImportRowError {
-                    row: row_num,
-                    identifier: String::new(),
-                    error: format!("CSV parse error: {e}"),
-                });
-                continue;
-            }
-        };
-
-        let csv_id = col_id.and_then(|i| parse_i64_field(&record, i));
-
-        let author_key = match get_field(&record, col_author_key) {
-            Some(k) => k,
-            None => {
-                errors.push(ImportRowError {
-                    row: row_num,
-                    identifier: String::new(),
-                    error: "Missing author_key".to_string(),
-                });
-                continue;
-            }
-        };
-
-        let parse_variants = |col: Option<usize>| -> Option<Vec<String>> {
-            col.and_then(|i| {
-                get_field(&record, i).map(|s| {
-                    s.split(';')
-                        .map(|v| v.trim().to_string())
-                        .filter(|v| !v.is_empty())
-                        .collect::<Vec<_>>()
-                })
-            })
-        };
-        let name_variants_latex = parse_variants(col_name_variants_latex);
-        let name_variants_unicode = parse_variants(col_name_variants_unicode);
+    for row in rows {
+        let row_num = row.row_num;
+        let author_key = row.author_key;
 
         // Check if this is an update (CSV has ID that exists in DB)
-        if let Some(id) = csv_id {
+        if let Some(id) = row.source_id {
             match author_ds.find_by_id(&id).await {
                 Ok(Some(existing)) => {
                     if existing.author_key != author_key {
@@ -227,24 +166,18 @@ pub async fn import_authors_from_csv(
                     }
                     let update_dto = UpdateAuthor {
                         author_key: Some(author_key.clone()),
-                        given_name_latex: col_given_name_latex.and_then(|i| get_field(&record, i)),
-                        given_name_unicode: col_given_name_unicode
-                            .and_then(|i| get_field(&record, i)),
-                        family_name_latex: col_family_name_latex
-                            .and_then(|i| get_field(&record, i)),
-                        family_name_unicode: col_family_name_unicode
-                            .and_then(|i| get_field(&record, i)),
-                        mononym_latex: col_mononym_latex.and_then(|i| get_field(&record, i)),
-                        mononym_unicode: col_mononym_unicode.and_then(|i| get_field(&record, i)),
-                        shorthand_latex: col_shorthand_latex.and_then(|i| get_field(&record, i)),
-                        shorthand_unicode: col_shorthand_unicode
-                            .and_then(|i| get_field(&record, i)),
-                        famous_name_latex: col_famous_name_latex
-                            .and_then(|i| get_field(&record, i)),
-                        famous_name_unicode: col_famous_name_unicode
-                            .and_then(|i| get_field(&record, i)),
-                        name_variants_latex: name_variants_latex.clone(),
-                        name_variants_unicode: name_variants_unicode.clone(),
+                        given_name_latex: row.given_name_latex.clone(),
+                        given_name_unicode: row.given_name_unicode.clone(),
+                        family_name_latex: row.family_name_latex.clone(),
+                        family_name_unicode: row.family_name_unicode.clone(),
+                        mononym_latex: row.mononym_latex.clone(),
+                        mononym_unicode: row.mononym_unicode.clone(),
+                        shorthand_latex: row.shorthand_latex.clone(),
+                        shorthand_unicode: row.shorthand_unicode.clone(),
+                        famous_name_latex: row.famous_name_latex.clone(),
+                        famous_name_unicode: row.famous_name_unicode.clone(),
+                        name_variants_latex: row.name_variants_latex.clone(),
+                        name_variants_unicode: row.name_variants_unicode.clone(),
                     };
                     if let Err(e) = validate_update_author(&update_dto) {
                         errors.push(ImportRowError {
@@ -269,24 +202,18 @@ pub async fn import_authors_from_csv(
                     // ID not in DB — create with this ID
                     let dto = CreateAuthor {
                         author_key: author_key.clone(),
-                        given_name_latex: col_given_name_latex.and_then(|i| get_field(&record, i)),
-                        given_name_unicode: col_given_name_unicode
-                            .and_then(|i| get_field(&record, i)),
-                        family_name_latex: col_family_name_latex
-                            .and_then(|i| get_field(&record, i)),
-                        family_name_unicode: col_family_name_unicode
-                            .and_then(|i| get_field(&record, i)),
-                        mononym_latex: col_mononym_latex.and_then(|i| get_field(&record, i)),
-                        mononym_unicode: col_mononym_unicode.and_then(|i| get_field(&record, i)),
-                        shorthand_latex: col_shorthand_latex.and_then(|i| get_field(&record, i)),
-                        shorthand_unicode: col_shorthand_unicode
-                            .and_then(|i| get_field(&record, i)),
-                        famous_name_latex: col_famous_name_latex
-                            .and_then(|i| get_field(&record, i)),
-                        famous_name_unicode: col_famous_name_unicode
-                            .and_then(|i| get_field(&record, i)),
-                        name_variants_latex: name_variants_latex.clone(),
-                        name_variants_unicode: name_variants_unicode.clone(),
+                        given_name_latex: row.given_name_latex.clone(),
+                        given_name_unicode: row.given_name_unicode.clone(),
+                        family_name_latex: row.family_name_latex.clone(),
+                        family_name_unicode: row.family_name_unicode.clone(),
+                        mononym_latex: row.mononym_latex.clone(),
+                        mononym_unicode: row.mononym_unicode.clone(),
+                        shorthand_latex: row.shorthand_latex.clone(),
+                        shorthand_unicode: row.shorthand_unicode.clone(),
+                        famous_name_latex: row.famous_name_latex.clone(),
+                        famous_name_unicode: row.famous_name_unicode.clone(),
+                        name_variants_latex: row.name_variants_latex.clone(),
+                        name_variants_unicode: row.name_variants_unicode.clone(),
                     };
                     if let Err(e) = validate_create_author(&dto) {
                         errors.push(ImportRowError {
@@ -331,18 +258,18 @@ pub async fn import_authors_from_csv(
 
         let dto = CreateAuthor {
             author_key: author_key.clone(),
-            given_name_latex: col_given_name_latex.and_then(|i| get_field(&record, i)),
-            given_name_unicode: col_given_name_unicode.and_then(|i| get_field(&record, i)),
-            family_name_latex: col_family_name_latex.and_then(|i| get_field(&record, i)),
-            family_name_unicode: col_family_name_unicode.and_then(|i| get_field(&record, i)),
-            mononym_latex: col_mononym_latex.and_then(|i| get_field(&record, i)),
-            mononym_unicode: col_mononym_unicode.and_then(|i| get_field(&record, i)),
-            shorthand_latex: col_shorthand_latex.and_then(|i| get_field(&record, i)),
-            shorthand_unicode: col_shorthand_unicode.and_then(|i| get_field(&record, i)),
-            famous_name_latex: col_famous_name_latex.and_then(|i| get_field(&record, i)),
-            famous_name_unicode: col_famous_name_unicode.and_then(|i| get_field(&record, i)),
-            name_variants_latex,
-            name_variants_unicode,
+            given_name_latex: row.given_name_latex,
+            given_name_unicode: row.given_name_unicode,
+            family_name_latex: row.family_name_latex,
+            family_name_unicode: row.family_name_unicode,
+            mononym_latex: row.mononym_latex,
+            mononym_unicode: row.mononym_unicode,
+            shorthand_latex: row.shorthand_latex,
+            shorthand_unicode: row.shorthand_unicode,
+            famous_name_latex: row.famous_name_latex,
+            famous_name_unicode: row.famous_name_unicode,
+            name_variants_latex: row.name_variants_latex,
+            name_variants_unicode: row.name_variants_unicode,
         };
 
         if let Err(e) = validate_create_author(&dto) {
@@ -380,64 +307,23 @@ pub async fn import_authors_from_csv(
 // Journal import
 // =============================================================================
 
-/// Import journals from CSV bytes.
-pub async fn import_journals_from_csv(
+/// Import journals from parsed CSV rows.
+pub async fn import_journals(
     journal_ds: &impl DataSource<crate::domain::Journal, Id = i64, Error = hexforge::DataSourceError>,
     syncer: &impl SequenceSyncer,
-    data: Vec<u8>,
+    rows: Vec<ParsedJournalRow>,
+    mut errors: Vec<ImportRowError>,
     auto_assign_ids: bool,
 ) -> Result<ImportResponse, HexforgeError> {
-    let mut reader = csv::ReaderBuilder::new()
-        .has_headers(true)
-        .flexible(true)
-        .from_reader(std::io::Cursor::new(data));
-
-    let headers = reader
-        .headers()
-        .map_err(|e| HexforgeError::Validation(ValidationError::custom(e.to_string())))?
-        .clone();
-
-    let col_id = column_index(&headers, "id");
-    let col_journal_key = require_column(&headers, "journal_key")?;
-    let col_name_latex = column_index(&headers, "name_latex");
-    let col_name_unicode = column_index(&headers, "name_unicode");
-    let col_issn_print = column_index(&headers, "issn_print");
-    let col_issn_electronic = column_index(&headers, "issn_electronic");
-
     let mut imported = 0usize;
     let mut updated = 0usize;
-    let mut errors = Vec::new();
 
-    for (idx, result) in reader.records().enumerate() {
-        let row_num = idx + 2;
-        let record = match result {
-            Ok(r) => r,
-            Err(e) => {
-                errors.push(ImportRowError {
-                    row: row_num,
-                    identifier: String::new(),
-                    error: format!("CSV parse error: {e}"),
-                });
-                continue;
-            }
-        };
-
-        let journal_key = match get_field(&record, col_journal_key) {
-            Some(k) => k,
-            None => {
-                errors.push(ImportRowError {
-                    row: row_num,
-                    identifier: String::new(),
-                    error: "Missing journal_key".to_string(),
-                });
-                continue;
-            }
-        };
-
-        let csv_id = col_id.and_then(|i| parse_i64_field(&record, i));
+    for row in rows {
+        let row_num = row.row_num;
+        let journal_key = row.journal_key;
 
         // Check if this is an update (CSV has ID that exists in DB)
-        if let Some(id) = csv_id {
+        if let Some(id) = row.source_id {
             match journal_ds.find_by_id(&id).await {
                 Ok(Some(existing)) => {
                     if existing.journal_key != journal_key {
@@ -454,10 +340,10 @@ pub async fn import_journals_from_csv(
                     }
                     let update_dto = UpdateJournal {
                         journal_key: Some(journal_key.clone()),
-                        name_latex: col_name_latex.and_then(|i| get_field(&record, i)),
-                        name_unicode: col_name_unicode.and_then(|i| get_field(&record, i)),
-                        issn_print: col_issn_print.and_then(|i| get_field(&record, i)),
-                        issn_electronic: col_issn_electronic.and_then(|i| get_field(&record, i)),
+                        name_latex: row.name_latex.clone(),
+                        name_unicode: row.name_unicode.clone(),
+                        issn_print: row.issn_print.clone(),
+                        issn_electronic: row.issn_electronic.clone(),
                     };
                     if let Err(e) = validate_update_journal(&update_dto) {
                         errors.push(ImportRowError {
@@ -482,14 +368,10 @@ pub async fn import_journals_from_csv(
                     // ID not in DB — create with this ID
                     let dto = CreateJournal {
                         journal_key: journal_key.clone(),
-                        name_latex: col_name_latex
-                            .and_then(|i| get_field(&record, i))
-                            .unwrap_or_default(),
-                        name_unicode: col_name_unicode
-                            .and_then(|i| get_field(&record, i))
-                            .unwrap_or_default(),
-                        issn_print: col_issn_print.and_then(|i| get_field(&record, i)),
-                        issn_electronic: col_issn_electronic.and_then(|i| get_field(&record, i)),
+                        name_latex: row.name_latex.clone().unwrap_or_default(),
+                        name_unicode: row.name_unicode.clone().unwrap_or_default(),
+                        issn_print: row.issn_print.clone(),
+                        issn_electronic: row.issn_electronic.clone(),
                     };
                     if let Err(e) = validate_create_journal(&dto) {
                         errors.push(ImportRowError {
@@ -534,14 +416,10 @@ pub async fn import_journals_from_csv(
 
         let dto = CreateJournal {
             journal_key: journal_key.clone(),
-            name_latex: col_name_latex
-                .and_then(|i| get_field(&record, i))
-                .unwrap_or_default(),
-            name_unicode: col_name_unicode
-                .and_then(|i| get_field(&record, i))
-                .unwrap_or_default(),
-            issn_print: col_issn_print.and_then(|i| get_field(&record, i)),
-            issn_electronic: col_issn_electronic.and_then(|i| get_field(&record, i)),
+            name_latex: row.name_latex.unwrap_or_default(),
+            name_unicode: row.name_unicode.unwrap_or_default(),
+            issn_print: row.issn_print,
+            issn_electronic: row.issn_electronic,
         };
 
         if let Err(e) = validate_create_journal(&dto) {
@@ -579,67 +457,27 @@ pub async fn import_journals_from_csv(
 // Publisher import
 // =============================================================================
 
-/// Import publishers from CSV bytes.
-pub async fn import_publishers_from_csv(
+/// Import publishers from parsed CSV rows.
+pub async fn import_publishers(
     publisher_ds: &impl DataSource<
         crate::domain::Publisher,
         Id = i64,
         Error = hexforge::DataSourceError,
     >,
     syncer: &impl SequenceSyncer,
-    data: Vec<u8>,
+    rows: Vec<ParsedPublisherRow>,
+    mut errors: Vec<ImportRowError>,
     auto_assign_ids: bool,
 ) -> Result<ImportResponse, HexforgeError> {
-    let mut reader = csv::ReaderBuilder::new()
-        .has_headers(true)
-        .flexible(true)
-        .from_reader(std::io::Cursor::new(data));
-
-    let headers = reader
-        .headers()
-        .map_err(|e| HexforgeError::Validation(ValidationError::custom(e.to_string())))?
-        .clone();
-
-    let col_id = column_index(&headers, "id");
-    let col_publisher_key = require_column(&headers, "publisher_key")?;
-    let col_name_latex = column_index(&headers, "name_latex");
-    let col_name_unicode = column_index(&headers, "name_unicode");
-    let col_default_address = column_index(&headers, "default_address");
-
     let mut imported = 0usize;
     let mut updated = 0usize;
-    let mut errors = Vec::new();
 
-    for (idx, result) in reader.records().enumerate() {
-        let row_num = idx + 2;
-        let record = match result {
-            Ok(r) => r,
-            Err(e) => {
-                errors.push(ImportRowError {
-                    row: row_num,
-                    identifier: String::new(),
-                    error: format!("CSV parse error: {e}"),
-                });
-                continue;
-            }
-        };
-
-        let publisher_key = match get_field(&record, col_publisher_key) {
-            Some(k) => k,
-            None => {
-                errors.push(ImportRowError {
-                    row: row_num,
-                    identifier: String::new(),
-                    error: "Missing publisher_key".to_string(),
-                });
-                continue;
-            }
-        };
-
-        let csv_id = col_id.and_then(|i| parse_i64_field(&record, i));
+    for row in rows {
+        let row_num = row.row_num;
+        let publisher_key = row.publisher_key;
 
         // Check if this is an update (CSV has ID that exists in DB)
-        if let Some(id) = csv_id {
+        if let Some(id) = row.source_id {
             match publisher_ds.find_by_id(&id).await {
                 Ok(Some(existing)) => {
                     if existing.publisher_key != publisher_key {
@@ -656,9 +494,9 @@ pub async fn import_publishers_from_csv(
                     }
                     let update_dto = UpdatePublisher {
                         publisher_key: Some(publisher_key.clone()),
-                        name_latex: col_name_latex.and_then(|i| get_field(&record, i)),
-                        name_unicode: col_name_unicode.and_then(|i| get_field(&record, i)),
-                        default_address: col_default_address.and_then(|i| get_field(&record, i)),
+                        name_latex: row.name_latex.clone(),
+                        name_unicode: row.name_unicode.clone(),
+                        default_address: row.default_address.clone(),
                     };
                     if let Err(e) = validate_update_publisher(&update_dto) {
                         errors.push(ImportRowError {
@@ -683,13 +521,9 @@ pub async fn import_publishers_from_csv(
                     // ID not in DB — create with this ID
                     let dto = CreatePublisher {
                         publisher_key: publisher_key.clone(),
-                        name_latex: col_name_latex
-                            .and_then(|i| get_field(&record, i))
-                            .unwrap_or_default(),
-                        name_unicode: col_name_unicode
-                            .and_then(|i| get_field(&record, i))
-                            .unwrap_or_default(),
-                        default_address: col_default_address.and_then(|i| get_field(&record, i)),
+                        name_latex: row.name_latex.clone().unwrap_or_default(),
+                        name_unicode: row.name_unicode.clone().unwrap_or_default(),
+                        default_address: row.default_address.clone(),
                     };
                     if let Err(e) = validate_create_publisher(&dto) {
                         errors.push(ImportRowError {
@@ -734,13 +568,9 @@ pub async fn import_publishers_from_csv(
 
         let dto = CreatePublisher {
             publisher_key: publisher_key.clone(),
-            name_latex: col_name_latex
-                .and_then(|i| get_field(&record, i))
-                .unwrap_or_default(),
-            name_unicode: col_name_unicode
-                .and_then(|i| get_field(&record, i))
-                .unwrap_or_default(),
-            default_address: col_default_address.and_then(|i| get_field(&record, i)),
+            name_latex: row.name_latex.unwrap_or_default(),
+            name_unicode: row.name_unicode.unwrap_or_default(),
+            default_address: row.default_address,
         };
 
         if let Err(e) = validate_create_publisher(&dto) {
@@ -778,66 +608,26 @@ pub async fn import_publishers_from_csv(
 // Institution import
 // =============================================================================
 
-/// Import institutions from CSV bytes.
-pub async fn import_institutions_from_csv(
+/// Import institutions from parsed CSV rows.
+pub async fn import_institutions(
     institution_ds: &impl DataSource<
         crate::domain::Institution,
         Id = i64,
         Error = hexforge::DataSourceError,
     >,
     syncer: &impl SequenceSyncer,
-    data: Vec<u8>,
+    rows: Vec<ParsedInstitutionRow>,
+    mut errors: Vec<ImportRowError>,
 ) -> Result<ImportResponse, HexforgeError> {
-    let mut reader = csv::ReaderBuilder::new()
-        .has_headers(true)
-        .flexible(true)
-        .from_reader(std::io::Cursor::new(data));
-
-    let headers = reader
-        .headers()
-        .map_err(|e| HexforgeError::Validation(ValidationError::custom(e.to_string())))?
-        .clone();
-
-    let col_id = column_index(&headers, "id");
-    let col_institution_key = require_column(&headers, "institution_key")?;
-    let col_name_latex = column_index(&headers, "name_latex");
-    let col_name_unicode = column_index(&headers, "name_unicode");
-    let col_default_address = column_index(&headers, "default_address");
-
     let mut imported = 0usize;
     let mut updated = 0usize;
-    let mut errors = Vec::new();
 
-    for (idx, result) in reader.records().enumerate() {
-        let row_num = idx + 2;
-        let record = match result {
-            Ok(r) => r,
-            Err(e) => {
-                errors.push(ImportRowError {
-                    row: row_num,
-                    identifier: String::new(),
-                    error: format!("CSV parse error: {e}"),
-                });
-                continue;
-            }
-        };
-
-        let institution_key = match get_field(&record, col_institution_key) {
-            Some(k) => k,
-            None => {
-                errors.push(ImportRowError {
-                    row: row_num,
-                    identifier: String::new(),
-                    error: "Missing institution_key".to_string(),
-                });
-                continue;
-            }
-        };
-
-        let csv_id = col_id.and_then(|i| parse_i64_field(&record, i));
+    for row in rows {
+        let row_num = row.row_num;
+        let institution_key = row.institution_key;
 
         // Check if this is an update (CSV has ID that exists in DB)
-        if let Some(id) = csv_id {
+        if let Some(id) = row.source_id {
             match institution_ds.find_by_id(&id).await {
                 Ok(Some(existing)) => {
                     if existing.institution_key != institution_key {
@@ -854,9 +644,9 @@ pub async fn import_institutions_from_csv(
                     }
                     let update_dto = UpdateInstitution {
                         institution_key: Some(institution_key.clone()),
-                        name_latex: col_name_latex.and_then(|i| get_field(&record, i)),
-                        name_unicode: col_name_unicode.and_then(|i| get_field(&record, i)),
-                        default_address: col_default_address.and_then(|i| get_field(&record, i)),
+                        name_latex: row.name_latex.clone(),
+                        name_unicode: row.name_unicode.clone(),
+                        default_address: row.default_address.clone(),
                     };
                     if let Err(e) = validate_update_institution(&update_dto) {
                         errors.push(ImportRowError {
@@ -881,13 +671,9 @@ pub async fn import_institutions_from_csv(
                     // ID not in DB — create with this ID
                     let dto = CreateInstitution {
                         institution_key: institution_key.clone(),
-                        name_latex: col_name_latex
-                            .and_then(|i| get_field(&record, i))
-                            .unwrap_or_default(),
-                        name_unicode: col_name_unicode
-                            .and_then(|i| get_field(&record, i))
-                            .unwrap_or_default(),
-                        default_address: col_default_address.and_then(|i| get_field(&record, i)),
+                        name_latex: row.name_latex.clone().unwrap_or_default(),
+                        name_unicode: row.name_unicode.clone().unwrap_or_default(),
+                        default_address: row.default_address.clone(),
                     };
                     if let Err(e) = validate_create_institution(&dto) {
                         errors.push(ImportRowError {
@@ -923,13 +709,9 @@ pub async fn import_institutions_from_csv(
         // No ID — create normally
         let dto = CreateInstitution {
             institution_key: institution_key.clone(),
-            name_latex: col_name_latex
-                .and_then(|i| get_field(&record, i))
-                .unwrap_or_default(),
-            name_unicode: col_name_unicode
-                .and_then(|i| get_field(&record, i))
-                .unwrap_or_default(),
-            default_address: col_default_address.and_then(|i| get_field(&record, i)),
+            name_latex: row.name_latex.unwrap_or_default(),
+            name_unicode: row.name_unicode.unwrap_or_default(),
+            default_address: row.default_address,
         };
 
         if let Err(e) = validate_create_institution(&dto) {
@@ -967,61 +749,22 @@ pub async fn import_institutions_from_csv(
 // School import
 // =============================================================================
 
-/// Import schools from CSV bytes.
-pub async fn import_schools_from_csv(
+/// Import schools from parsed CSV rows.
+pub async fn import_schools(
     school_ds: &impl DataSource<crate::domain::School, Id = i64, Error = hexforge::DataSourceError>,
     syncer: &impl SequenceSyncer,
-    data: Vec<u8>,
+    rows: Vec<ParsedSchoolRow>,
+    mut errors: Vec<ImportRowError>,
 ) -> Result<ImportResponse, HexforgeError> {
-    let mut reader = csv::ReaderBuilder::new()
-        .has_headers(true)
-        .flexible(true)
-        .from_reader(std::io::Cursor::new(data));
-
-    let headers = reader
-        .headers()
-        .map_err(|e| HexforgeError::Validation(ValidationError::custom(e.to_string())))?
-        .clone();
-
-    let col_id = column_index(&headers, "id");
-    let col_school_key = require_column(&headers, "school_key")?;
-    let col_name_latex = column_index(&headers, "name_latex");
-    let col_name_unicode = column_index(&headers, "name_unicode");
-
     let mut imported = 0usize;
     let mut updated = 0usize;
-    let mut errors = Vec::new();
 
-    for (idx, result) in reader.records().enumerate() {
-        let row_num = idx + 2;
-        let record = match result {
-            Ok(r) => r,
-            Err(e) => {
-                errors.push(ImportRowError {
-                    row: row_num,
-                    identifier: String::new(),
-                    error: format!("CSV parse error: {e}"),
-                });
-                continue;
-            }
-        };
-
-        let csv_id = col_id.and_then(|i| parse_i64_field(&record, i));
-
-        let school_key = match get_field(&record, col_school_key) {
-            Some(k) => k,
-            None => {
-                errors.push(ImportRowError {
-                    row: row_num,
-                    identifier: String::new(),
-                    error: "Missing school_key".to_string(),
-                });
-                continue;
-            }
-        };
+    for row in rows {
+        let row_num = row.row_num;
+        let school_key = row.school_key;
 
         // Check if this is an update (CSV has ID that exists in DB)
-        if let Some(id) = csv_id {
+        if let Some(id) = row.source_id {
             match school_ds.find_by_id(&id).await {
                 Ok(Some(existing)) => {
                     if existing.school_key != school_key {
@@ -1038,8 +781,8 @@ pub async fn import_schools_from_csv(
                     }
                     let update_dto = UpdateSchool {
                         school_key: Some(school_key.clone()),
-                        name_latex: col_name_latex.and_then(|i| get_field(&record, i)),
-                        name_unicode: col_name_unicode.and_then(|i| get_field(&record, i)),
+                        name_latex: row.name_latex.clone(),
+                        name_unicode: row.name_unicode.clone(),
                     };
                     if let Err(e) = validate_update_school(&update_dto) {
                         errors.push(ImportRowError {
@@ -1064,12 +807,8 @@ pub async fn import_schools_from_csv(
                     // ID not in DB — create with this ID
                     let dto = CreateSchool {
                         school_key: school_key.clone(),
-                        name_latex: col_name_latex
-                            .and_then(|i| get_field(&record, i))
-                            .unwrap_or_default(),
-                        name_unicode: col_name_unicode
-                            .and_then(|i| get_field(&record, i))
-                            .unwrap_or_default(),
+                        name_latex: row.name_latex.clone().unwrap_or_default(),
+                        name_unicode: row.name_unicode.clone().unwrap_or_default(),
                     };
                     if let Err(e) = validate_create_school(&dto) {
                         errors.push(ImportRowError {
@@ -1105,12 +844,8 @@ pub async fn import_schools_from_csv(
         // No ID — create normally
         let dto = CreateSchool {
             school_key: school_key.clone(),
-            name_latex: col_name_latex
-                .and_then(|i| get_field(&record, i))
-                .unwrap_or_default(),
-            name_unicode: col_name_unicode
-                .and_then(|i| get_field(&record, i))
-                .unwrap_or_default(),
+            name_latex: row.name_latex.unwrap_or_default(),
+            name_unicode: row.name_unicode.unwrap_or_default(),
         };
 
         if let Err(e) = validate_create_school(&dto) {
@@ -1148,61 +883,22 @@ pub async fn import_schools_from_csv(
 // Series import
 // =============================================================================
 
-/// Import series from CSV bytes.
-pub async fn import_series_from_csv(
+/// Import series from parsed CSV rows.
+pub async fn import_series(
     series_ds: &impl DataSource<crate::domain::Series, Id = i64, Error = hexforge::DataSourceError>,
     syncer: &impl SequenceSyncer,
-    data: Vec<u8>,
+    rows: Vec<ParsedSeriesRow>,
+    mut errors: Vec<ImportRowError>,
 ) -> Result<ImportResponse, HexforgeError> {
-    let mut reader = csv::ReaderBuilder::new()
-        .has_headers(true)
-        .flexible(true)
-        .from_reader(std::io::Cursor::new(data));
-
-    let headers = reader
-        .headers()
-        .map_err(|e| HexforgeError::Validation(ValidationError::custom(e.to_string())))?
-        .clone();
-
-    let col_id = column_index(&headers, "id");
-    let col_series_key = require_column(&headers, "series_key")?;
-    let col_name_latex = column_index(&headers, "name_latex");
-    let col_name_unicode = column_index(&headers, "name_unicode");
-
     let mut imported = 0usize;
     let mut updated = 0usize;
-    let mut errors = Vec::new();
 
-    for (idx, result) in reader.records().enumerate() {
-        let row_num = idx + 2;
-        let record = match result {
-            Ok(r) => r,
-            Err(e) => {
-                errors.push(ImportRowError {
-                    row: row_num,
-                    identifier: String::new(),
-                    error: format!("CSV parse error: {e}"),
-                });
-                continue;
-            }
-        };
-
-        let csv_id = col_id.and_then(|i| parse_i64_field(&record, i));
-
-        let series_key = match get_field(&record, col_series_key) {
-            Some(k) => k,
-            None => {
-                errors.push(ImportRowError {
-                    row: row_num,
-                    identifier: String::new(),
-                    error: "Missing series_key".to_string(),
-                });
-                continue;
-            }
-        };
+    for row in rows {
+        let row_num = row.row_num;
+        let series_key = row.series_key;
 
         // Check if this is an update (CSV has ID that exists in DB)
-        if let Some(id) = csv_id {
+        if let Some(id) = row.source_id {
             match series_ds.find_by_id(&id).await {
                 Ok(Some(existing)) => {
                     if existing.series_key != series_key {
@@ -1219,8 +915,8 @@ pub async fn import_series_from_csv(
                     }
                     let update_dto = UpdateSeries {
                         series_key: Some(series_key.clone()),
-                        name_latex: col_name_latex.and_then(|i| get_field(&record, i)),
-                        name_unicode: col_name_unicode.and_then(|i| get_field(&record, i)),
+                        name_latex: row.name_latex.clone(),
+                        name_unicode: row.name_unicode.clone(),
                     };
                     if let Err(e) = validate_update_series(&update_dto) {
                         errors.push(ImportRowError {
@@ -1245,12 +941,8 @@ pub async fn import_series_from_csv(
                     // ID not in DB — create with this ID
                     let dto = CreateSeries {
                         series_key: series_key.clone(),
-                        name_latex: col_name_latex
-                            .and_then(|i| get_field(&record, i))
-                            .unwrap_or_default(),
-                        name_unicode: col_name_unicode
-                            .and_then(|i| get_field(&record, i))
-                            .unwrap_or_default(),
+                        name_latex: row.name_latex.clone().unwrap_or_default(),
+                        name_unicode: row.name_unicode.clone().unwrap_or_default(),
                     };
                     if let Err(e) = validate_create_series(&dto) {
                         errors.push(ImportRowError {
@@ -1286,12 +978,8 @@ pub async fn import_series_from_csv(
         // No ID — create normally
         let dto = CreateSeries {
             series_key: series_key.clone(),
-            name_latex: col_name_latex
-                .and_then(|i| get_field(&record, i))
-                .unwrap_or_default(),
-            name_unicode: col_name_unicode
-                .and_then(|i| get_field(&record, i))
-                .unwrap_or_default(),
+            name_latex: row.name_latex.unwrap_or_default(),
+            name_unicode: row.name_unicode.unwrap_or_default(),
         };
 
         if let Err(e) = validate_create_series(&dto) {
@@ -1329,72 +1017,23 @@ pub async fn import_series_from_csv(
 // Keyword import
 // =============================================================================
 
-/// Import keywords from CSV bytes.
-pub async fn import_keywords_from_csv(
+/// Import keywords from parsed CSV rows.
+pub async fn import_keywords(
     keyword_ds: &impl DataSource<crate::domain::Keyword, Id = i64, Error = hexforge::DataSourceError>,
     syncer: &impl SequenceSyncer,
-    data: Vec<u8>,
+    rows: Vec<ParsedKeywordRow>,
+    mut errors: Vec<ImportRowError>,
 ) -> Result<ImportResponse, HexforgeError> {
-    let mut reader = csv::ReaderBuilder::new()
-        .has_headers(true)
-        .flexible(true)
-        .from_reader(std::io::Cursor::new(data));
-
-    let headers = reader
-        .headers()
-        .map_err(|e| HexforgeError::Validation(ValidationError::custom(e.to_string())))?
-        .clone();
-
-    let col_id = column_index(&headers, "id");
-    let col_name = require_column(&headers, "name")?;
-    let col_level = require_column(&headers, "level")?;
-
     let mut imported = 0usize;
     let mut updated = 0usize;
-    let mut errors = Vec::new();
 
-    for (idx, result) in reader.records().enumerate() {
-        let row_num = idx + 2;
-        let record = match result {
-            Ok(r) => r,
-            Err(e) => {
-                errors.push(ImportRowError {
-                    row: row_num,
-                    identifier: String::new(),
-                    error: format!("CSV parse error: {e}"),
-                });
-                continue;
-            }
-        };
-
-        let csv_id = col_id.and_then(|i| parse_i64_field(&record, i));
-
-        let name = match get_field(&record, col_name) {
-            Some(n) => n,
-            None => {
-                errors.push(ImportRowError {
-                    row: row_num,
-                    identifier: String::new(),
-                    error: "Missing name".to_string(),
-                });
-                continue;
-            }
-        };
-
-        let level = match parse_i16_field(&record, col_level) {
-            Some(l) => l,
-            None => {
-                errors.push(ImportRowError {
-                    row: row_num,
-                    identifier: name,
-                    error: "Missing or invalid level".to_string(),
-                });
-                continue;
-            }
-        };
+    for row in rows {
+        let row_num = row.row_num;
+        let name = row.name;
+        let level = row.level;
 
         // Check if this is an update (CSV has ID that exists in DB)
-        if let Some(id) = csv_id {
+        if let Some(id) = row.source_id {
             match keyword_ds.find_by_id(&id).await {
                 Ok(Some(existing)) => {
                     if existing.name != name {
@@ -1510,96 +1149,24 @@ pub async fn import_keywords_from_csv(
 // Author name variants import
 // =============================================================================
 
-/// Import author name variants from CSV bytes.
-///
-/// CSV format: `name_variant,type,profile_id`
-/// - `type` is `latex` or `unicode`
-/// - `profile_id` is the author's ID
+/// Import author name variants from parsed CSV rows.
 ///
 /// Appends each variant to the author's `name_variants_latex` or
 /// `name_variants_unicode` array. Variants must be unique per author per type.
-pub async fn import_author_name_variants_from_csv(
+pub async fn import_author_name_variants(
     author_ds: &impl DataSource<crate::domain::Author, Id = i64, Error = hexforge::DataSourceError>,
     variant_store: &impl NameVariantStore,
-    data: Vec<u8>,
+    rows: Vec<ParsedNameVariantRow>,
+    mut errors: Vec<ImportRowError>,
 ) -> Result<ImportResponse, HexforgeError> {
-    let mut reader = csv::ReaderBuilder::new()
-        .has_headers(true)
-        .flexible(true)
-        .from_reader(std::io::Cursor::new(data));
-
-    let headers = reader
-        .headers()
-        .map_err(|e| HexforgeError::Validation(ValidationError::custom(e.to_string())))?
-        .clone();
-
-    let col_name_variant = require_column(&headers, "name_variant")?;
-    let col_type = require_column(&headers, "type")?;
-    let col_profile_id = require_column(&headers, "profile_id")?;
-
     let mut updated = 0usize;
-    let mut errors = Vec::new();
     let mut seen: HashSet<(i64, NameVariantType, String)> = HashSet::new();
 
-    for (idx, result) in reader.records().enumerate() {
-        let row_num = idx + 2;
-        let record = match result {
-            Ok(r) => r,
-            Err(e) => {
-                errors.push(ImportRowError {
-                    row: row_num,
-                    identifier: String::new(),
-                    error: format!("CSV parse error: {e}"),
-                });
-                continue;
-            }
-        };
-
-        let variant = match get_field(&record, col_name_variant) {
-            Some(v) => v,
-            None => {
-                errors.push(ImportRowError {
-                    row: row_num,
-                    identifier: String::new(),
-                    error: "Missing name_variant".to_string(),
-                });
-                continue;
-            }
-        };
-
-        let variant_type = match get_field(&record, col_type) {
-            Some(t) => match NameVariantType::parse(&t) {
-                Some(vt) => vt,
-                None => {
-                    errors.push(ImportRowError {
-                        row: row_num,
-                        identifier: variant,
-                        error: format!("Invalid type '{t}', expected 'latex' or 'unicode'"),
-                    });
-                    continue;
-                }
-            },
-            None => {
-                errors.push(ImportRowError {
-                    row: row_num,
-                    identifier: variant,
-                    error: "Missing type".to_string(),
-                });
-                continue;
-            }
-        };
-
-        let profile_id = match parse_i64_field(&record, col_profile_id) {
-            Some(id) => id,
-            None => {
-                errors.push(ImportRowError {
-                    row: row_num,
-                    identifier: variant,
-                    error: "Missing or invalid profile_id".to_string(),
-                });
-                continue;
-            }
-        };
+    for row in rows {
+        let row_num = row.row_num;
+        let profile_id = row.profile_id;
+        let variant_type = row.variant_type;
+        let variant = row.variant;
 
         // Deduplicate within this CSV
         if !seen.insert((profile_id, variant_type.clone(), variant.clone())) {
@@ -1667,88 +1234,36 @@ pub async fn import_author_name_variants_from_csv(
 // Bibitem import (IDs format)
 // =============================================================================
 
-/// Parsed bibitem row with author/keyword junction data.
-struct ParsedBibitemRow {
-    row_num: usize,
-    csv_id: Option<i64>,
-    bibkey: String,
-    dto: CreateBibItem,
-    author_ids: Vec<i64>,
-    editor_ids: Vec<i64>,
-    guesteditor_ids: Vec<i64>,
-    keyword_ids: Vec<i64>,
-}
-
-/// Import bibitems from CSV bytes (IDs format).
+/// Import bibitems from parsed CSV rows (IDs format).
 ///
 /// Before inserting, validates ALL referenced IDs exist. If any are missing,
 /// returns all missing IDs in a `MissingReferences` result and inserts nothing.
-pub async fn import_bibitems_from_csv(
+pub async fn import_bibitems(
     bibitem_ds: &impl DataSource<crate::domain::BibItem, Id = i64, Error = hexforge::DataSourceError>,
     junction_store: &impl BibitemJunctionStore,
     ref_store: &impl ReferenceStore,
     syncer: &impl SequenceSyncer,
-    data: Vec<u8>,
+    rows: Vec<ParsedBibitemRow>,
+    mut parse_errors: Vec<ImportRowError>,
 ) -> Result<BibitemImportResult, HexforgeError> {
-    let mut reader = csv::ReaderBuilder::new()
-        .has_headers(true)
-        .flexible(true)
-        .from_reader(std::io::Cursor::new(data));
+    // Validate all parsed rows
+    let valid_rows: Vec<ParsedBibitemRow> = rows
+        .into_iter()
+        .filter_map(|row| match validate_create_bibitem(&row.dto) {
+            Ok(()) => Some(row),
+            Err(e) => {
+                parse_errors.push(ImportRowError {
+                    row: row.row_num,
+                    identifier: row.bibkey.clone(),
+                    error: e.to_string(),
+                });
+                None
+            }
+        })
+        .collect();
+    let parse_errors = parse_errors; // make immutable
 
-    let headers = reader
-        .headers()
-        .map_err(|e| HexforgeError::Validation(ValidationError::custom(e.to_string())))?
-        .clone();
-
-    // Map column names to indices
-    let col_id = column_index(&headers, "id");
-    let col_entry_type = require_column(&headers, "entry_type")?;
-    let col_bibkey = require_column(&headers, "bibkey")?;
-    let col_author_ids = column_index(&headers, "author_ids");
-    let col_editor_ids = column_index(&headers, "editor_ids");
-    let col_guesteditor_ids = column_index(&headers, "guesteditor_ids");
-    let col_options = column_index(&headers, "options");
-    let col_shorthand = column_index(&headers, "shorthand");
-    let col_date_year = column_index(&headers, "date_year");
-    let col_date_month = column_index(&headers, "date_month");
-    let col_date_day = column_index(&headers, "date_day");
-    let col_pubstate = column_index(&headers, "pubstate");
-    let col_title_latex = column_index(&headers, "title_latex");
-    let col_title_unicode = column_index(&headers, "title_unicode");
-    let col_booktitle_latex = column_index(&headers, "booktitle_latex");
-    let col_booktitle_unicode = column_index(&headers, "booktitle_unicode");
-    let col_crossref_id = column_index(&headers, "crossref_id");
-    let col_journal_id = column_index(&headers, "journal_id");
-    let col_volume = column_index(&headers, "volume");
-    let col_number = column_index(&headers, "number");
-    let col_pages = column_index(&headers, "pages");
-    let col_eid = column_index(&headers, "eid");
-    let col_series_id = column_index(&headers, "series_id");
-    let col_address = column_index(&headers, "address");
-    let col_institution_id = column_index(&headers, "institution_id");
-    let col_school_id = column_index(&headers, "school_id");
-    let col_publisher_id = column_index(&headers, "publisher_id");
-    let col_type_field = column_index(&headers, "type_field");
-    let col_edition = column_index(&headers, "edition");
-    let col_note_latex = column_index(&headers, "note_latex");
-    let col_note_unicode = column_index(&headers, "note_unicode");
-    let col_issuetitle_latex = column_index(&headers, "issuetitle_latex");
-    let col_issuetitle_unicode = column_index(&headers, "issuetitle_unicode");
-    let col_extra_note_latex = column_index(&headers, "extra_note_latex");
-    let col_extra_note_unicode = column_index(&headers, "extra_note_unicode");
-    let col_urn = column_index(&headers, "urn");
-    let col_eprint = column_index(&headers, "eprint");
-    let col_doi = column_index(&headers, "doi");
-    let col_url = column_index(&headers, "url");
-    let col_keyword_ids = column_index(&headers, "keyword_ids");
-    let col_epoch = column_index(&headers, "epoch");
-    let col_langid = column_index(&headers, "langid");
-    let col_is_translation = column_index(&headers, "is_translation");
-
-    // Phase 1: Parse all rows, collect referenced IDs
-    let mut parsed_rows: Vec<ParsedBibitemRow> = Vec::new();
-    let mut parse_errors: Vec<ImportRowError> = Vec::new();
-
+    // Collect all referenced IDs from valid rows
     let mut all_author_ids: HashSet<i64> = HashSet::new();
     let mut all_journal_ids: HashSet<i64> = HashSet::new();
     let mut all_publisher_ids: HashSet<i64> = HashSet::new();
@@ -1758,192 +1273,29 @@ pub async fn import_bibitems_from_csv(
     let mut all_keyword_ids: HashSet<i64> = HashSet::new();
     let mut all_crossref_ids: HashSet<i64> = HashSet::new();
 
-    for (idx, result) in reader.records().enumerate() {
-        let row_num = idx + 2;
-        let record = match result {
-            Ok(r) => r,
-            Err(e) => {
-                parse_errors.push(ImportRowError {
-                    row: row_num,
-                    identifier: String::new(),
-                    error: format!("CSV parse error: {e}"),
-                });
-                continue;
-            }
-        };
-
-        let csv_id = col_id.and_then(|i| parse_i64_field(&record, i));
-
-        let bibkey = match get_field(&record, col_bibkey) {
-            Some(k) => k,
-            None => {
-                parse_errors.push(ImportRowError {
-                    row: row_num,
-                    identifier: String::new(),
-                    error: "Missing bibkey".to_string(),
-                });
-                continue;
-            }
-        };
-
-        let entry_type_str = get_field(&record, col_entry_type).unwrap_or_default();
-        let entry_type: EntryType = match entry_type_str.parse() {
-            Ok(et) => et,
-            Err(_) if entry_type_str.is_empty() => EntryType::Unknown,
-            Err(_) => {
-                parse_errors.push(ImportRowError {
-                    row: row_num,
-                    identifier: bibkey,
-                    error: format!("Invalid entry_type: '{entry_type_str}'"),
-                });
-                continue;
-            }
-        };
-
-        let title_latex = col_title_latex
-            .and_then(|i| get_field(&record, i))
-            .unwrap_or_default();
-        let title_unicode = col_title_unicode
-            .and_then(|i| get_field(&record, i))
-            .unwrap_or_else(|| title_latex.clone());
-
-        let author_ids_list = col_author_ids
-            .map(|i| parse_id_list(&record, i))
-            .unwrap_or_default();
-        let editor_ids_list = col_editor_ids
-            .map(|i| parse_id_list(&record, i))
-            .unwrap_or_default();
-        let guesteditor_ids_list = col_guesteditor_ids
-            .map(|i| parse_id_list(&record, i))
-            .unwrap_or_default();
-        let keyword_ids_list = col_keyword_ids
-            .map(|i| parse_id_list(&record, i))
-            .unwrap_or_default();
-
-        // Collect all referenced IDs for batch validation
-        all_author_ids.extend(&author_ids_list);
-        all_author_ids.extend(&editor_ids_list);
-        all_author_ids.extend(&guesteditor_ids_list);
-        all_keyword_ids.extend(&keyword_ids_list);
-
-        let journal_id = col_journal_id.and_then(|i| parse_i64_field(&record, i));
-        let publisher_id = col_publisher_id.and_then(|i| parse_i64_field(&record, i));
-        let institution_id = col_institution_id.and_then(|i| parse_i64_field(&record, i));
-        let school_id = col_school_id.and_then(|i| parse_i64_field(&record, i));
-        let series_id = col_series_id.and_then(|i| parse_i64_field(&record, i));
-        let crossref_id = col_crossref_id.and_then(|i| parse_i64_field(&record, i));
-
-        if let Some(id) = journal_id {
+    for row in &valid_rows {
+        all_author_ids.extend(&row.author_ids);
+        all_author_ids.extend(&row.editor_ids);
+        all_author_ids.extend(&row.guesteditor_ids);
+        all_keyword_ids.extend(&row.keyword_ids);
+        if let Some(id) = row.dto.journal_id {
             all_journal_ids.insert(id);
         }
-        if let Some(id) = publisher_id {
+        if let Some(id) = row.dto.publisher_id {
             all_publisher_ids.insert(id);
         }
-        if let Some(id) = institution_id {
+        if let Some(id) = row.dto.institution_id {
             all_institution_ids.insert(id);
         }
-        if let Some(id) = school_id {
+        if let Some(id) = row.dto.school_id {
             all_school_ids.insert(id);
         }
-        if let Some(id) = series_id {
+        if let Some(id) = row.dto.series_id {
             all_series_ids.insert(id);
         }
-        if let Some(id) = crossref_id {
+        if let Some(id) = row.dto.crossref_id {
             all_crossref_ids.insert(id);
         }
-
-        // Validate is_translation: absent/empty -> false, known bool -> value, else error
-        let is_translation = match col_is_translation.and_then(|i| get_field(&record, i)) {
-            None => false,
-            Some(raw) => {
-                match raw.to_lowercase().as_str() {
-                    "true" | "1" | "yes" | "y" | "x" => true,
-                    "false" | "0" | "no" | "n" => false,
-                    _ => {
-                        parse_errors.push(ImportRowError {
-                        row: row_num,
-                        identifier: bibkey,
-                        error: format!("Invalid is_translation value: '{raw}' (expected true/false/yes/no/1/0)"),
-                    });
-                        continue;
-                    }
-                }
-            }
-        };
-
-        let dto = CreateBibItem {
-            bibkey: bibkey.clone(),
-            entry_type,
-            date_year: col_date_year.and_then(|i| parse_i16_field(&record, i)),
-            date_year_2_hyphen: None,
-            date_year_2_slash: None,
-            date_month: col_date_month.and_then(|i| parse_i16_field(&record, i)),
-            date_day: col_date_day.and_then(|i| parse_i16_field(&record, i)),
-            date_is_no_date: false,
-            pubstate: col_pubstate
-                .and_then(|i| get_field(&record, i))
-                .and_then(|s| s.parse().ok()),
-            title_latex,
-            title_unicode,
-            booktitle_latex: col_booktitle_latex.and_then(|i| get_field(&record, i)),
-            booktitle_unicode: col_booktitle_unicode.and_then(|i| get_field(&record, i)),
-            journal_id,
-            publisher_id,
-            address: col_address.and_then(|i| get_field(&record, i)),
-            volume: col_volume.and_then(|i| get_field(&record, i)),
-            number: col_number.and_then(|i| get_field(&record, i)),
-            pages: col_pages.and_then(|i| get_field(&record, i)),
-            eid: col_eid.and_then(|i| get_field(&record, i)),
-            series_id,
-            edition: col_edition.and_then(|i| get_field(&record, i)),
-            institution_id,
-            school_id,
-            type_field: col_type_field.and_then(|i| get_field(&record, i)),
-            doi: col_doi.and_then(|i| get_field(&record, i)),
-            url: col_url.and_then(|i| get_field(&record, i)),
-            eprint: col_eprint.and_then(|i| get_field(&record, i)),
-            urn: col_urn.and_then(|i| get_field(&record, i)),
-            crossref_id,
-            issuetitle_latex: col_issuetitle_latex.and_then(|i| get_field(&record, i)),
-            issuetitle_unicode: col_issuetitle_unicode.and_then(|i| get_field(&record, i)),
-            note_latex: col_note_latex.and_then(|i| get_field(&record, i)),
-            note_unicode: col_note_unicode.and_then(|i| get_field(&record, i)),
-            extra_note_latex: col_extra_note_latex.and_then(|i| get_field(&record, i)),
-            extra_note_unicode: col_extra_note_unicode.and_then(|i| get_field(&record, i)),
-            langid: col_langid
-                .and_then(|i| get_field(&record, i))
-                .and_then(|s| s.parse().ok()),
-            is_translation,
-            epoch: col_epoch
-                .and_then(|i| get_field(&record, i))
-                .and_then(|s| s.parse().ok()),
-            options: col_options.and_then(|i| get_field(&record, i)),
-            shorthand: col_shorthand.and_then(|i| get_field(&record, i)),
-            person_id: None,
-            has_fulltext: false,
-            fulltext_path: None,
-        };
-
-        // Validate the DTO
-        if let Err(e) = validate_create_bibitem(&dto) {
-            parse_errors.push(ImportRowError {
-                row: row_num,
-                identifier: bibkey,
-                error: e.to_string(),
-            });
-            continue;
-        }
-
-        parsed_rows.push(ParsedBibitemRow {
-            row_num,
-            csv_id,
-            bibkey,
-            dto,
-            author_ids: author_ids_list,
-            editor_ids: editor_ids_list,
-            guesteditor_ids: guesteditor_ids_list,
-            keyword_ids: keyword_ids_list,
-        });
     }
 
     // If there were parse errors, return them without inserting
@@ -1955,6 +1307,8 @@ pub async fn import_bibitems_from_csv(
             errors: parse_errors,
         }));
     }
+
+    let parsed_rows = valid_rows;
 
     if parsed_rows.is_empty() {
         return Ok(BibitemImportResult::Success(ImportResponse {
@@ -1990,7 +1344,7 @@ pub async fn import_bibitems_from_csv(
 
     for row in &parsed_rows {
         // Determine the bibitem ID: update existing, insert-with-id, or insert new
-        let (bibitem_id, is_update) = if let Some(id) = row.csv_id {
+        let (bibitem_id, is_update) = if let Some(id) = row.source_id {
             match bibitem_ds.find_by_id(&id).await {
                 Ok(Some(existing)) => {
                     if existing.bibkey != row.bibkey {
@@ -2230,7 +1584,7 @@ async fn insert_bibitem_keywords(
 }
 
 // =============================================================================
-// BibitemRefsStore + import_bibitem_refs_from_csv
+// BibitemRefsStore + import_bibitem_refs
 // =============================================================================
 
 /// Contract for inserting bibitem reference rows.
@@ -2243,102 +1597,20 @@ pub trait BibitemRefsStore: Send + Sync {
     ) -> impl Future<Output = Result<(), HexforgeError>> + Send;
 }
 
-/// Import bibitem refs from CSV bytes.
+/// Import bibitem refs from parsed CSV rows.
 ///
-/// CSV must have columns: `source_id`, `target_id`, `ref_type`.
 /// All referenced bibitem IDs must exist; returns a validation error listing any that are missing.
-pub async fn import_bibitem_refs_from_csv(
+pub async fn import_bibitem_refs(
     refs_store: &impl BibitemRefsStore,
     id_store: &impl ReferenceStore,
-    data: Vec<u8>,
+    rows: Vec<ParsedBibitemRefRow>,
+    errors: Vec<ImportRowError>,
 ) -> Result<ImportResponse, HexforgeError> {
-    let mut reader = csv::ReaderBuilder::new()
-        .has_headers(true)
-        .flexible(true)
-        .from_reader(std::io::Cursor::new(data));
-
-    let headers = reader
-        .headers()
-        .map_err(|e| HexforgeError::Validation(ValidationError::custom(e.to_string())))?
-        .clone();
-
-    let col_source_id = require_column(&headers, "source_id")?;
-    let col_target_id = require_column(&headers, "target_id")?;
-    let col_ref_type = require_column(&headers, "ref_type")?;
-
-    struct RefRow {
-        source_id: i64,
-        target_id: i64,
-        ref_type: String,
-    }
-
-    let mut rows: Vec<RefRow> = Vec::new();
-    let mut errors: Vec<ImportRowError> = Vec::new();
-    let mut row_num = 1usize;
-
-    for result in reader.records() {
-        row_num += 1;
-        let record = match result {
-            Ok(r) => r,
-            Err(e) => {
-                errors.push(ImportRowError {
-                    row: row_num,
-                    identifier: String::new(),
-                    error: e.to_string(),
-                });
-                continue;
-            }
-        };
-
-        let source_id = match parse_i64_field(&record, col_source_id) {
-            Some(v) => v,
-            None => {
-                let raw = get_field(&record, col_source_id).unwrap_or_default();
-                errors.push(ImportRowError {
-                    row: row_num,
-                    identifier: raw.clone(),
-                    error: format!("invalid source_id: {raw}"),
-                });
-                continue;
-            }
-        };
-
-        let target_id = match parse_i64_field(&record, col_target_id) {
-            Some(v) => v,
-            None => {
-                let raw = get_field(&record, col_target_id).unwrap_or_default();
-                errors.push(ImportRowError {
-                    row: row_num,
-                    identifier: format!("{source_id}->?"),
-                    error: format!("invalid target_id: {raw}"),
-                });
-                continue;
-            }
-        };
-
-        let ref_type = get_field(&record, col_ref_type).unwrap_or_default();
-        if !matches!(ref_type.as_str(), "further_ref" | "depends_on") {
-            errors.push(ImportRowError {
-                row: row_num,
-                identifier: format!("{source_id}->{target_id}"),
-                error: format!("unknown ref_type: {ref_type}"),
-            });
-            continue;
-        }
-
-        rows.push(RefRow {
-            source_id,
-            target_id,
-            ref_type,
-        });
-    }
-
     if !errors.is_empty() {
-        let failed = errors.len();
         return Ok(ImportResponse {
             imported: 0,
             updated: 0,
-            failed,
+            failed: errors.len(),
             errors,
         });
     }
@@ -2372,7 +1644,7 @@ pub async fn import_bibitem_refs_from_csv(
 }
 
 // =============================================================================
-// BibitemNotesStore + import_bibitem_notes_from_csv
+// BibitemNotesStore + import_bibitem_notes
 // =============================================================================
 
 /// Six optional note fields for upsert.
@@ -2394,101 +1666,20 @@ pub trait BibitemNotesStore: Send + Sync {
     ) -> impl Future<Output = Result<(), HexforgeError>> + Send;
 }
 
-/// Import bibitem notes from CSV bytes.
+/// Import bibitem notes from parsed CSV rows.
 ///
-/// CSV must have columns: `bibitem_id`, `note_perso`, `note_stock`, `note_missing`,
-/// `change_request`, `dltc_copyediting_note`, `todo_general`. An `id` column is
-/// accepted but ignored — notes are upserted by `bibitem_id` (unique constraint).
-/// All bibitem IDs must exist; returns a validation error listing any that are missing.
-pub async fn import_bibitem_notes_from_csv(
+/// Notes are upserted by `bibitem_id`. All bibitem IDs must exist.
+pub async fn import_bibitem_notes(
     notes_store: &impl BibitemNotesStore,
     id_store: &impl ReferenceStore,
-    data: Vec<u8>,
+    rows: Vec<ParsedBibitemNotesRow>,
+    errors: Vec<ImportRowError>,
 ) -> Result<ImportResponse, HexforgeError> {
-    let mut reader = csv::ReaderBuilder::new()
-        .has_headers(true)
-        .flexible(true)
-        .from_reader(std::io::Cursor::new(data));
-
-    let headers = reader
-        .headers()
-        .map_err(|e| HexforgeError::Validation(ValidationError::custom(e.to_string())))?
-        .clone();
-
-    let col_bibitem_id = require_column(&headers, "bibitem_id")?;
-
-    let find_col = |name: &str| headers.iter().position(|h| h == name);
-    let col_note_perso = find_col("note_perso");
-    let col_note_stock = find_col("note_stock");
-    let col_note_missing = find_col("note_missing");
-    let col_change_request = find_col("change_request");
-    let col_dltc = find_col("dltc_copyediting_note");
-    let col_todo = find_col("todo_general");
-
-    struct NotesRow {
-        bibitem_id: i64,
-        note_perso: Option<String>,
-        note_stock: Option<String>,
-        note_missing: Option<String>,
-        change_request: Option<String>,
-        dltc_copyediting_note: Option<String>,
-        todo_general: Option<String>,
-    }
-
-    let opt_field = |record: &csv::StringRecord, idx: Option<usize>| -> Option<String> {
-        idx.and_then(|i| record.get(i))
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-    };
-
-    let mut rows: Vec<NotesRow> = Vec::new();
-    let mut errors: Vec<ImportRowError> = Vec::new();
-    let mut row_num = 1usize;
-
-    for result in reader.records() {
-        row_num += 1;
-        let record = match result {
-            Ok(r) => r,
-            Err(e) => {
-                errors.push(ImportRowError {
-                    row: row_num,
-                    identifier: String::new(),
-                    error: e.to_string(),
-                });
-                continue;
-            }
-        };
-
-        let bibitem_id = match parse_i64_field(&record, col_bibitem_id) {
-            Some(v) => v,
-            None => {
-                let raw = get_field(&record, col_bibitem_id).unwrap_or_default();
-                errors.push(ImportRowError {
-                    row: row_num,
-                    identifier: raw.clone(),
-                    error: format!("invalid bibitem_id: {raw}"),
-                });
-                continue;
-            }
-        };
-
-        rows.push(NotesRow {
-            bibitem_id,
-            note_perso: opt_field(&record, col_note_perso),
-            note_stock: opt_field(&record, col_note_stock),
-            note_missing: opt_field(&record, col_note_missing),
-            change_request: opt_field(&record, col_change_request),
-            dltc_copyediting_note: opt_field(&record, col_dltc),
-            todo_general: opt_field(&record, col_todo),
-        });
-    }
-
     if !errors.is_empty() {
-        let failed = errors.len();
         return Ok(ImportResponse {
             imported: 0,
             updated: 0,
-            failed,
+            failed: errors.len(),
             errors,
         });
     }

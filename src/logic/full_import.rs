@@ -1,20 +1,160 @@
-//! Full CSV import — pure types, helpers, and CSV parsing for human-readable CSVs.
+//! Full import — pure types and business logic for human-readable CSV import.
 //!
 //! This module contains ZERO async, ZERO database access, ZERO AppState.
 //! All I/O orchestration lives in `crate::process::full_import`.
+//! All format-specific parsing lives in `crate::adapters::field_parsing`.
 
 use std::collections::{HashMap, HashSet};
 
-use hexforge::{HexforgeError, ValidationError};
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use crate::domain::{AuthorRole, CreateBibItem, RefType};
-use crate::logic::csv_parsing::types::{
-    DateRangeSeparator, FieldError, ParsedAuthor, ParsedBibRow, ParsedDate, RowParseResult,
-};
-use crate::logic::csv_parsing::{CsvHeaders, parse_csv_row};
+use crate::domain::{AuthorRole, CreateBibItem, EntryType, Epoch, LangId, PubState, RefType};
 use crate::logic::latex_citations::extract_cite_keys;
+
+// =============================================================================
+// Parsed data types (produced by adapters/field_parsing, consumed by process)
+// =============================================================================
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ParsedAuthor {
+    Named {
+        family_name: String,
+        given_name: Option<String>,
+    },
+    Mononym(String),
+}
+
+impl ParsedAuthor {
+    pub fn display_name(&self) -> String {
+        match self {
+            ParsedAuthor::Mononym(m) => m.clone(),
+            ParsedAuthor::Named {
+                family_name,
+                given_name,
+            } => match given_name {
+                Some(g) => format!("{family_name}, {g}"),
+                None => family_name.clone(),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DateRangeSeparator {
+    Hyphen,
+    Slash,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParsedDate {
+    NoDate,
+    Year(i16),
+    YearRange {
+        year: i16,
+        year2: i16,
+        separator: DateRangeSeparator,
+    },
+    FullDate {
+        year: i16,
+        month: i16,
+        day: i16,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BibkeyDate {
+    Year(i16),
+    Unpub,
+    Forthcoming,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedBibkey {
+    pub full: String,
+    pub first_author: String,
+    pub other_authors: Option<String>,
+    pub date: BibkeyDate,
+    pub suffix: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ParsedKeywords {
+    pub level_1: Vec<String>,
+    pub level_2: Vec<String>,
+    pub level_3: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct FieldError {
+    pub field: String,
+    pub error: String,
+}
+
+pub enum RowParseResult {
+    Ok(Box<ParsedBibRow>),
+    Err {
+        bibkey: Option<String>,
+        errors: Vec<FieldError>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct ParsedBibRow {
+    pub bibkey: String,
+    pub entry_type: EntryType,
+
+    pub authors: Vec<ParsedAuthor>,
+    pub editors: Vec<ParsedAuthor>,
+    pub guesteditors: Vec<ParsedAuthor>,
+    pub person: Option<ParsedAuthor>,
+
+    pub date: ParsedDate,
+    pub pubstate: Option<PubState>,
+
+    pub title: String,
+    pub booktitle: Option<String>,
+
+    pub journal_name: Option<String>,
+    pub publisher_name: Option<String>,
+    pub institution_name: Option<String>,
+    pub school_name: Option<String>,
+    pub series_name: Option<String>,
+
+    pub crossref_bibkey: Option<String>,
+
+    pub keywords: ParsedKeywords,
+
+    pub volume: Option<String>,
+    pub number: Option<String>,
+    pub pages: Option<String>,
+    pub eid: Option<String>,
+    pub address: Option<String>,
+    pub type_field: Option<String>,
+    pub edition: Option<String>,
+    pub note: Option<String>,
+    pub issuetitle: Option<String>,
+    pub extra_note: Option<String>,
+    pub shorthand: Option<String>,
+
+    pub note_perso: Option<String>,
+    pub note_stock: Option<String>,
+    pub note_missing: Option<String>,
+    pub change_request: Option<String>,
+    pub dltc_copyediting_note: Option<String>,
+    pub todo_general: Option<String>,
+    pub options: Option<String>,
+
+    pub doi: Option<String>,
+    pub url: Option<String>,
+    pub eprint: Option<String>,
+    pub urn: Option<String>,
+
+    pub epoch: Option<Epoch>,
+    pub langid: Option<LangId>,
+    pub is_translation: bool,
+    pub has_fulltext: bool,
+}
 
 // =============================================================================
 // Response types
@@ -389,58 +529,6 @@ impl CollectedNames {
 }
 
 // =============================================================================
-// CSV parsing orchestration (pure)
-// =============================================================================
-
-pub fn parse_all_rows(data: &[u8]) -> Result<(Vec<ParsedBibRow>, Vec<RowError>), HexforgeError> {
-    let mut rdr = csv::ReaderBuilder::new()
-        .has_headers(true)
-        .flexible(true)
-        .from_reader(data);
-
-    let headers = rdr
-        .headers()
-        .map_err(|e| {
-            HexforgeError::Validation(ValidationError::custom(format!("invalid CSV headers: {e}")))
-        })?
-        .clone();
-
-    let csv_headers = CsvHeaders::from_record(&headers);
-    let mut parsed_rows = Vec::new();
-    let mut row_errors = Vec::new();
-
-    for (idx, result) in rdr.records().enumerate() {
-        let record = match result {
-            Ok(r) => r,
-            Err(e) => {
-                row_errors.push(RowError {
-                    row: idx + 2, // 1-indexed, skip header
-                    bibkey: None,
-                    errors: vec![FieldError {
-                        field: "_csv".to_string(),
-                        error: format!("malformed CSV row: {e}"),
-                    }],
-                });
-                continue;
-            }
-        };
-
-        match parse_csv_row(&csv_headers, &record) {
-            RowParseResult::Ok(row) => parsed_rows.push(*row),
-            RowParseResult::Err { bibkey, errors } => {
-                row_errors.push(RowError {
-                    row: idx + 2,
-                    bibkey,
-                    errors,
-                });
-            }
-        }
-    }
-
-    Ok((parsed_rows, row_errors))
-}
-
-// =============================================================================
 // Classification helpers (pure)
 // =============================================================================
 
@@ -599,18 +687,6 @@ pub fn apply_date_to_dto(date: &ParsedDate, dto: &mut CreateBibItem) {
 }
 
 // =============================================================================
-// Name variant parsing (pure)
-// =============================================================================
-
-pub fn parse_variant_to_keys(variant: &str) -> Vec<AuthorNameKey> {
-    if let Ok(parsed) = crate::logic::csv_parsing::author::parse_authors(variant) {
-        parsed.iter().map(AuthorNameKey::from_parsed).collect()
-    } else {
-        vec![AuthorNameKey::Mononym(variant.to_string())]
-    }
-}
-
-// =============================================================================
 // Validation assembly (pure — given lookup data, produce report)
 // =============================================================================
 
@@ -625,14 +701,14 @@ pub fn assemble_validation_report(
 
     // Collect all unique names and detect duplicate bibkeys
     let mut collected = CollectedNames::default();
-    let mut csv_bibkeys: HashSet<String> = HashSet::new();
+    let mut file_bibkeys: HashSet<String> = HashSet::new();
     let mut bibkey_rows: HashMap<String, Vec<usize>> = HashMap::new();
     for (idx, row) in parsed_rows.iter().enumerate() {
         bibkey_rows
             .entry(row.bibkey.clone())
             .or_default()
             .push(idx + 2); // 1-indexed, skip header
-        csv_bibkeys.insert(row.bibkey.clone());
+        file_bibkeys.insert(row.bibkey.clone());
         collected.collect_from_row(row);
     }
     let mut duplicate_bibkeys: Vec<DuplicateBibkey> = bibkey_rows
@@ -674,7 +750,7 @@ pub fn assemble_validation_report(
     };
 
     // Classify bibkey references (check against DB + CSV bibkeys)
-    let all_known_bibkeys: HashSet<String> = maps.bibkeys.union(&csv_bibkeys).cloned().collect();
+    let all_known_bibkeys: HashSet<String> = maps.bibkeys.union(&file_bibkeys).cloned().collect();
     let missing_crossrefs = find_missing_bibkeys(&collected.crossref_bibkeys, &all_known_bibkeys);
     let missing_further_refs =
         find_missing_bibkeys(&collected.further_ref_bibkeys, &all_known_bibkeys);
@@ -682,7 +758,7 @@ pub fn assemble_validation_report(
         find_missing_bibkeys(&collected.depends_on_bibkeys, &all_known_bibkeys);
 
     // Stale bibitems: in DB but not in CSV
-    let mut stale_bibitems: Vec<String> = maps.bibkeys.difference(&csv_bibkeys).cloned().collect();
+    let mut stale_bibitems: Vec<String> = maps.bibkeys.difference(&file_bibkeys).cloned().collect();
     stale_bibitems.sort();
 
     ValidationReport {

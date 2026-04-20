@@ -279,204 +279,179 @@ pub const EXPANDED_FORMAT_HEADER: &[&str] = &[
 // CSV building helpers (pure, synchronous)
 // =============================================================================
 
-/// Build authors CSV from pre-fetched data.
-pub fn build_authors_csv(authors: &[Author]) -> Result<Vec<u8>, ExportError> {
-    let mut wtr = csv::Writer::from_writer(vec![]);
-    wtr.write_record([
-        "id",
-        "author_key",
-        "given_name_latex",
-        "given_name_unicode",
-        "family_name_latex",
-        "family_name_unicode",
-        "mononym_latex",
-        "mononym_unicode",
-        "shorthand_latex",
-        "shorthand_unicode",
-        "famous_name_latex",
-        "famous_name_unicode",
-    ])
-    .map_err(|e| HexforgeError::internal(e.to_string()))?;
-
+/// Build authors CSV rows from pre-fetched data (header row + data rows).
+pub fn build_author_rows(authors: &[Author]) -> Vec<Vec<String>> {
+    let mut rows = Vec::with_capacity(authors.len() + 1);
+    rows.push(vec![
+        "id".into(),
+        "author_key".into(),
+        "given_name_latex".into(),
+        "given_name_unicode".into(),
+        "family_name_latex".into(),
+        "family_name_unicode".into(),
+        "mononym_latex".into(),
+        "mononym_unicode".into(),
+        "shorthand_latex".into(),
+        "shorthand_unicode".into(),
+        "famous_name_latex".into(),
+        "famous_name_unicode".into(),
+    ]);
     for a in authors {
-        wtr.write_record([
-            &a.id.to_string(),
-            &a.author_key,
-            opt_str(&a.given_name_latex),
-            opt_str(&a.given_name_unicode),
-            opt_str(&a.family_name_latex),
-            opt_str(&a.family_name_unicode),
-            opt_str(&a.mononym_latex),
-            opt_str(&a.mononym_unicode),
-            opt_str(&a.shorthand_latex),
-            opt_str(&a.shorthand_unicode),
-            opt_str(&a.famous_name_latex),
-            opt_str(&a.famous_name_unicode),
-        ])
-        .map_err(|e| HexforgeError::internal(e.to_string()))?;
+        rows.push(vec![
+            a.id.to_string(),
+            a.author_key.clone(),
+            opt_str(&a.given_name_latex).to_string(),
+            opt_str(&a.given_name_unicode).to_string(),
+            opt_str(&a.family_name_latex).to_string(),
+            opt_str(&a.family_name_unicode).to_string(),
+            opt_str(&a.mononym_latex).to_string(),
+            opt_str(&a.mononym_unicode).to_string(),
+            opt_str(&a.shorthand_latex).to_string(),
+            opt_str(&a.shorthand_unicode).to_string(),
+            opt_str(&a.famous_name_latex).to_string(),
+            opt_str(&a.famous_name_unicode).to_string(),
+        ]);
     }
-
-    wtr.into_inner()
-        .map_err(|e| ExportError::Internal(HexforgeError::internal(e.to_string())))
+    rows
 }
 
-/// Build journals CSV from pre-fetched data.
-pub fn build_journals_csv(journals: &[Journal]) -> Result<Vec<u8>, ExportError> {
-    let mut wtr = csv::Writer::from_writer(vec![]);
-    wtr.write_record([
-        "id",
-        "journal_key",
-        "name_latex",
-        "name_unicode",
-        "issn_print",
-        "issn_electronic",
-    ])
-    .map_err(|e| HexforgeError::internal(e.to_string()))?;
-
+/// Build journals CSV rows from pre-fetched data (header row + data rows).
+pub fn build_journal_rows(journals: &[Journal]) -> Vec<Vec<String>> {
+    let mut rows = Vec::with_capacity(journals.len() + 1);
+    rows.push(vec![
+        "id".into(),
+        "journal_key".into(),
+        "name_latex".into(),
+        "name_unicode".into(),
+        "issn_print".into(),
+        "issn_electronic".into(),
+    ]);
     for j in journals {
-        wtr.write_record([
-            &j.id.to_string(),
-            &j.journal_key,
-            &j.name_latex,
-            &j.name_unicode,
-            opt_str(&j.issn_print),
-            opt_str(&j.issn_electronic),
-        ])
-        .map_err(|e| HexforgeError::internal(e.to_string()))?;
+        rows.push(vec![
+            j.id.to_string(),
+            j.journal_key.clone(),
+            j.name_latex.clone(),
+            j.name_unicode.clone(),
+            opt_str(&j.issn_print).to_string(),
+            opt_str(&j.issn_electronic).to_string(),
+        ]);
     }
-
-    wtr.into_inner()
-        .map_err(|e| ExportError::Internal(HexforgeError::internal(e.to_string())))
+    rows
 }
 
-/// Build publishers CSV from pre-fetched data.
-pub fn build_publishers_csv(publishers: &[Publisher]) -> Result<Vec<u8>, ExportError> {
-    let mut wtr = csv::Writer::from_writer(vec![]);
-    wtr.write_record([
-        "id",
-        "publisher_key",
-        "name_latex",
-        "name_unicode",
-        "default_address",
-    ])
-    .map_err(|e| HexforgeError::internal(e.to_string()))?;
-
+/// Build publishers CSV rows from pre-fetched data (header row + data rows).
+pub fn build_publisher_rows(publishers: &[Publisher]) -> Vec<Vec<String>> {
+    let mut rows = Vec::with_capacity(publishers.len() + 1);
+    rows.push(vec![
+        "id".into(),
+        "publisher_key".into(),
+        "name_latex".into(),
+        "name_unicode".into(),
+        "default_address".into(),
+    ]);
     for p in publishers {
-        wtr.write_record([
-            &p.id.to_string(),
-            &p.publisher_key,
-            &p.name_latex,
-            &p.name_unicode,
-            opt_str(&p.default_address),
-        ])
-        .map_err(|e| HexforgeError::internal(e.to_string()))?;
+        rows.push(vec![
+            p.id.to_string(),
+            p.publisher_key.clone(),
+            p.name_latex.clone(),
+            p.name_unicode.clone(),
+            opt_str(&p.default_address).to_string(),
+        ]);
     }
-
-    wtr.into_inner()
-        .map_err(|e| ExportError::Internal(HexforgeError::internal(e.to_string())))
+    rows
 }
 
-/// Build institutions CSV from pre-fetched data.
-pub fn build_institutions_csv(institutions: &[Institution]) -> Result<Vec<u8>, ExportError> {
-    let mut wtr = csv::Writer::from_writer(vec![]);
-    wtr.write_record([
-        "id",
-        "institution_key",
-        "name_latex",
-        "name_unicode",
-        "default_address",
-    ])
-    .map_err(|e| HexforgeError::internal(e.to_string()))?;
-
+/// Build institutions CSV rows from pre-fetched data (header row + data rows).
+pub fn build_institution_rows(institutions: &[Institution]) -> Vec<Vec<String>> {
+    let mut rows = Vec::with_capacity(institutions.len() + 1);
+    rows.push(vec![
+        "id".into(),
+        "institution_key".into(),
+        "name_latex".into(),
+        "name_unicode".into(),
+        "default_address".into(),
+    ]);
     for inst in institutions {
-        wtr.write_record([
-            &inst.id.to_string(),
-            &inst.institution_key,
-            &inst.name_latex,
-            &inst.name_unicode,
-            opt_str(&inst.default_address),
-        ])
-        .map_err(|e| HexforgeError::internal(e.to_string()))?;
+        rows.push(vec![
+            inst.id.to_string(),
+            inst.institution_key.clone(),
+            inst.name_latex.clone(),
+            inst.name_unicode.clone(),
+            opt_str(&inst.default_address).to_string(),
+        ]);
     }
-
-    wtr.into_inner()
-        .map_err(|e| ExportError::Internal(HexforgeError::internal(e.to_string())))
+    rows
 }
 
-/// Build schools CSV from pre-fetched data.
-pub fn build_schools_csv(schools: &[School]) -> Result<Vec<u8>, ExportError> {
-    let mut wtr = csv::Writer::from_writer(vec![]);
-    wtr.write_record(["id", "school_key", "name_latex", "name_unicode"])
-        .map_err(|e| HexforgeError::internal(e.to_string()))?;
-
+/// Build schools CSV rows from pre-fetched data (header row + data rows).
+pub fn build_school_rows(schools: &[School]) -> Vec<Vec<String>> {
+    let mut rows = Vec::with_capacity(schools.len() + 1);
+    rows.push(vec![
+        "id".into(),
+        "school_key".into(),
+        "name_latex".into(),
+        "name_unicode".into(),
+    ]);
     for s in schools {
-        wtr.write_record([
-            &s.id.to_string(),
-            &s.school_key,
-            &s.name_latex,
-            &s.name_unicode,
-        ])
-        .map_err(|e| HexforgeError::internal(e.to_string()))?;
+        rows.push(vec![
+            s.id.to_string(),
+            s.school_key.clone(),
+            s.name_latex.clone(),
+            s.name_unicode.clone(),
+        ]);
     }
-
-    wtr.into_inner()
-        .map_err(|e| ExportError::Internal(HexforgeError::internal(e.to_string())))
+    rows
 }
 
-/// Build series CSV from pre-fetched data.
-pub fn build_series_csv(series_list: &[Series]) -> Result<Vec<u8>, ExportError> {
-    let mut wtr = csv::Writer::from_writer(vec![]);
-    wtr.write_record(["id", "series_key", "name_latex", "name_unicode"])
-        .map_err(|e| HexforgeError::internal(e.to_string()))?;
-
+/// Build series CSV rows from pre-fetched data (header row + data rows).
+pub fn build_series_rows(series_list: &[Series]) -> Vec<Vec<String>> {
+    let mut rows = Vec::with_capacity(series_list.len() + 1);
+    rows.push(vec![
+        "id".into(),
+        "series_key".into(),
+        "name_latex".into(),
+        "name_unicode".into(),
+    ]);
     for s in series_list {
-        wtr.write_record([
-            &s.id.to_string(),
-            &s.series_key,
-            &s.name_latex,
-            &s.name_unicode,
-        ])
-        .map_err(|e| HexforgeError::internal(e.to_string()))?;
+        rows.push(vec![
+            s.id.to_string(),
+            s.series_key.clone(),
+            s.name_latex.clone(),
+            s.name_unicode.clone(),
+        ]);
     }
-
-    wtr.into_inner()
-        .map_err(|e| ExportError::Internal(HexforgeError::internal(e.to_string())))
+    rows
 }
 
-/// Build keywords CSV from pre-fetched data.
-pub fn build_keywords_csv(keywords: &[Keyword]) -> Result<Vec<u8>, ExportError> {
-    let mut wtr = csv::Writer::from_writer(vec![]);
-    wtr.write_record(["id", "name", "level"])
-        .map_err(|e| HexforgeError::internal(e.to_string()))?;
-
+/// Build keywords CSV rows from pre-fetched data (header row + data rows).
+pub fn build_keyword_rows(keywords: &[Keyword]) -> Vec<Vec<String>> {
+    let mut rows = Vec::with_capacity(keywords.len() + 1);
+    rows.push(vec!["id".into(), "name".into(), "level".into()]);
     for kw in keywords {
-        wtr.write_record([&kw.id.to_string(), &kw.name, &kw.level.to_string()])
-            .map_err(|e| HexforgeError::internal(e.to_string()))?;
+        rows.push(vec![
+            kw.id.to_string(),
+            kw.name.clone(),
+            kw.level.to_string(),
+        ]);
     }
-
-    wtr.into_inner()
-        .map_err(|e| ExportError::Internal(HexforgeError::internal(e.to_string())))
+    rows
 }
 
-/// Build bibitems CSV in IDs format from pre-fetched data.
+/// Build bibitems CSV rows in IDs format (header row + data rows).
 ///
 /// All junction data must be pre-fetched and passed in.
-pub fn build_bibitems_ids_csv(
+pub fn build_bibitem_id_rows(
     bibitems: &[BibItem],
     author_rows: &[BibitemAuthorsRow],
     keyword_rows: &[BibitemKeywordsRow],
-) -> Result<Vec<u8>, ExportError> {
-    let mut wtr = csv::Writer::from_writer(vec![]);
-    wtr.write_record(IDS_FORMAT_HEADER)
-        .map_err(|e| HexforgeError::internal(e.to_string()))?;
+) -> Vec<Vec<String>> {
+    let mut rows = Vec::with_capacity(bibitems.len() + 1);
+    rows.push(IDS_FORMAT_HEADER.iter().map(|s| s.to_string()).collect());
 
     if bibitems.is_empty() {
-        return wtr
-            .into_inner()
-            .map_err(|e| ExportError::Internal(HexforgeError::internal(e.to_string())));
+        return rows;
     }
 
-    // Group authors by bibitem_id
     let mut authors_by_bibitem: HashMap<i64, Vec<&BibitemAuthorsRow>> = HashMap::new();
     for row in author_rows {
         authors_by_bibitem
@@ -485,7 +460,6 @@ pub fn build_bibitems_ids_csv(
             .push(row);
     }
 
-    // Group keywords by bibitem_id
     let mut keywords_by_bibitem: HashMap<i64, Vec<&BibitemKeywordsRow>> = HashMap::new();
     for row in keyword_rows {
         keywords_by_bibitem
@@ -496,75 +470,71 @@ pub fn build_bibitems_ids_csv(
 
     for bib in bibitems {
         let bib_authors = authors_by_bibitem.get(&bib.id);
-
         let author_ids = format_role_ids(bib_authors, AuthorRole::Author);
         let editor_ids = format_role_ids(bib_authors, AuthorRole::Editor);
         let guesteditor_ids = format_role_ids(bib_authors, AuthorRole::Guesteditor);
-
         let keyword_ids = keywords_by_bibitem
             .get(&bib.id)
-            .map(|rows| {
-                let mut ids: Vec<String> = rows.iter().map(|r| r.keyword_id.to_string()).collect();
+            .map(|kw_rows| {
+                let mut ids: Vec<String> =
+                    kw_rows.iter().map(|r| r.keyword_id.to_string()).collect();
                 ids.sort();
                 ids.join(";")
             })
             .unwrap_or_default();
 
-        wtr.write_record([
-            &bib.id.to_string(),
-            &bib.entry_type.to_string(),
-            &bib.bibkey,
-            opt_str(&bib.options),
-            opt_str(&bib.shorthand),
-            &opt_i16(bib.date_year),
-            &opt_display(&bib.pubstate),
-            &bib.title_latex,
-            &bib.title_unicode,
-            opt_str(&bib.booktitle_latex),
-            opt_str(&bib.booktitle_unicode),
-            &opt_i64(bib.crossref_id),
-            &opt_i64(bib.journal_id),
-            opt_str(&bib.volume),
-            opt_str(&bib.number),
-            opt_str(&bib.pages),
-            opt_str(&bib.eid),
-            &opt_i64(bib.series_id),
-            opt_str(&bib.address),
-            &opt_i64(bib.institution_id),
-            &opt_i64(bib.school_id),
-            &opt_i64(bib.publisher_id),
-            opt_str(&bib.type_field),
-            opt_str(&bib.edition),
-            opt_str(&bib.note_latex),
-            opt_str(&bib.note_unicode),
-            opt_str(&bib.issuetitle_latex),
-            opt_str(&bib.issuetitle_unicode),
-            opt_str(&bib.extra_note_latex),
-            opt_str(&bib.extra_note_unicode),
-            opt_str(&bib.urn),
-            opt_str(&bib.eprint),
-            opt_str(&bib.doi),
-            opt_str(&bib.url),
-            &opt_display(&bib.langid),
-            &bib.is_translation.to_string(),
-            &opt_display(&bib.epoch),
-            &author_ids,
-            &editor_ids,
-            &guesteditor_ids,
-            &keyword_ids,
-        ])
-        .map_err(|e| HexforgeError::internal(e.to_string()))?;
+        rows.push(vec![
+            bib.id.to_string(),
+            bib.entry_type.to_string(),
+            bib.bibkey.clone(),
+            opt_str(&bib.options).to_string(),
+            opt_str(&bib.shorthand).to_string(),
+            opt_i16(bib.date_year),
+            opt_display(&bib.pubstate),
+            bib.title_latex.clone(),
+            bib.title_unicode.clone(),
+            opt_str(&bib.booktitle_latex).to_string(),
+            opt_str(&bib.booktitle_unicode).to_string(),
+            opt_i64(bib.crossref_id),
+            opt_i64(bib.journal_id),
+            opt_str(&bib.volume).to_string(),
+            opt_str(&bib.number).to_string(),
+            opt_str(&bib.pages).to_string(),
+            opt_str(&bib.eid).to_string(),
+            opt_i64(bib.series_id),
+            opt_str(&bib.address).to_string(),
+            opt_i64(bib.institution_id),
+            opt_i64(bib.school_id),
+            opt_i64(bib.publisher_id),
+            opt_str(&bib.type_field).to_string(),
+            opt_str(&bib.edition).to_string(),
+            opt_str(&bib.note_latex).to_string(),
+            opt_str(&bib.note_unicode).to_string(),
+            opt_str(&bib.issuetitle_latex).to_string(),
+            opt_str(&bib.issuetitle_unicode).to_string(),
+            opt_str(&bib.extra_note_latex).to_string(),
+            opt_str(&bib.extra_note_unicode).to_string(),
+            opt_str(&bib.urn).to_string(),
+            opt_str(&bib.eprint).to_string(),
+            opt_str(&bib.doi).to_string(),
+            opt_str(&bib.url).to_string(),
+            opt_display(&bib.langid),
+            bib.is_translation.to_string(),
+            opt_display(&bib.epoch),
+            author_ids,
+            editor_ids,
+            guesteditor_ids,
+            keyword_ids,
+        ]);
     }
-
-    wtr.into_inner()
-        .map_err(|e| ExportError::Internal(HexforgeError::internal(e.to_string())))
+    rows
 }
 
-/// Build bibitems CSV in expanded format from pre-fetched data.
+/// Build bibitems CSV rows in expanded format from pre-fetched data (header row + data rows).
 ///
 /// All entity maps and junction data must be pre-fetched and passed in.
 #[allow(clippy::too_many_arguments)]
-pub fn build_bibitems_expanded_csv(
+pub fn build_bibitem_expanded_rows(
     bibitems: &[BibItem],
     author_rows: &[BibitemAuthorsRow],
     keyword_rows: &[BibitemKeywordsRow],
@@ -576,18 +546,19 @@ pub fn build_bibitems_expanded_csv(
     series_map: &HashMap<i64, Series>,
     crossrefs_map: &HashMap<i64, BibItem>,
     keywords_map: &HashMap<i64, Keyword>,
-) -> Result<Vec<u8>, ExportError> {
-    let mut wtr = csv::Writer::from_writer(vec![]);
-    wtr.write_record(EXPANDED_FORMAT_HEADER)
-        .map_err(|e| HexforgeError::internal(e.to_string()))?;
+) -> Vec<Vec<String>> {
+    let mut rows = Vec::with_capacity(bibitems.len() + 1);
+    rows.push(
+        EXPANDED_FORMAT_HEADER
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+    );
 
     if bibitems.is_empty() {
-        return wtr
-            .into_inner()
-            .map_err(|e| ExportError::Internal(HexforgeError::internal(e.to_string())));
+        return rows;
     }
 
-    // Group junction data by bibitem_id
     let mut authors_by_bibitem: HashMap<i64, Vec<&BibitemAuthorsRow>> = HashMap::new();
     for row in author_rows {
         authors_by_bibitem
@@ -615,93 +586,90 @@ pub fn build_bibitems_expanded_csv(
             .journal_id
             .and_then(|id| journals_map.get(&id))
             .map(|j| j.name_unicode.as_str())
-            .unwrap_or("");
-
+            .unwrap_or("")
+            .to_string();
         let publisher_name = bib
             .publisher_id
             .and_then(|id| publishers_map.get(&id))
             .map(|p| p.name_unicode.as_str())
-            .unwrap_or("");
-
+            .unwrap_or("")
+            .to_string();
         let institution_name = bib
             .institution_id
             .and_then(|id| institutions_map.get(&id))
             .map(|i| i.name_unicode.as_str())
-            .unwrap_or("");
-
+            .unwrap_or("")
+            .to_string();
         let school_name = bib
             .school_id
             .and_then(|id| schools_map.get(&id))
             .map(|s| s.name_unicode.as_str())
-            .unwrap_or("");
-
+            .unwrap_or("")
+            .to_string();
         let series_name = bib
             .series_id
             .and_then(|id| series_map.get(&id))
             .map(|s| s.name_unicode.as_str())
-            .unwrap_or("");
-
+            .unwrap_or("")
+            .to_string();
         let crossref_bibkey = bib
             .crossref_id
             .and_then(|id| crossrefs_map.get(&id))
             .map(|b| b.bibkey.as_str())
-            .unwrap_or("");
+            .unwrap_or("")
+            .to_string();
 
-        // Keywords by level
         let bib_keywords = keywords_by_bibitem.get(&bib.id);
         let kw_level1 = format_keywords_at_level(bib_keywords, 1, keywords_map);
         let kw_level2 = format_keywords_at_level(bib_keywords, 2, keywords_map);
         let kw_level3 = format_keywords_at_level(bib_keywords, 3, keywords_map);
 
-        wtr.write_record([
-            &bib.entry_type.to_string(),
-            &bib.bibkey,
-            &author_col,
-            &editor_col,
-            &guesteditor_col,
-            opt_str(&bib.options),
-            opt_str(&bib.shorthand),
-            &opt_i16(bib.date_year),
-            &opt_display(&bib.pubstate),
-            &bib.title_latex,
-            &bib.title_unicode,
-            opt_str(&bib.booktitle_latex),
-            opt_str(&bib.booktitle_unicode),
+        rows.push(vec![
+            bib.entry_type.to_string(),
+            bib.bibkey.clone(),
+            author_col,
+            editor_col,
+            guesteditor_col,
+            opt_str(&bib.options).to_string(),
+            opt_str(&bib.shorthand).to_string(),
+            opt_i16(bib.date_year),
+            opt_display(&bib.pubstate),
+            bib.title_latex.clone(),
+            bib.title_unicode.clone(),
+            opt_str(&bib.booktitle_latex).to_string(),
+            opt_str(&bib.booktitle_unicode).to_string(),
             crossref_bibkey,
             journal_name,
-            opt_str(&bib.volume),
-            opt_str(&bib.number),
-            opt_str(&bib.pages),
-            opt_str(&bib.eid),
+            opt_str(&bib.volume).to_string(),
+            opt_str(&bib.number).to_string(),
+            opt_str(&bib.pages).to_string(),
+            opt_str(&bib.eid).to_string(),
             series_name,
-            opt_str(&bib.address),
+            opt_str(&bib.address).to_string(),
             institution_name,
             school_name,
             publisher_name,
-            opt_str(&bib.type_field),
-            opt_str(&bib.edition),
-            opt_str(&bib.note_latex),
-            opt_str(&bib.note_unicode),
-            opt_str(&bib.issuetitle_latex),
-            opt_str(&bib.issuetitle_unicode),
-            opt_str(&bib.extra_note_latex),
-            opt_str(&bib.extra_note_unicode),
-            opt_str(&bib.urn),
-            opt_str(&bib.eprint),
-            opt_str(&bib.doi),
-            opt_str(&bib.url),
-            &kw_level1,
-            &kw_level2,
-            &kw_level3,
-            &opt_display(&bib.epoch),
-            &opt_display(&bib.langid),
-            &bib.is_translation.to_string(),
-        ])
-        .map_err(|e| HexforgeError::internal(e.to_string()))?;
+            opt_str(&bib.type_field).to_string(),
+            opt_str(&bib.edition).to_string(),
+            opt_str(&bib.note_latex).to_string(),
+            opt_str(&bib.note_unicode).to_string(),
+            opt_str(&bib.issuetitle_latex).to_string(),
+            opt_str(&bib.issuetitle_unicode).to_string(),
+            opt_str(&bib.extra_note_latex).to_string(),
+            opt_str(&bib.extra_note_unicode).to_string(),
+            opt_str(&bib.urn).to_string(),
+            opt_str(&bib.eprint).to_string(),
+            opt_str(&bib.doi).to_string(),
+            opt_str(&bib.url).to_string(),
+            kw_level1,
+            kw_level2,
+            kw_level3,
+            opt_display(&bib.epoch),
+            opt_display(&bib.langid),
+            bib.is_translation.to_string(),
+        ]);
     }
-
-    wtr.into_inner()
-        .map_err(|e| ExportError::Internal(HexforgeError::internal(e.to_string())))
+    rows
 }
 
 #[cfg(test)]

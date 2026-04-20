@@ -35,7 +35,6 @@ pub fn parse_pages(text: &str) -> Result<Option<String>, String> {
                 return Err(format!("missing start in page range: '{entry}'"));
             }
             if end.is_empty() {
-                // open-ended range (e.g. "215--") — store as single page
                 normalized.push(start.to_string());
             } else {
                 normalized.push(format!("{start}--{end}"));

@@ -1,4 +1,4 @@
-use super::types::{BibkeyDate, ParsedBibkey};
+use crate::logic::full_import::{BibkeyDate, ParsedBibkey};
 
 /// Parse and structurally validate a bibkey.
 ///
@@ -28,10 +28,7 @@ pub fn parse_bibkey(text: &str) -> Result<ParsedBibkey, String> {
         return Err(format!("empty date part in bibkey: '{trimmed}'"));
     }
 
-    // Parse author part: split on '-' (max 2 parts)
     let (first_author, other_authors) = parse_bibkey_author(author_part, trimmed)?;
-
-    // Parse date part
     let (date, suffix) = parse_bibkey_date(date_part)?;
 
     Ok(ParsedBibkey {
@@ -47,17 +44,6 @@ fn parse_bibkey_author(
     author_part: &str,
     full_bibkey: &str,
 ) -> Result<(String, Option<String>), String> {
-    // Author part allows underscores and special chars but uses '-' to separate
-    // first author from other authors. However, author names can contain hyphens
-    // (e.g., "bordogarcia_l-olivadoti_s"), so we only split on '-' at the
-    // "word boundary" level. The Python SDK splits naively on '-', max 2 parts.
-    // We follow the same: split on first '-' only, yielding at most 2 parts.
-    //
-    // Actually, looking at test cases like "aristotle-plato:300a", the split is naive.
-    // But "bordogarcia_l-olivadoti_s" also has one hyphen and works as 2-author.
-    // The key constraint is: at most 2 parts after splitting on '-'.
-
-    // Count hyphens to detect >2 parts scenario
     let hyphen_count = author_part.chars().filter(|&c| c == '-').count();
 
     if hyphen_count == 0 {
@@ -69,22 +55,18 @@ fn parse_bibkey_author(
         }
         Ok((parts[0].to_string(), Some(parts[1].to_string())))
     } else {
-        // More than 1 hyphen — could still be valid if the names contain hyphens.
-        // We split on the first hyphen only (same as Python SDK splitn behavior).
         let parts: Vec<&str> = author_part.splitn(2, '-').collect();
         Ok((parts[0].to_string(), Some(parts[1].to_string())))
     }
 }
 
 fn parse_bibkey_date(date_part: &str) -> Result<(BibkeyDate, String), String> {
-    // Handle negative years: leading '-'
     let (is_negative, rest) = if let Some(stripped) = date_part.strip_prefix('-') {
         (true, stripped)
     } else {
         (false, date_part)
     };
 
-    // Scan for leading digits
     let digit_end = rest
         .char_indices()
         .take_while(|(_, c)| c.is_ascii_digit())
@@ -93,7 +75,6 @@ fn parse_bibkey_date(date_part: &str) -> Result<(BibkeyDate, String), String> {
 
     match digit_end {
         Some(end) => {
-            // Found digits: parse year and extract suffix
             let year_str = &rest[..end];
             let suffix = rest[end..].to_string();
             let year: i64 = year_str
@@ -105,12 +86,10 @@ fn parse_bibkey_date(date_part: &str) -> Result<(BibkeyDate, String), String> {
             Ok((BibkeyDate::Year(year_i16), suffix))
         }
         None => {
-            // No leading digits: must be "unpub" or "forthcoming"
             if is_negative {
                 return Err(format!("invalid bibkey date: '{date_part}'"));
             }
 
-            // Split on first '-' for suffix
             if let Some(hyphen_pos) = rest.find('-') {
                 let word = &rest[..hyphen_pos];
                 let suffix = &rest[hyphen_pos + 1..];

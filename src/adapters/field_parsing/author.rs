@@ -1,4 +1,4 @@
-use super::types::ParsedAuthor;
+use crate::logic::full_import::ParsedAuthor;
 
 fn normalize_whitespace(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
@@ -79,7 +79,6 @@ pub fn parse_person(text: &str) -> Result<Option<ParsedAuthor>, String> {
         return Ok(None);
     }
 
-    // _person is always a mononym (single philosopher name like "Kierkegaard")
     Ok(Some(ParsedAuthor::Mononym(cleaned)))
 }
 
@@ -146,7 +145,6 @@ mod tests {
 
     #[test]
     fn sanderson_not_split() {
-        // "and" inside "Sanderson" must NOT be treated as a separator
         let result = parse_authors("Sanderson, Brandon").unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].display_name(), "Sanderson, Brandon");

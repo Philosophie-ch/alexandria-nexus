@@ -15,10 +15,9 @@ use hexforge::HexforgeError;
 use crate::domain::junctions::{BibitemAuthorsRow, BibitemKeywordsRow};
 use crate::domain::{Author, BibItem, Institution, Journal, Keyword, Publisher, School, Series};
 use crate::logic::export::{
-    BibitemExportRequest, ExportError, ExportFormat, build_authors_csv,
-    build_bibitems_expanded_csv, build_bibitems_ids_csv, build_institutions_csv,
-    build_journals_csv, build_keywords_csv, build_publishers_csv, build_schools_csv,
-    build_series_csv,
+    BibitemExportRequest, ExportError, ExportFormat, build_author_rows,
+    build_bibitem_expanded_rows, build_bibitem_id_rows, build_institution_rows, build_journal_rows,
+    build_keyword_rows, build_publisher_rows, build_school_rows, build_series_rows,
 };
 
 // =============================================================================
@@ -88,14 +87,14 @@ pub trait BibitemFetcher: Send + Sync {
 // Entity export orchestration
 // =============================================================================
 
-/// Fetch entities by request criteria and build CSV.
+/// Fetch entities by request criteria and build CSV rows.
 async fn fetch_and_build<T>(
     fetcher: &impl KeyedEntityFetcher<T>,
     all: bool,
     ids: Option<Vec<i64>>,
     keys: Option<Vec<String>>,
-    build_csv: impl FnOnce(&[T]) -> Result<Vec<u8>, ExportError>,
-) -> Result<Vec<u8>, ExportError> {
+    build_csv: impl FnOnce(&[T]) -> Vec<Vec<String>>,
+) -> Result<Vec<Vec<String>>, ExportError> {
     let entities = if all {
         fetcher.fetch_all().await?
     } else if let Some(ref id_list) = ids {
@@ -106,90 +105,90 @@ async fn fetch_and_build<T>(
         return Err(ExportError::BadRequest);
     };
 
-    build_csv(&entities)
+    Ok(build_csv(&entities))
 }
 
-/// Export authors as CSV bytes.
-pub async fn export_authors_csv(
+/// Export authors as CSV rows.
+pub async fn export_authors(
     fetcher: &impl KeyedEntityFetcher<Author>,
     all: bool,
     ids: Option<Vec<i64>>,
     keys: Option<Vec<String>>,
-) -> Result<Vec<u8>, ExportError> {
-    fetch_and_build(fetcher, all, ids, keys, build_authors_csv).await
+) -> Result<Vec<Vec<String>>, ExportError> {
+    fetch_and_build(fetcher, all, ids, keys, build_author_rows).await
 }
 
-/// Export journals as CSV bytes.
-pub async fn export_journals_csv(
+/// Export journals as CSV rows.
+pub async fn export_journals(
     fetcher: &impl KeyedEntityFetcher<Journal>,
     all: bool,
     ids: Option<Vec<i64>>,
     keys: Option<Vec<String>>,
-) -> Result<Vec<u8>, ExportError> {
-    fetch_and_build(fetcher, all, ids, keys, build_journals_csv).await
+) -> Result<Vec<Vec<String>>, ExportError> {
+    fetch_and_build(fetcher, all, ids, keys, build_journal_rows).await
 }
 
-/// Export publishers as CSV bytes.
-pub async fn export_publishers_csv(
+/// Export publishers as CSV rows.
+pub async fn export_publishers(
     fetcher: &impl KeyedEntityFetcher<Publisher>,
     all: bool,
     ids: Option<Vec<i64>>,
     keys: Option<Vec<String>>,
-) -> Result<Vec<u8>, ExportError> {
-    fetch_and_build(fetcher, all, ids, keys, build_publishers_csv).await
+) -> Result<Vec<Vec<String>>, ExportError> {
+    fetch_and_build(fetcher, all, ids, keys, build_publisher_rows).await
 }
 
-/// Export institutions as CSV bytes.
-pub async fn export_institutions_csv(
+/// Export institutions as CSV rows.
+pub async fn export_institutions(
     fetcher: &impl KeyedEntityFetcher<Institution>,
     all: bool,
     ids: Option<Vec<i64>>,
     keys: Option<Vec<String>>,
-) -> Result<Vec<u8>, ExportError> {
-    fetch_and_build(fetcher, all, ids, keys, build_institutions_csv).await
+) -> Result<Vec<Vec<String>>, ExportError> {
+    fetch_and_build(fetcher, all, ids, keys, build_institution_rows).await
 }
 
-/// Export schools as CSV bytes.
-pub async fn export_schools_csv(
+/// Export schools as CSV rows.
+pub async fn export_schools(
     fetcher: &impl KeyedEntityFetcher<School>,
     all: bool,
     ids: Option<Vec<i64>>,
     keys: Option<Vec<String>>,
-) -> Result<Vec<u8>, ExportError> {
-    fetch_and_build(fetcher, all, ids, keys, build_schools_csv).await
+) -> Result<Vec<Vec<String>>, ExportError> {
+    fetch_and_build(fetcher, all, ids, keys, build_school_rows).await
 }
 
-/// Export series as CSV bytes.
-pub async fn export_series_csv(
+/// Export series as CSV rows.
+pub async fn export_series(
     fetcher: &impl KeyedEntityFetcher<Series>,
     all: bool,
     ids: Option<Vec<i64>>,
     keys: Option<Vec<String>>,
-) -> Result<Vec<u8>, ExportError> {
-    fetch_and_build(fetcher, all, ids, keys, build_series_csv).await
+) -> Result<Vec<Vec<String>>, ExportError> {
+    fetch_and_build(fetcher, all, ids, keys, build_series_rows).await
 }
 
-/// Export keywords as CSV bytes.
-pub async fn export_keywords_csv(
+/// Export keywords as CSV rows.
+pub async fn export_keywords(
     fetcher: &impl KeyedEntityFetcher<Keyword>,
     all: bool,
     ids: Option<Vec<i64>>,
     keys: Option<Vec<String>>,
-) -> Result<Vec<u8>, ExportError> {
-    fetch_and_build(fetcher, all, ids, keys, build_keywords_csv).await
+) -> Result<Vec<Vec<String>>, ExportError> {
+    fetch_and_build(fetcher, all, ids, keys, build_keyword_rows).await
 }
 
 // =============================================================================
 // Bibitem export orchestration
 // =============================================================================
 
-/// Export bibitems as CSV bytes.
+/// Export bibitems as CSV rows.
 ///
 /// Supports two formats:
 /// - `Expanded`: human-readable with resolved names
 /// - `Ids`: machine-readable with raw foreign key IDs
 #[allow(clippy::too_many_arguments)]
-pub async fn export_bibitems_csv(
+pub async fn export_bibitems(
     bibitem_fetcher: &impl BibitemFetcher,
     junction_fetcher: &impl ExportJunctionFetcher,
     author_batch: &impl EntityBatchFetcher<Author>,
@@ -201,7 +200,7 @@ pub async fn export_bibitems_csv(
     bibitem_batch: &impl EntityBatchFetcher<BibItem>,
     keyword_batch: &impl EntityBatchFetcher<Keyword>,
     req: BibitemExportRequest,
-) -> Result<Vec<u8>, ExportError> {
+) -> Result<Vec<Vec<String>>, ExportError> {
     // 1. Fetch bibitems based on selection criteria
     let bibitems = if req.all {
         bibitem_fetcher.fetch_all().await?
@@ -233,28 +232,36 @@ pub async fn export_bibitems_csv(
     }
 }
 
-/// Fetch junction data and build bibitems IDs CSV.
+/// Fetch junction data and build bibitems IDs CSV rows.
 async fn assemble_bibitems_ids_csv(
     bibitems: &[BibItem],
     junction_fetcher: &impl ExportJunctionFetcher,
-) -> Result<Vec<u8>, ExportError> {
+) -> Result<Vec<Vec<String>>, ExportError> {
     if bibitems.is_empty() {
-        return build_bibitems_ids_csv(bibitems, &[], &[]);
+        return Ok(build_bibitem_id_rows(bibitems, &[], &[]));
     }
 
     let bibitem_ids: Vec<i64> = bibitems.iter().map(|b| b.id).collect();
 
-    let author_rows = junction_fetcher
-        .fetch_bibitem_authors_batch(&bibitem_ids)
-        .await?;
-    let keyword_rows = junction_fetcher
-        .fetch_bibitem_keywords_batch(&bibitem_ids)
-        .await?;
+    let (author_rows, keyword_rows) = tokio::try_join!(
+        async {
+            junction_fetcher
+                .fetch_bibitem_authors_batch(&bibitem_ids)
+                .await
+                .map_err(ExportError::from)
+        },
+        async {
+            junction_fetcher
+                .fetch_bibitem_keywords_batch(&bibitem_ids)
+                .await
+                .map_err(ExportError::from)
+        },
+    )?;
 
-    build_bibitems_ids_csv(bibitems, &author_rows, &keyword_rows)
+    Ok(build_bibitem_id_rows(bibitems, &author_rows, &keyword_rows))
 }
 
-/// Fetch all related data and build bibitems expanded CSV.
+/// Fetch all related data and build bibitems expanded CSV rows.
 #[allow(clippy::too_many_arguments)]
 async fn assemble_bibitems_expanded_csv(
     bibitems: &[BibItem],
@@ -267,9 +274,9 @@ async fn assemble_bibitems_expanded_csv(
     series_batch: &impl EntityBatchFetcher<Series>,
     bibitem_batch: &impl EntityBatchFetcher<BibItem>,
     keyword_batch: &impl EntityBatchFetcher<Keyword>,
-) -> Result<Vec<u8>, ExportError> {
+) -> Result<Vec<Vec<String>>, ExportError> {
     if bibitems.is_empty() {
-        return build_bibitems_expanded_csv(
+        return Ok(build_bibitem_expanded_rows(
             bibitems,
             &[],
             &[],
@@ -281,12 +288,11 @@ async fn assemble_bibitems_expanded_csv(
             &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
-        );
+        ));
     }
 
     let bibitem_ids: Vec<i64> = bibitems.iter().map(|b| b.id).collect();
 
-    // Collect all unique FK IDs
     let mut journal_ids = HashSet::new();
     let mut publisher_ids = HashSet::new();
     let mut institution_ids = HashSet::new();
@@ -315,31 +321,46 @@ async fn assemble_bibitems_expanded_csv(
         }
     }
 
-    // Batch-fetch all related entities
-    let journals_map = journal_batch.fetch_map(&journal_ids).await?;
-    let publishers_map = publisher_batch.fetch_map(&publisher_ids).await?;
-    let institutions_map = institution_batch.fetch_map(&institution_ids).await?;
-    let schools_map = school_batch.fetch_map(&school_ids).await?;
-    let series_map = series_batch.fetch_map(&series_ids).await?;
-    let crossrefs_map = bibitem_batch.fetch_map(&crossref_ids).await?;
+    // Round 1: all independent fetches concurrently
+    let (
+        author_rows,
+        keyword_rows,
+        journals_map,
+        publishers_map,
+        institutions_map,
+        schools_map,
+        series_map,
+        crossrefs_map,
+    ) = tokio::try_join!(
+        async {
+            junction_fetcher
+                .fetch_bibitem_authors_batch(&bibitem_ids)
+                .await
+                .map_err(ExportError::from)
+        },
+        async {
+            junction_fetcher
+                .fetch_bibitem_keywords_batch(&bibitem_ids)
+                .await
+                .map_err(ExportError::from)
+        },
+        journal_batch.fetch_map(&journal_ids),
+        publisher_batch.fetch_map(&publisher_ids),
+        institution_batch.fetch_map(&institution_ids),
+        school_batch.fetch_map(&school_ids),
+        series_batch.fetch_map(&series_ids),
+        bibitem_batch.fetch_map(&crossref_ids),
+    )?;
 
-    // Batch-query junction tables
-    let author_rows = junction_fetcher
-        .fetch_bibitem_authors_batch(&bibitem_ids)
-        .await?;
-    let keyword_rows = junction_fetcher
-        .fetch_bibitem_keywords_batch(&bibitem_ids)
-        .await?;
-
-    // Build author lookup from junction data
+    // Round 2: author and keyword maps depend on junction data
     let all_author_ids: HashSet<i64> = author_rows.iter().map(|r| r.author_id).collect();
-    let authors_map = author_batch.fetch_map(&all_author_ids).await?;
-
-    // Build keyword lookup from junction data
     let all_keyword_ids: HashSet<i64> = keyword_rows.iter().map(|r| r.keyword_id).collect();
-    let keywords_map = keyword_batch.fetch_map(&all_keyword_ids).await?;
+    let (authors_map, keywords_map) = tokio::try_join!(
+        author_batch.fetch_map(&all_author_ids),
+        keyword_batch.fetch_map(&all_keyword_ids),
+    )?;
 
-    build_bibitems_expanded_csv(
+    Ok(build_bibitem_expanded_rows(
         bibitems,
         &author_rows,
         &keyword_rows,
@@ -351,5 +372,5 @@ async fn assemble_bibitems_expanded_csv(
         &series_map,
         &crossrefs_map,
         &keywords_map,
-    )
+    ))
 }

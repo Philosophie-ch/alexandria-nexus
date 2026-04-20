@@ -16,9 +16,8 @@ use crate::domain::{
     Author, BibItem, BibitemNotes, Institution, Journal, Keyword, Publisher, School, Series,
 };
 use crate::logic::export::{
-    ExportError, build_authors_csv, build_bibitems_ids_csv, build_institutions_csv,
-    build_journals_csv, build_keywords_csv, build_publishers_csv, build_schools_csv,
-    build_series_csv, opt_str,
+    build_author_rows, build_bibitem_id_rows, build_institution_rows, build_journal_rows,
+    build_keyword_rows, build_publisher_rows, build_school_rows, build_series_rows, opt_str,
 };
 use crate::process::snapshot::{SnapshotData, SnapshotFetcher};
 
@@ -199,11 +198,12 @@ fn internal_err(msg: impl std::fmt::Display) -> HexforgeError {
     HexforgeError::internal(msg.to_string())
 }
 
-fn export_err_to_hexforge(e: ExportError) -> HexforgeError {
-    match e {
-        ExportError::Internal(h) => h,
-        other => HexforgeError::internal(format!("{other:?}")),
+fn rows_to_csv_bytes(rows: Vec<Vec<String>>) -> Result<Vec<u8>, HexforgeError> {
+    let mut wtr = csv::Writer::from_writer(vec![]);
+    for row in &rows {
+        wtr.write_record(row).map_err(internal_err)?;
     }
+    wtr.into_inner().map_err(internal_err)
 }
 
 /// 2-char lowercase prefix from a bibkey (`kant:1781` → `"ka"`).
@@ -330,27 +330,27 @@ pub fn build_snapshot_zip(data: SnapshotData) -> Result<Vec<u8>, HexforgeError> 
     let small: &[(&str, Vec<u8>)] = &[
         (
             "journal/all.csv",
-            build_journals_csv(&data.journals).map_err(export_err_to_hexforge)?,
+            rows_to_csv_bytes(build_journal_rows(&data.journals))?,
         ),
         (
             "publisher/all.csv",
-            build_publishers_csv(&data.publishers).map_err(export_err_to_hexforge)?,
+            rows_to_csv_bytes(build_publisher_rows(&data.publishers))?,
         ),
         (
             "institution/all.csv",
-            build_institutions_csv(&data.institutions).map_err(export_err_to_hexforge)?,
+            rows_to_csv_bytes(build_institution_rows(&data.institutions))?,
         ),
         (
             "school/all.csv",
-            build_schools_csv(&data.schools).map_err(export_err_to_hexforge)?,
+            rows_to_csv_bytes(build_school_rows(&data.schools))?,
         ),
         (
             "series/all.csv",
-            build_series_csv(&data.series).map_err(export_err_to_hexforge)?,
+            rows_to_csv_bytes(build_series_rows(&data.series))?,
         ),
         (
             "keyword/all.csv",
-            build_keywords_csv(&data.keywords).map_err(export_err_to_hexforge)?,
+            rows_to_csv_bytes(build_keyword_rows(&data.keywords))?,
         ),
         (
             "bibitem_refs/all.csv",
@@ -380,7 +380,7 @@ pub fn build_snapshot_zip(data: SnapshotData) -> Result<Vec<u8>, HexforgeError> 
     for prefix in author_prefixes {
         let rows = authors_by_prefix[prefix].as_slice();
         let owned: Vec<Author> = rows.iter().map(|a| (*a).clone()).collect();
-        let bytes = build_authors_csv(&owned).map_err(export_err_to_hexforge)?;
+        let bytes = rows_to_csv_bytes(build_author_rows(&owned))?;
         let path = format!("author/{prefix}.csv");
         zip.start_file(&path, opts).map_err(internal_err)?;
         zip.write_all(&bytes).map_err(internal_err)?;
@@ -434,8 +434,7 @@ pub fn build_snapshot_zip(data: SnapshotData) -> Result<Vec<u8>, HexforgeError> 
             author_rows.iter().map(|r| (*r).clone()).collect();
         let kw_owned: Vec<BibitemKeywordsRow> = kw_rows.iter().map(|r| (*r).clone()).collect();
 
-        let bib_bytes = build_bibitems_ids_csv(&owned, &author_owned, &kw_owned)
-            .map_err(export_err_to_hexforge)?;
+        let bib_bytes = rows_to_csv_bytes(build_bibitem_id_rows(&owned, &author_owned, &kw_owned))?;
         let bib_path = format!("bibitem/{prefix}.csv");
         zip.start_file(&bib_path, opts).map_err(internal_err)?;
         zip.write_all(&bib_bytes).map_err(internal_err)?;

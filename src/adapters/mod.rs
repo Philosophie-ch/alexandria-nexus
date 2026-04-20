@@ -5,6 +5,7 @@ pub mod handlers;
 
 pub mod auth;
 pub mod export;
+pub mod field_parsing;
 pub mod full_import;
 pub mod import;
 pub mod keyword_tree;

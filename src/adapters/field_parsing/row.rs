@@ -2,6 +2,9 @@ use std::collections::HashMap;
 use std::str::FromStr;
 
 use crate::domain::{Epoch, LangId, PubState};
+use crate::logic::full_import::{
+    FieldError, ParsedAuthor, ParsedBibRow, ParsedDate, ParsedKeywords, RowParseResult,
+};
 
 use super::author::{parse_authors, parse_person};
 use super::bibkey::parse_bibkey;
@@ -9,7 +12,6 @@ use super::date::parse_date;
 use super::entry_type::parse_entry_type;
 use super::keywords::parse_keyword_list;
 use super::pages::parse_pages;
-use super::types::{FieldError, ParsedBibRow, ParsedDate, ParsedKeywords, RowParseResult};
 
 // =============================================================================
 // CSV header handling
@@ -21,9 +23,9 @@ pub struct CsvHeaders {
 }
 
 impl CsvHeaders {
-    pub fn from_record(record: &csv::StringRecord) -> Self {
+    pub fn from_headers(headers: &[&str]) -> Self {
         let mut map = HashMap::new();
-        for (i, field) in record.iter().enumerate() {
+        for (i, field) in headers.iter().enumerate() {
             let normalized = normalize_header(field);
             map.insert(normalized, i);
         }
@@ -44,7 +46,7 @@ pub fn normalize_header(header: &str) -> String {
 // Field extraction helpers
 // =============================================================================
 
-fn get_field(record: &csv::StringRecord, headers: &CsvHeaders, name: &str) -> Option<String> {
+fn get_field(record: &[&str], headers: &CsvHeaders, name: &str) -> Option<String> {
     headers
         .get(name)
         .and_then(|idx| record.get(idx))
@@ -52,7 +54,7 @@ fn get_field(record: &csv::StringRecord, headers: &CsvHeaders, name: &str) -> Op
         .filter(|s| !s.is_empty())
 }
 
-fn get_field_raw(record: &csv::StringRecord, headers: &CsvHeaders, name: &str) -> String {
+fn get_field_raw(record: &[&str], headers: &CsvHeaders, name: &str) -> String {
     headers
         .get(name)
         .and_then(|idx| record.get(idx))
@@ -64,8 +66,8 @@ fn get_field_raw(record: &csv::StringRecord, headers: &CsvHeaders, name: &str) -
 // Row parser
 // =============================================================================
 
-/// Parse a single CSV row into a [`ParsedBibRow`], collecting all field-level errors.
-pub fn parse_csv_row(headers: &CsvHeaders, record: &csv::StringRecord) -> RowParseResult {
+/// Parse a single row (as a slice of field strings) into a [`ParsedBibRow`].
+pub fn parse_row(headers: &CsvHeaders, record: &[&str]) -> RowParseResult {
     let mut errors: Vec<FieldError> = Vec::new();
 
     // --- Required: bibkey ---
@@ -85,7 +87,6 @@ pub fn parse_csv_row(headers: &CsvHeaders, record: &csv::StringRecord) -> RowPar
                 field: "bibkey".to_string(),
                 error: "missing required field".to_string(),
             });
-            // Early return: bibkey is required, no point continuing without it
             return RowParseResult::Err {
                 bibkey: None,
                 errors,
@@ -273,11 +274,11 @@ pub fn parse_csv_row(headers: &CsvHeaders, record: &csv::StringRecord) -> RowPar
 // =============================================================================
 
 fn parse_people_field(
-    record: &csv::StringRecord,
+    record: &[&str],
     headers: &CsvHeaders,
     field_name: &str,
     errors: &mut Vec<FieldError>,
-) -> Vec<super::types::ParsedAuthor> {
+) -> Vec<ParsedAuthor> {
     let raw = get_field_raw(record, headers, field_name);
     if raw.is_empty() {
         return vec![];
@@ -303,28 +304,27 @@ mod tests {
     use super::*;
     use crate::domain::EntryType;
 
-    fn make_csv(headers: &str, row: &str) -> (CsvHeaders, csv::StringRecord) {
+    fn run_parse(headers: &str, row: &str) -> RowParseResult {
         let data = format!("{headers}\n{row}");
         let mut rdr = csv::ReaderBuilder::new()
             .has_headers(true)
             .flexible(true)
             .from_reader(data.as_bytes());
-        let csv_headers = CsvHeaders::from_record(rdr.headers().unwrap());
+        let raw_headers = rdr.headers().unwrap().clone();
+        let header_fields: Vec<&str> = raw_headers.iter().collect();
+        let h = CsvHeaders::from_headers(&header_fields);
         let record = rdr.records().next().unwrap().unwrap();
-        (csv_headers, record)
+        let fields: Vec<&str> = record.iter().collect();
+        parse_row(&h, &fields)
     }
 
     #[test]
     fn full_valid_row() {
-        let csv_data = "entry_type,bibkey,author,editor,date,title,journal,pages,_kw-level1,pubstate,_epoch,_langid\n\
-                        @article{,kant:1781,\"Kant, Immanuel\",,1781,Critique of Pure Reason,Mind,123--456,epistemology; metaphysics,published,enlightenment,english";
-        let mut rdr = csv::ReaderBuilder::new()
-            .has_headers(true)
-            .flexible(true)
-            .from_reader(csv_data.as_bytes());
-        let h = CsvHeaders::from_record(rdr.headers().unwrap());
-        let r = rdr.records().next().unwrap().unwrap();
-        match parse_csv_row(&h, &r) {
+        let result = run_parse(
+            "entry_type,bibkey,author,editor,date,title,journal,pages,_kw-level1,pubstate,_epoch,_langid",
+            "@article{,kant:1781,\"Kant, Immanuel\",,1781,Critique of Pure Reason,Mind,123--456,epistemology; metaphysics,published,enlightenment,english",
+        );
+        match result {
             RowParseResult::Ok(parsed) => {
                 assert_eq!(parsed.bibkey, "kant:1781");
                 assert_eq!(parsed.entry_type, EntryType::Article);
@@ -346,10 +346,7 @@ mod tests {
 
     #[test]
     fn missing_bibkey() {
-        let headers = "entry_type,bibkey,title";
-        let row = "@book{,,Some Title";
-        let (h, r) = make_csv(headers, row);
-        match parse_csv_row(&h, &r) {
+        match run_parse("entry_type,bibkey,title", "@book{,,Some Title") {
             RowParseResult::Err { errors, .. } => {
                 assert!(errors.iter().any(|e| e.field == "bibkey"));
             }
@@ -359,13 +356,12 @@ mod tests {
 
     #[test]
     fn invalid_date_only() {
-        let headers = "entry_type,bibkey,title,date";
-        let row = "@book{,kant:1781,Some Title,not-valid-date";
-        let (h, r) = make_csv(headers, row);
-        match parse_csv_row(&h, &r) {
+        match run_parse(
+            "entry_type,bibkey,title,date",
+            "@book{,kant:1781,Some Title,not-valid-date",
+        ) {
             RowParseResult::Err { errors, .. } => {
                 assert!(errors.iter().any(|e| e.field == "date"));
-                // should not have bibkey or title errors
                 assert!(!errors.iter().any(|e| e.field == "bibkey"));
                 assert!(!errors.iter().any(|e| e.field == "title"));
             }
@@ -375,10 +371,10 @@ mod tests {
 
     #[test]
     fn invalid_pages_single_hyphen() {
-        let headers = "entry_type,bibkey,title,pages";
-        let row = "@book{,kant:1781,Some Title,123-456";
-        let (h, r) = make_csv(headers, row);
-        match parse_csv_row(&h, &r) {
+        match run_parse(
+            "entry_type,bibkey,title,pages",
+            "@book{,kant:1781,Some Title,123-456",
+        ) {
             RowParseResult::Err { errors, .. } => {
                 assert!(errors.iter().any(|e| e.field == "pages"));
             }
@@ -388,10 +384,10 @@ mod tests {
 
     #[test]
     fn header_normalization() {
-        let headers = "_kw-level1,_kw-level2,_kw-level3,entry_type,bibkey,title";
-        let row = "epistemology,logic,,@book{,kant:1781,Title";
-        let (h, r) = make_csv(headers, row);
-        match parse_csv_row(&h, &r) {
+        match run_parse(
+            "_kw-level1,_kw-level2,_kw-level3,entry_type,bibkey,title",
+            "epistemology,logic,,@book{,kant:1781,Title",
+        ) {
             RowParseResult::Ok(parsed) => {
                 assert_eq!(parsed.keywords.level_1, vec!["epistemology"]);
                 assert_eq!(parsed.keywords.level_2, vec!["logic"]);
@@ -405,10 +401,10 @@ mod tests {
 
     #[test]
     fn boolean_fields() {
-        let headers = "entry_type,bibkey,title,_lang-der,_has-link-to-full-text";
-        let row = "@book{,kant:1781,Title,x,yes";
-        let (h, r) = make_csv(headers, row);
-        match parse_csv_row(&h, &r) {
+        match run_parse(
+            "entry_type,bibkey,title,_lang-der,_has-link-to-full-text",
+            "@book{,kant:1781,Title,x,yes",
+        ) {
             RowParseResult::Ok(parsed) => {
                 assert!(parsed.is_translation);
                 assert!(parsed.has_fulltext);
@@ -421,10 +417,10 @@ mod tests {
 
     #[test]
     fn boolean_fields_empty() {
-        let headers = "entry_type,bibkey,title,_lang-der,_has-link-to-full-text";
-        let row = "@book{,kant:1781,Title,,";
-        let (h, r) = make_csv(headers, row);
-        match parse_csv_row(&h, &r) {
+        match run_parse(
+            "entry_type,bibkey,title,_lang-der,_has-link-to-full-text",
+            "@book{,kant:1781,Title,,",
+        ) {
             RowParseResult::Ok(parsed) => {
                 assert!(!parsed.is_translation);
                 assert!(!parsed.has_fulltext);
@@ -437,10 +433,10 @@ mod tests {
 
     #[test]
     fn invalid_pubstate_defaults_to_none() {
-        let headers = "entry_type,bibkey,title,pubstate";
-        let row = "@book{,kant:1781,Title,invalid_state";
-        let (h, r) = make_csv(headers, row);
-        match parse_csv_row(&h, &r) {
+        match run_parse(
+            "entry_type,bibkey,title,pubstate",
+            "@book{,kant:1781,Title,invalid_state",
+        ) {
             RowParseResult::Ok(parsed) => {
                 assert_eq!(parsed.pubstate, None);
             }
@@ -452,10 +448,10 @@ mod tests {
 
     #[test]
     fn crossref_validation() {
-        let headers = "entry_type,bibkey,title,crossref";
-        let row = "@incollection{,smith:2024,Chapter Title,kant:1781";
-        let (h, r) = make_csv(headers, row);
-        match parse_csv_row(&h, &r) {
+        match run_parse(
+            "entry_type,bibkey,title,crossref",
+            "@incollection{,smith:2024,Chapter Title,kant:1781",
+        ) {
             RowParseResult::Ok(parsed) => {
                 assert_eq!(parsed.crossref_bibkey.as_deref(), Some("kant:1781"));
             }
@@ -467,17 +463,10 @@ mod tests {
 
     #[test]
     fn unknown_columns_ignored() {
-        // _further_refs and _depends_on were removed from the format; old CSVs
-        // with those columns should still parse without error.
-        let csv_data = "entry_type,bibkey,title,_further_refs,_depends_on\n\
-                        @book{,kant:1781,Title,\"smith:2024, plato:-380\",other:2000";
-        let mut rdr = csv::ReaderBuilder::new()
-            .has_headers(true)
-            .flexible(true)
-            .from_reader(csv_data.as_bytes());
-        let h = CsvHeaders::from_record(rdr.headers().unwrap());
-        let r = rdr.records().next().unwrap().unwrap();
-        match parse_csv_row(&h, &r) {
+        match run_parse(
+            "entry_type,bibkey,title,_further_refs,_depends_on",
+            "@book{,kant:1781,Title,\"smith:2024, plato:-380\",other:2000",
+        ) {
             RowParseResult::Ok(parsed) => {
                 assert_eq!(parsed.bibkey, "kant:1781");
             }

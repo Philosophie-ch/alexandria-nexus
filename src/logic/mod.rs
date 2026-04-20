@@ -10,6 +10,5 @@ pub mod snapshot;
 pub mod validation;
 pub mod wipe;
 
-pub mod csv_parsing;
 pub mod latex_citations;
 pub mod transitive_closure;

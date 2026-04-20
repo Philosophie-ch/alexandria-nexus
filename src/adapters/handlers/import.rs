@@ -11,7 +11,10 @@ use serde::Deserialize;
 
 use crate::adapters::import::{
     PgBibitemJunctionStore, PgBibitemNotesStore, PgBibitemRefsStore, PgNameVariantStore,
-    PgReferenceStore, PgSequenceSyncer,
+    PgReferenceStore, PgSequenceSyncer, parse_authors_csv, parse_bibitem_notes_csv,
+    parse_bibitem_refs_csv, parse_bibitems_csv, parse_institutions_csv, parse_journals_csv,
+    parse_keywords_csv, parse_name_variants_csv, parse_publishers_csv, parse_schools_csv,
+    parse_series_csv,
 };
 use crate::logic::import::{BibitemImportResult, ImportResponse};
 use crate::process::import;
@@ -61,10 +64,16 @@ pub async fn import_authors(
     multipart: Multipart,
 ) -> Result<Json<ImportResponse>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
+    let (rows, errors) = parse_authors_csv(&data)?;
     let syncer = PgSequenceSyncer::new(state.pool.pool());
-    let result =
-        import::import_authors_from_csv(&state.author_ds, &syncer, data, params.auto_assign_ids)
-            .await?;
+    let result = import::import_authors(
+        &state.author_ds,
+        &syncer,
+        rows,
+        errors,
+        params.auto_assign_ids,
+    )
+    .await?;
     Ok(Json(result))
 }
 
@@ -77,10 +86,16 @@ pub async fn import_journals(
     multipart: Multipart,
 ) -> Result<Json<ImportResponse>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
+    let (rows, errors) = parse_journals_csv(&data)?;
     let syncer = PgSequenceSyncer::new(state.pool.pool());
-    let result =
-        import::import_journals_from_csv(&state.journal_ds, &syncer, data, params.auto_assign_ids)
-            .await?;
+    let result = import::import_journals(
+        &state.journal_ds,
+        &syncer,
+        rows,
+        errors,
+        params.auto_assign_ids,
+    )
+    .await?;
     Ok(Json(result))
 }
 
@@ -93,11 +108,13 @@ pub async fn import_publishers(
     multipart: Multipart,
 ) -> Result<Json<ImportResponse>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
+    let (rows, errors) = parse_publishers_csv(&data)?;
     let syncer = PgSequenceSyncer::new(state.pool.pool());
-    let result = import::import_publishers_from_csv(
+    let result = import::import_publishers(
         &state.publisher_ds,
         &syncer,
-        data,
+        rows,
+        errors,
         params.auto_assign_ids,
     )
     .await?;
@@ -112,8 +129,9 @@ pub async fn import_institutions(
     multipart: Multipart,
 ) -> Result<Json<ImportResponse>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
+    let (rows, errors) = parse_institutions_csv(&data)?;
     let syncer = PgSequenceSyncer::new(state.pool.pool());
-    let result = import::import_institutions_from_csv(&state.institution_ds, &syncer, data).await?;
+    let result = import::import_institutions(&state.institution_ds, &syncer, rows, errors).await?;
     Ok(Json(result))
 }
 
@@ -125,8 +143,9 @@ pub async fn import_schools(
     multipart: Multipart,
 ) -> Result<Json<ImportResponse>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
+    let (rows, errors) = parse_schools_csv(&data)?;
     let syncer = PgSequenceSyncer::new(state.pool.pool());
-    let result = import::import_schools_from_csv(&state.school_ds, &syncer, data).await?;
+    let result = import::import_schools(&state.school_ds, &syncer, rows, errors).await?;
     Ok(Json(result))
 }
 
@@ -138,8 +157,9 @@ pub async fn import_series(
     multipart: Multipart,
 ) -> Result<Json<ImportResponse>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
+    let (rows, errors) = parse_series_csv(&data)?;
     let syncer = PgSequenceSyncer::new(state.pool.pool());
-    let result = import::import_series_from_csv(&state.series_ds, &syncer, data).await?;
+    let result = import::import_series(&state.series_ds, &syncer, rows, errors).await?;
     Ok(Json(result))
 }
 
@@ -151,8 +171,9 @@ pub async fn import_keywords(
     multipart: Multipart,
 ) -> Result<Json<ImportResponse>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
+    let (rows, errors) = parse_keywords_csv(&data)?;
     let syncer = PgSequenceSyncer::new(state.pool.pool());
-    let result = import::import_keywords_from_csv(&state.keyword_ds, &syncer, data).await?;
+    let result = import::import_keywords(&state.keyword_ds, &syncer, rows, errors).await?;
     Ok(Json(result))
 }
 
@@ -164,10 +185,10 @@ pub async fn import_author_name_variants(
     multipart: Multipart,
 ) -> Result<Json<ImportResponse>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
+    let (rows, errors) = parse_name_variants_csv(&data)?;
     let variant_store = PgNameVariantStore::new(state.pool.pool());
     let result =
-        import::import_author_name_variants_from_csv(&state.author_ds, &variant_store, data)
-            .await?;
+        import::import_author_name_variants(&state.author_ds, &variant_store, rows, errors).await?;
     Ok(Json(result))
 }
 
@@ -182,15 +203,17 @@ pub async fn import_bibitems(
     multipart: Multipart,
 ) -> Result<Response, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
+    let (rows, parse_errors) = parse_bibitems_csv(&data)?;
     let junction_store = PgBibitemJunctionStore::new(state.pool.pool());
     let ref_store = PgReferenceStore::new(state.pool.pool());
     let syncer = PgSequenceSyncer::new(state.pool.pool());
-    let result = import::import_bibitems_from_csv(
+    let result = import::import_bibitems(
         &state.bibitem_ds,
         &junction_store,
         &ref_store,
         &syncer,
-        data,
+        rows,
+        parse_errors,
     )
     .await?;
 
@@ -210,9 +233,10 @@ pub async fn import_bibitem_refs(
     multipart: Multipart,
 ) -> Result<Json<ImportResponse>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
+    let (rows, errors) = parse_bibitem_refs_csv(&data)?;
     let refs_store = PgBibitemRefsStore::new(state.pool.pool());
     let id_store = PgReferenceStore::new(state.pool.pool());
-    let result = import::import_bibitem_refs_from_csv(&refs_store, &id_store, data).await?;
+    let result = import::import_bibitem_refs(&refs_store, &id_store, rows, errors).await?;
     Ok(Json(result))
 }
 
@@ -224,8 +248,9 @@ pub async fn import_bibitem_notes(
     multipart: Multipart,
 ) -> Result<Json<ImportResponse>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
+    let (rows, errors) = parse_bibitem_notes_csv(&data)?;
     let notes_store = PgBibitemNotesStore::new(state.pool.pool());
     let id_store = PgReferenceStore::new(state.pool.pool());
-    let result = import::import_bibitem_notes_from_csv(&notes_store, &id_store, data).await?;
+    let result = import::import_bibitem_notes(&notes_store, &id_store, rows, errors).await?;
     Ok(Json(result))
 }

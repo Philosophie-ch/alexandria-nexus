@@ -161,7 +161,7 @@ where
         + Send
         + Sync
         + Unpin
-        + for<'r> sqlx::FromRow<'r, hexforge::db_exports::PgRow>,
+        + for<'r> hexforge::db_exports::FromRow<'r, hexforge::db_exports::PgRow>,
     Q: hexforge::PgQuery + 'static,
 {
     async fn fetch_all(&self) -> Result<Vec<T>, ExportError> {
@@ -191,20 +191,19 @@ where
     }
 
     async fn fetch_by_keys(&self, keys: &[String]) -> Result<Vec<T>, ExportError> {
-        let key_column = self.key_column;
-        let mut all_found = Vec::new();
-        for key in keys {
-            let clause = WhereClause::new(format!("{key_column} = $1")).bind(key.clone());
-            let found = self
-                .ds
-                .find_one(clause)
-                .await
-                .map_err(HexforgeError::data_source)?;
-            if let Some(entity) = found {
-                all_found.push(entity);
-            }
+        if keys.is_empty() {
+            return Ok(Vec::new());
         }
-        let found_keys: HashSet<&str> = all_found.iter().map(|e| e.key_value()).collect();
+        let sql = format!(
+            "SELECT * FROM {} WHERE {} = ANY($1) ORDER BY id",
+            self.table, self.key_column
+        );
+        let found: Vec<T> = query_as::<_, T>(&sql)
+            .bind(keys)
+            .fetch_all(self.pool)
+            .await
+            .map_err(|e| ExportError::Internal(HexforgeError::data_source(e)))?;
+        let found_keys: HashSet<&str> = found.iter().map(|e| e.key_value()).collect();
         let missing: Vec<String> = keys
             .iter()
             .filter(|k| !found_keys.contains(k.as_str()))
@@ -213,7 +212,7 @@ where
         if !missing.is_empty() {
             return Err(ExportError::MissingKeys(missing));
         }
-        Ok(all_found)
+        Ok(found)
     }
 }
 
@@ -267,16 +266,15 @@ where
     }
 
     async fn fetch_by_keys(&self, keys: &[String]) -> Result<Vec<Keyword>, ExportError> {
-        let mut all_found = Vec::new();
-        for name in keys {
-            let found: Vec<Keyword> = self
-                .ds
-                .find_many(WhereClause::new("name = $1").bind(name.clone()))
-                .await
-                .map_err(HexforgeError::data_source)?;
-            all_found.extend(found);
+        if keys.is_empty() {
+            return Ok(Vec::new());
         }
-        let found_names: HashSet<&str> = all_found.iter().map(|k| k.name.as_str()).collect();
+        let found = self
+            .ds
+            .find_many(WhereClause::new("name = ANY($1)").bind(keys.to_vec()))
+            .await
+            .map_err(HexforgeError::data_source)?;
+        let found_names: HashSet<&str> = found.iter().map(|k| k.name.as_str()).collect();
         let missing: Vec<String> = keys
             .iter()
             .filter(|k| !found_names.contains(k.as_str()))
@@ -285,7 +283,7 @@ where
         if !missing.is_empty() {
             return Err(ExportError::MissingKeys(missing));
         }
-        Ok(all_found)
+        Ok(found)
     }
 }
 
@@ -370,18 +368,15 @@ where
     }
 
     async fn fetch_by_bibkeys(&self, bibkeys: &[String]) -> Result<Vec<BibItem>, ExportError> {
-        let mut all_found = Vec::new();
-        for bibkey in bibkeys {
-            let found = self
-                .ds
-                .find_one(WhereClause::new("bibkey = $1").bind(bibkey.clone()))
-                .await
-                .map_err(HexforgeError::data_source)?;
-            if let Some(item) = found {
-                all_found.push(item);
-            }
+        if bibkeys.is_empty() {
+            return Ok(Vec::new());
         }
-        let found_keys: HashSet<&str> = all_found.iter().map(|b| b.bibkey.as_str()).collect();
+        let found = self
+            .ds
+            .find_many(WhereClause::new("bibkey = ANY($1)").bind(bibkeys.to_vec()))
+            .await
+            .map_err(HexforgeError::data_source)?;
+        let found_keys: HashSet<&str> = found.iter().map(|b| b.bibkey.as_str()).collect();
         let missing: Vec<String> = bibkeys
             .iter()
             .filter(|k| !found_keys.contains(k.as_str()))
@@ -390,7 +385,7 @@ where
         if !missing.is_empty() {
             return Err(ExportError::MissingBibkeys(missing));
         }
-        Ok(all_found)
+        Ok(found)
     }
 }
 

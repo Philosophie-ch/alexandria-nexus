@@ -18,12 +18,11 @@ use crate::domain::{
     create_bib_item_transform, create_institution_transform, create_keyword_transform,
     create_school_transform, create_series_transform,
 };
-use crate::logic::csv_parsing::types::{FieldError, ParsedBibRow};
 use crate::logic::full_import::{
     AuthorJunctionRow, AuthorLookupResult, BibitemRefInsertRow, CollectedNames, EntityImportError,
-    EntityImportReport, ExportContext, FullImportReport, FullImportResult, KeywordJunctionRow,
-    LookupMaps, NamedEntityKind, ResolutionCtx, RowError, ValidationReport,
-    assemble_validation_report, build_bibitem_dto, build_export_record,
+    EntityImportReport, ExportContext, FieldError, FullImportReport, FullImportResult,
+    KeywordJunctionRow, LookupMaps, NamedEntityKind, ParsedBibRow, ResolutionCtx, RowError,
+    ValidationReport, assemble_validation_report, build_bibitem_dto, build_export_record,
     collect_author_junction_rows, collect_keyword_junction_rows, collect_ref_rows, generate_key,
 };
 use crate::process::import::{BibitemNotesData, BibitemNotesStore};
@@ -469,9 +468,9 @@ pub async fn import_bibitems(
     let parsed_rows = rows;
 
     // 3. Build resolution context
-    let mut csv_bibkeys = HashSet::new();
+    let mut file_bibkeys = HashSet::new();
     for row in &parsed_rows {
-        csv_bibkeys.insert(row.bibkey.clone());
+        file_bibkeys.insert(row.bibkey.clone());
     }
     let maps =
         build_lookup_maps(author_lookup, entity_lookup, keyword_lookup, bibkey_lookup).await?;
@@ -481,7 +480,7 @@ pub async fn import_bibitems(
     let deleted = if delete_stale {
         let stale: Vec<String> = ctx
             .existing_bibkeys
-            .difference(&csv_bibkeys)
+            .difference(&file_bibkeys)
             .cloned()
             .collect();
         if stale.is_empty() {

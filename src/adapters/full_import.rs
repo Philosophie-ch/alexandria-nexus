@@ -5,14 +5,15 @@
 
 use std::collections::{HashMap, HashSet};
 
-use hexforge::HexforgeError;
 use hexforge::db_exports::{FromRow, PgPool, query, query_as};
+use hexforge::{HexforgeError, ValidationError};
 
+use crate::adapters::field_parsing::{CsvHeaders, parse_row};
 use crate::domain::junctions::{BibitemAuthorsRow, BibitemKeywordsRow};
 use crate::domain::{BibItem, BibitemNotes, Epoch, LangId, PubState, RefType};
 use crate::logic::full_import::{
-    AuthorJunctionRow, AuthorLookupResult, AuthorNameKey, BibitemRefInsertRow, KeywordJunctionRow,
-    VariantInfo, parse_variant_to_keys,
+    AuthorJunctionRow, AuthorLookupResult, AuthorNameKey, BibitemRefInsertRow, FieldError,
+    KeywordJunctionRow, ParsedBibRow, RowError, RowParseResult, VariantInfo,
 };
 use crate::logic::transitive_closure::transitive_closure;
 use crate::process::full_import::{
@@ -760,4 +761,70 @@ impl BibitemNotesFetcher for PgFullImportStore<'_> {
         .map_err(HexforgeError::data_source)?;
         Ok(rows.into_iter().map(|n| (n.bibitem_id, n)).collect())
     }
+}
+
+// =============================================================================
+// Name variant → AuthorNameKey helper (uses the adapter-layer author parser)
+// =============================================================================
+
+pub fn parse_variant_to_keys(variant: &str) -> Vec<AuthorNameKey> {
+    if let Ok(parsed) = crate::adapters::field_parsing::author::parse_authors(variant) {
+        parsed.iter().map(AuthorNameKey::from_parsed).collect()
+    } else {
+        vec![AuthorNameKey::Mononym(variant.to_string())]
+    }
+}
+
+// =============================================================================
+// CSV parse function (wire format — belongs at the adapter boundary)
+// =============================================================================
+
+pub fn parse_all_rows(data: &[u8]) -> Result<(Vec<ParsedBibRow>, Vec<RowError>), HexforgeError> {
+    let mut rdr = csv::ReaderBuilder::new()
+        .has_headers(true)
+        .flexible(true)
+        .from_reader(data);
+
+    let headers = rdr
+        .headers()
+        .map_err(|e| {
+            HexforgeError::Validation(ValidationError::custom(format!("invalid CSV headers: {e}")))
+        })?
+        .clone();
+
+    let header_fields: Vec<&str> = headers.iter().collect();
+    let csv_headers = CsvHeaders::from_headers(&header_fields);
+    let mut parsed_rows = Vec::new();
+    let mut row_errors = Vec::new();
+
+    for (idx, result) in rdr.records().enumerate() {
+        let record = match result {
+            Ok(r) => r,
+            Err(e) => {
+                row_errors.push(RowError {
+                    row: idx + 2,
+                    bibkey: None,
+                    errors: vec![FieldError {
+                        field: "_csv".to_string(),
+                        error: format!("malformed CSV row: {e}"),
+                    }],
+                });
+                continue;
+            }
+        };
+
+        let fields: Vec<&str> = record.iter().collect();
+        match parse_row(&csv_headers, &fields) {
+            RowParseResult::Ok(row) => parsed_rows.push(*row),
+            RowParseResult::Err { bibkey, errors } => {
+                row_errors.push(RowError {
+                    row: idx + 2,
+                    bibkey,
+                    errors,
+                });
+            }
+        }
+    }
+
+    Ok((parsed_rows, row_errors))
 }

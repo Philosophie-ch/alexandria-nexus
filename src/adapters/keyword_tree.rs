@@ -21,9 +21,8 @@ impl<'a> PgKeywordFetcher<'a> {
 }
 
 impl KeywordFetcher for PgKeywordFetcher<'_> {
-    async fn fetch_by_level(&self, level: i16) -> Result<Vec<Keyword>, HexforgeError> {
-        query_as("SELECT * FROM keywords WHERE level = $1 ORDER BY name")
-            .bind(level)
+    async fn fetch_all(&self) -> Result<Vec<Keyword>, HexforgeError> {
+        query_as("SELECT * FROM keywords ORDER BY level, name")
             .fetch_all(self.pool)
             .await
             .map_err(HexforgeError::data_source)
