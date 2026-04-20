@@ -1,3 +1,8 @@
+[net.ssh]
+known-hosts = [
+    "gitlab.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBFSMqzJeV9rUzU4kWitGjeR4PWSa29SPqJ1fVkhtj3Hw9xjLVXVYrU9QlYWrOLXBpQ6KWjbjTDTdDkoohFzgbEY=",
+]
+
 [alias]
 lint = "clippy --all-targets --all-features"
 test-all = "test --all-targets --all-features --no-fail-fast"
