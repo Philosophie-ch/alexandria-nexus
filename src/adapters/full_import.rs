@@ -88,11 +88,12 @@ impl AuthorLookup for PgFullImportStore<'_> {
 
         let mut id_map: HashMap<AuthorNameKey, Vec<i64>> = HashMap::new();
         let mut variant_map: HashMap<AuthorNameKey, VariantInfo> = HashMap::new();
+        let mut family_name_only_map: HashMap<String, Vec<i64>> = HashMap::new();
 
         for row in &rows {
             // Primary name key
             let key = if let Some(mononym) = &row.mononym_latex {
-                AuthorNameKey::Mononym(mononym.clone())
+                AuthorNameKey::Mononym(strip_outer_braces(mononym))
             } else if let Some(family) = &row.family_name_latex {
                 AuthorNameKey::Named {
                     family_name: family.clone(),
@@ -102,6 +103,14 @@ impl AuthorLookup for PgFullImportStore<'_> {
                 continue;
             };
             id_map.entry(key).or_default().push(row.id);
+
+            // Family-name-only index for _person fallback resolution
+            if let Some(family) = &row.family_name_latex {
+                family_name_only_map
+                    .entry(family.clone())
+                    .or_default()
+                    .push(row.id);
+            }
 
             // LaTeX name variants
             if let Some(variants) = &row.name_variants_latex {
@@ -138,6 +147,7 @@ impl AuthorLookup for PgFullImportStore<'_> {
         Ok(AuthorLookupResult {
             id_map,
             variant_map,
+            family_name_only_map,
         })
     }
 }
@@ -767,6 +777,14 @@ impl BibitemNotesFetcher for PgFullImportStore<'_> {
 // Name variant → AuthorNameKey helper (uses the adapter-layer author parser)
 // =============================================================================
 
+fn strip_outer_braces(s: &str) -> String {
+    if s.starts_with('{') && s.ends_with('}') {
+        s[1..s.len() - 1].to_string()
+    } else {
+        s.to_string()
+    }
+}
+
 pub fn parse_variant_to_keys(variant: &str) -> Vec<AuthorNameKey> {
     if let Ok(parsed) = crate::adapters::field_parsing::author::parse_authors(variant) {
         parsed.iter().map(AuthorNameKey::from_parsed).collect()
@@ -827,4 +845,33 @@ pub fn parse_all_rows(data: &[u8]) -> Result<(Vec<ParsedBibRow>, Vec<RowError>),
     }
 
     Ok((parsed_rows, row_errors))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_outer_braces;
+
+    #[test]
+    fn strips_outer_braces() {
+        assert_eq!(strip_outer_braces("{Aristotle}"), "Aristotle");
+        assert_eq!(strip_outer_braces("{Plato}"), "Plato");
+    }
+
+    #[test]
+    fn no_braces_unchanged() {
+        assert_eq!(strip_outer_braces("Brandeslein"), "Brandeslein");
+    }
+
+    #[test]
+    fn only_outer_braces_stripped() {
+        assert_eq!(
+            strip_outer_braces("{Biblioth{\\`e}que}"),
+            "Biblioth{\\`e}que"
+        );
+    }
+
+    #[test]
+    fn empty_string_unchanged() {
+        assert_eq!(strip_outer_braces(""), "");
+    }
 }
