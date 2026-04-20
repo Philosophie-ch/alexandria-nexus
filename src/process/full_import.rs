@@ -23,7 +23,8 @@ use crate::logic::full_import::{
     EntityImportReport, ExportContext, FieldError, FullImportReport, FullImportResult,
     KeywordJunctionRow, LookupMaps, NamedEntityKind, ParsedBibRow, ResolutionCtx, RowError,
     ValidationReport, assemble_validation_report, build_bibitem_dto, build_export_record,
-    collect_author_junction_rows, collect_keyword_junction_rows, collect_ref_rows, generate_key,
+    collect_author_junction_rows, collect_keyword_junction_rows, collect_ref_rows,
+    filter_importable_rows, generate_key,
 };
 use crate::process::import::{BibitemNotesData, BibitemNotesStore};
 use crate::validation::{
@@ -451,32 +452,24 @@ pub async fn import_bibitems(
     row_errors: Vec<RowError>,
     delete_stale: bool,
 ) -> Result<FullImportResult, HexforgeError> {
-    // 1. Validate — block only on hard errors (duplicate bibkeys)
-    let report = validate_import(
-        author_lookup,
-        entity_lookup,
-        keyword_lookup,
-        bibkey_lookup,
-        &rows,
-        row_errors,
-    )
-    .await?;
+    // 1. Build lookup maps once (single DB round-trip)
+    let maps =
+        build_lookup_maps(author_lookup, entity_lookup, keyword_lookup, bibkey_lookup).await?;
+
+    // 2. Assemble validation report; block only on hard errors (duplicate bibkeys)
+    let report = assemble_validation_report(&rows, row_errors, &maps);
     if report.has_hard_errors() {
         return Ok(FullImportResult::ValidationFailed(Box::new(report)));
     }
 
-    let parsed_rows = rows;
+    // 3. Capture full-file bibkeys before consuming `rows` (stale detection needs the full set)
+    let file_bibkeys: HashSet<String> = rows.iter().map(|r| r.bibkey.clone()).collect();
 
-    // 3. Build resolution context
-    let mut file_bibkeys = HashSet::new();
-    for row in &parsed_rows {
-        file_bibkeys.insert(row.bibkey.clone());
-    }
-    let maps =
-        build_lookup_maps(author_lookup, entity_lookup, keyword_lookup, bibkey_lookup).await?;
+    // 4. Build resolution context; filter to rows where all entity refs resolve
     let ctx = ResolutionCtx::from_lookup_maps(maps);
+    let (parsed_rows, filtered_errors) = filter_importable_rows(rows, &ctx);
 
-    // 4. Delete stale bibitems
+    // 5. Delete stale bibitems (in DB but absent from the source file entirely)
     let deleted = if delete_stale {
         let stale: Vec<String> = ctx
             .existing_bibkeys
@@ -492,7 +485,7 @@ pub async fn import_bibitems(
         0
     };
 
-    // 5. Build all entities in memory; track update vs insert counts
+    // 6. Build all entities in memory; track update vs insert counts
     let (entities_with_flags, build_errors) = build_all_bibitem_entities(&parsed_rows, &ctx);
     let updated = entities_with_flags
         .iter()
@@ -503,7 +496,7 @@ pub async fn import_bibitems(
         .filter(|(was_update, _)| !was_update)
         .count();
 
-    // 6. Batch-delete all bibkeys that will be re-inserted (cascade clears junctions)
+    // 7. Batch-delete all bibkeys that will be re-inserted (cascade clears junctions)
     let update_bibkeys: Vec<String> = entities_with_flags
         .iter()
         .filter(|(was_update, _)| *was_update)
@@ -515,13 +508,13 @@ pub async fn import_bibitems(
             .await?;
     }
 
-    // 7. Bulk insert all bibitems, get back (id, bibkey) pairs
+    // 8. Bulk insert all bibitems, get back (id, bibkey) pairs
     let entities: Vec<BibItem> = entities_with_flags.into_iter().map(|(_, e)| e).collect();
     let inserted_ids = bulk_inserter.bulk_insert_bibitems(&entities).await?;
     let bibkey_to_id: HashMap<String, i64> =
         inserted_ids.into_iter().map(|(id, bk)| (bk, id)).collect();
 
-    // 8. Collect junction rows and bulk insert
+    // 9. Collect junction rows and bulk insert
     let author_rows = collect_author_junction_rows(&parsed_rows, &bibkey_to_id, &ctx);
     let keyword_rows = collect_keyword_junction_rows(&parsed_rows, &bibkey_to_id, &ctx);
     let ref_rows = collect_ref_rows(&parsed_rows, &bibkey_to_id);
@@ -560,12 +553,18 @@ pub async fn import_bibitems(
         }
     }
 
+    let skipped = filtered_errors.len();
+    let failed = build_errors.len();
+    let mut all_errors = filtered_errors;
+    all_errors.extend(build_errors);
+
     Ok(FullImportResult::Success(FullImportReport {
         imported,
         updated,
         deleted,
-        failed: build_errors.len(),
-        errors: build_errors,
+        failed,
+        skipped,
+        errors: all_errors,
     }))
 }
 

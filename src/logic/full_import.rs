@@ -207,21 +207,14 @@ pub struct MissingKeywords {
 }
 
 impl ValidationReport {
-    /// Hard errors: conditions where proceeding would silently corrupt or discard data.
-    /// - Duplicate bibkeys: upsert conflict.
-    /// - Unresolved entity FK references: importing would lose journal/author/publisher/etc. links.
-    /// - Ambiguous authors: can't determine which author to assign.
+    /// Hard errors: conditions that block the entire import (not just individual rows).
+    /// Only duplicate bibkeys qualify — they'd cause an upsert conflict across all rows.
     ///
-    /// Row-level parse errors and missing cross-bibitem refs are soft — those rows are skipped.
+    /// Missing/ambiguous entity refs are per-row: `filter_importable_rows` skips affected rows
+    /// while letting the rest through. Row-level parse errors and missing cross-bibitem refs
+    /// are also soft — those rows are silently skipped.
     pub fn has_hard_errors(&self) -> bool {
         !self.duplicate_bibkeys.is_empty()
-            || !self.ambiguous_authors.is_empty()
-            || !self.missing_authors.is_empty()
-            || !self.missing_journals.is_empty()
-            || !self.missing_publishers.is_empty()
-            || !self.missing_institutions.is_empty()
-            || !self.missing_schools.is_empty()
-            || !self.missing_series.is_empty()
     }
 
     /// Any issue at all — used by the validate-only endpoint to surface everything.
@@ -311,6 +304,8 @@ pub struct FullImportReport {
     pub updated: usize,
     pub deleted: usize,
     pub failed: usize,
+    /// Rows skipped because one or more entity references (author, journal, etc.) could not be resolved.
+    pub skipped: usize,
     pub errors: Vec<RowError>,
 }
 
@@ -1070,6 +1065,88 @@ pub fn collect_keyword_junction_rows(
         }
     }
     rows
+}
+
+// =============================================================================
+// Per-row entity resolution filter (pure)
+// =============================================================================
+
+/// Partition rows into importable (all entity refs resolve) and skipped (at least one missing).
+///
+/// Uses only O(1) HashMap lookups against the already-loaded `ResolutionCtx`.
+/// Rows that fail are emitted as `RowError` entries explaining which references are unresolved.
+pub fn filter_importable_rows(
+    rows: Vec<ParsedBibRow>,
+    ctx: &ResolutionCtx,
+) -> (Vec<ParsedBibRow>, Vec<RowError>) {
+    let mut importable = Vec::new();
+    let mut skipped = Vec::new();
+    for (idx, row) in rows.into_iter().enumerate() {
+        let missing = collect_missing_for_row(&row, ctx);
+        if missing.is_empty() {
+            importable.push(row);
+        } else {
+            skipped.push(RowError {
+                row: idx + 2, // 1-indexed, skip header row
+                bibkey: Some(row.bibkey.clone()),
+                errors: missing
+                    .into_iter()
+                    .map(|m| FieldError {
+                        field: "entity_reference".to_string(),
+                        error: m,
+                    })
+                    .collect(),
+            });
+        }
+    }
+    (importable, skipped)
+}
+
+fn collect_missing_for_row(row: &ParsedBibRow, ctx: &ResolutionCtx) -> Vec<String> {
+    let mut missing = Vec::new();
+    for author in row
+        .authors
+        .iter()
+        .chain(&row.editors)
+        .chain(&row.guesteditors)
+    {
+        let key = AuthorNameKey::from_parsed(author);
+        if !ctx.author_resolve.contains_key(&key) {
+            missing.push(format!("unresolved author: {}", format_author_key(&key)));
+        }
+    }
+    if let Some(p) = &row.person {
+        let key = AuthorNameKey::from_parsed(p);
+        if !ctx.author_resolve.contains_key(&key) {
+            missing.push(format!("unresolved person: {}", format_author_key(&key)));
+        }
+    }
+    if let Some(n) = &row.journal_name
+        && !ctx.journal_map.contains_key(n)
+    {
+        missing.push(format!("missing journal: {n}"));
+    }
+    if let Some(n) = &row.publisher_name
+        && !ctx.publisher_map.contains_key(n)
+    {
+        missing.push(format!("missing publisher: {n}"));
+    }
+    if let Some(n) = &row.institution_name
+        && !ctx.institution_map.contains_key(n)
+    {
+        missing.push(format!("missing institution: {n}"));
+    }
+    if let Some(n) = &row.school_name
+        && !ctx.school_map.contains_key(n)
+    {
+        missing.push(format!("missing school: {n}"));
+    }
+    if let Some(n) = &row.series_name
+        && !ctx.series_map.contains_key(n)
+    {
+        missing.push(format!("missing series: {n}"));
+    }
+    missing
 }
 
 /// Collect all bibitem ref rows for all parsed rows.
