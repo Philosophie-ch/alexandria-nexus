@@ -11,7 +11,9 @@ use std::future::Future;
 
 use hexforge::HexforgeError;
 
-use crate::logic::latex_citations::{CitationData, extract_cite_keys, substitute_citations};
+use crate::logic::latex_citations::{
+    CitationData, extract_cite_keys, substitute_citations_checked,
+};
 
 /// Contract for batch-resolving bibkeys to `CitationData`.
 pub trait CitationResolver: Send + Sync {
@@ -24,14 +26,16 @@ pub trait CitationResolver: Send + Sync {
 /// Pre-compile `\cite*{...}` commands in a slice of LaTeX strings.
 ///
 /// Collects all unique cite keys across all texts, resolves them in one DB call,
-/// then substitutes in every text. Returns `(pre_processed_texts, missing_bibkeys)`.
+/// then substitutes in every text.
 ///
-/// Missing bibkeys are rendered as `[bibkey]` placeholders in the output and returned
-/// as the second element so the caller can surface them in the conversion report.
+/// Returns `(pre_processed_texts, missing_bibkeys)` where each text is:
+/// - `Some(text)` — all citations rendered successfully
+/// - `None` — at least one citation could not be rendered (missing key, missing author/year);
+///   the caller should null out the corresponding unicode field rather than storing partial text
 pub async fn pre_compile_citations(
     texts: &[String],
     resolver: &impl CitationResolver,
-) -> Result<(Vec<String>, Vec<String>), HexforgeError> {
+) -> Result<(Vec<Option<String>>, Vec<String>), HexforgeError> {
     // Collect all unique cite keys across all texts
     let mut all_keys: Vec<String> = Vec::new();
     let mut seen = HashSet::new();
@@ -44,7 +48,7 @@ pub async fn pre_compile_citations(
     }
 
     if all_keys.is_empty() {
-        return Ok((texts.to_vec(), Vec::new()));
+        return Ok((texts.iter().map(|t| Some(t.clone())).collect(), Vec::new()));
     }
 
     let resolved = resolver.resolve_bibkeys(&all_keys).await?;
@@ -54,9 +58,16 @@ pub async fn pre_compile_citations(
         .filter(|k| !resolved.contains_key(k))
         .collect();
 
-    let processed: Vec<String> = texts
+    let processed: Vec<Option<String>> = texts
         .iter()
-        .map(|t| substitute_citations(t, &resolved))
+        .map(|t| {
+            let (substituted, had_unresolvable) = substitute_citations_checked(t, &resolved);
+            if had_unresolvable {
+                None
+            } else {
+                Some(substituted)
+            }
+        })
         .collect();
 
     Ok((processed, missing))
@@ -117,7 +128,10 @@ mod tests {
         let resolver = MockResolver(HashMap::new());
         let input = vec![s("plain text"), s("no citations here")];
         let (texts, missing) = pre_compile_citations(&input, &resolver).await.unwrap();
-        assert_eq!(texts, input);
+        assert_eq!(
+            texts,
+            vec![Some(s("plain text")), Some(s("no citations here"))]
+        );
         assert!(missing.is_empty());
     }
 
@@ -128,27 +142,29 @@ mod tests {
         let resolver = MockResolver(db);
         let input = vec![s(r"\citet{smith:2000}")];
         let (texts, missing) = pre_compile_citations(&input, &resolver).await.unwrap();
-        assert_eq!(texts, vec!["Smith (2000)"]);
+        assert_eq!(texts, vec![Some(s("Smith (2000)"))]);
         assert!(missing.is_empty());
     }
 
     #[tokio::test]
-    async fn missing_key_reported_and_omitted_from_output() {
+    async fn missing_key_taints_text() {
+        // Unknown key → entire text is None (tainted), key still reported as missing
         let resolver = MockResolver(HashMap::new());
         let input = vec![s(r"See \citet{ghost:1999}.")];
         let (texts, missing) = pre_compile_citations(&input, &resolver).await.unwrap();
-        assert_eq!(texts, vec!["See ."]);
+        assert_eq!(texts, vec![None]);
         assert_eq!(missing, vec!["ghost:1999"]);
     }
 
     #[tokio::test]
-    async fn partial_missing_only_unknown_keys_reported() {
+    async fn partial_missing_taints_whole_text() {
+        // One resolved, one missing → whole text is None
         let mut db = HashMap::new();
         db.insert(s("known:2000"), cd("Known", 2000));
         let resolver = MockResolver(db);
         let input = vec![s(r"\citet{known:2000} and \citet{missing:x}")];
         let (texts, missing) = pre_compile_citations(&input, &resolver).await.unwrap();
-        assert_eq!(texts, vec!["Known (2000) and "]);
+        assert_eq!(texts, vec![None]);
         assert_eq!(missing, vec!["missing:x"]);
     }
 
@@ -159,8 +175,8 @@ mod tests {
         let resolver = MockResolver(db);
         let input = vec![s(r"First \citet{a:1}."), s(r"Second \citet{a:1} again.")];
         let (texts, missing) = pre_compile_citations(&input, &resolver).await.unwrap();
-        assert_eq!(texts[0], "First A (2001).");
-        assert_eq!(texts[1], "Second A (2001) again.");
+        assert_eq!(texts[0], Some(s("First A (2001).")));
+        assert_eq!(texts[1], Some(s("Second A (2001) again.")));
         assert!(missing.is_empty());
     }
 
@@ -175,14 +191,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn multiple_missing_keys_all_reported() {
+    async fn multiple_missing_keys_all_tainted() {
+        // All keys missing → text is None, all keys reported
         let resolver = MockResolver(HashMap::new());
         let input = vec![s(r"\citet{a:1} \citet{b:2} \citet{c:3}")];
         let (texts, missing) = pre_compile_citations(&input, &resolver).await.unwrap();
-        assert_eq!(texts, vec!["  "]);
+        assert_eq!(texts, vec![None]);
         assert_eq!(missing.len(), 3);
         assert!(missing.contains(&s("a:1")));
         assert!(missing.contains(&s("b:2")));
         assert!(missing.contains(&s("c:3")));
+    }
+
+    #[tokio::test]
+    async fn resolved_key_with_missing_author_taints_text() {
+        // Key exists in DB but CitationData.author is None → text is None
+        let mut db = HashMap::new();
+        db.insert(
+            s("gaskin_r:2008"),
+            CitationData {
+                author: None,
+                year: Some(2008),
+            },
+        );
+        let resolver = MockResolver(db);
+        let input = vec![s(r"Review of \citet{gaskin_r:2008}")];
+        let (texts, missing) = pre_compile_citations(&input, &resolver).await.unwrap();
+        assert_eq!(texts, vec![None]);
+        // Key was resolved (exists in DB), so not in missing list
+        assert!(missing.is_empty());
     }
 }

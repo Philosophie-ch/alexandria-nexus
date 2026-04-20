@@ -17,13 +17,25 @@ pub struct CitationData {
 /// - `\citep{key}` / `\cite{key}` → `(Author, Year)`
 /// - `\citeauthor{key}` → `Author`
 /// - `\citeyear{key}` → `Year`
-/// - Unknown / unresolved key → `[key]` placeholder
-///
-/// Unknown keys are left as `[key]` so `pylatexenc` receives clean text and the
-/// caller can surface the missing bibkeys separately.
+/// - Any unresolvable or incomplete cite → empty string (nothing rendered)
 pub fn substitute_citations(latex: &str, resolved: &HashMap<String, CitationData>) -> String {
+    do_substitute(latex, resolved).0
+}
+
+/// Like `substitute_citations` but also returns `true` if any citation in the text
+/// could not be fully rendered (missing key, missing author, or missing year).
+/// Use this to decide whether to null out the unicode field entirely.
+pub fn substitute_citations_checked(
+    latex: &str,
+    resolved: &HashMap<String, CitationData>,
+) -> (String, bool) {
+    do_substitute(latex, resolved)
+}
+
+fn do_substitute(latex: &str, resolved: &HashMap<String, CitationData>) -> (String, bool) {
     let mut result = String::with_capacity(latex.len());
     let mut rest = latex;
+    let mut had_unresolvable = false;
 
     loop {
         let Some(cmd_pos) = rest.find("\\cite") else {
@@ -81,13 +93,17 @@ pub fn substitute_citations(latex: &str, resolved: &HashMap<String, CitationData
         if keys.is_empty() {
             result.push_str(&cmd_start[..cmd_len]);
         } else {
-            result.push_str(&format_cite(cmd_name, &keys, resolved));
+            let substituted = format_cite(cmd_name, &keys, resolved);
+            if substituted.is_empty() {
+                had_unresolvable = true;
+            }
+            result.push_str(&substituted);
         }
 
         rest = &rest[cmd_pos + cmd_len..];
     }
 
-    result
+    (result, had_unresolvable)
 }
 
 fn format_cite(cmd_name: &str, keys: &[&str], resolved: &HashMap<String, CitationData>) -> String {

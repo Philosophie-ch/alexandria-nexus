@@ -85,33 +85,52 @@ pub async fn convert_all_columns(
     let (pre_compiled, missing_citation_keys) =
         pre_compile_citations(&all_texts, citation_resolver).await?;
 
-    // Split pre-compiled texts back into per-column slices
+    // Split pre-compiled texts back into per-column slices (Option<String>: None = tainted)
     let mut offset = 0;
-    let mut per_batch: Vec<Vec<String>> = Vec::with_capacity(batches.len());
+    let mut per_batch_opts: Vec<Vec<Option<String>>> = Vec::with_capacity(batches.len());
     for batch in &batches {
         let n = batch.rows.len();
-        per_batch.push(pre_compiled[offset..offset + n].to_vec());
+        per_batch_opts.push(pre_compiled[offset..offset + n].to_vec());
         offset += n;
     }
 
-    // Convert via subprocess
-    let all_outcomes = convert_batches(converter, per_batch).await?;
+    // Replace None with "" for the converter (empty strings are fast no-ops); track taint mask
+    let mut taint_masks: Vec<Vec<bool>> = Vec::with_capacity(batches.len());
+    let per_batch_for_conversion: Vec<Vec<String>> = per_batch_opts
+        .iter()
+        .map(|opts| {
+            opts.iter()
+                .map(|opt| opt.clone().unwrap_or_default())
+                .collect()
+        })
+        .collect();
+    for opts in &per_batch_opts {
+        taint_masks.push(opts.iter().map(|opt| opt.is_none()).collect());
+    }
 
-    // Process outcomes into per-column updates and errors (no I/O)
+    // Convert via subprocess
+    let all_outcomes = convert_batches(converter, per_batch_for_conversion).await?;
+
+    // Process outcomes into per-column updates and errors (no I/O).
+    // Tainted rows are written as "" regardless of converter output.
     let mut per_batch_updates: Vec<Vec<(i64, String)>> = Vec::with_capacity(batches.len());
     let mut errors: Vec<LatexConvertError> = Vec::new();
 
-    for (batch, outcomes) in batches.iter().zip(all_outcomes) {
+    for ((batch, tainted), outcomes) in batches.iter().zip(taint_masks).zip(all_outcomes) {
         let mut ok_updates: Vec<(i64, String)> = Vec::new();
-        for ((id, _), outcome) in batch.rows.iter().zip(outcomes) {
-            match outcome {
-                ConvertOutcome::Ok(unicode) => ok_updates.push((*id, unicode)),
-                ConvertOutcome::Err { message, .. } => errors.push(LatexConvertError {
-                    table: batch.table,
-                    column: batch.column,
-                    id: *id,
-                    error: message,
-                }),
+        for (((id, _), is_tainted), outcome) in batch.rows.iter().zip(tainted).zip(outcomes) {
+            if is_tainted {
+                ok_updates.push((*id, String::new()));
+            } else {
+                match outcome {
+                    ConvertOutcome::Ok(unicode) => ok_updates.push((*id, unicode)),
+                    ConvertOutcome::Err { message, .. } => errors.push(LatexConvertError {
+                        table: batch.table,
+                        column: batch.column,
+                        id: *id,
+                        error: message,
+                    }),
+                }
             }
         }
         per_batch_updates.push(ok_updates);
