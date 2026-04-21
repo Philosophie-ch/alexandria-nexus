@@ -139,7 +139,7 @@ impl SnapshotFetcher for PgSnapshotFetcher {
         let pool = self.pool.clone();
         async move {
             query_as::<_, BibitemAuthorsRow>(
-                "SELECT * FROM bibitem_authors ORDER BY bibitem_id, position",
+                "SELECT bibitem_id, author_id, role::text, position, name_variant_latex, name_variant_unicode FROM bibitem_authors ORDER BY bibitem_id, position",
             )
             .fetch_all(&pool)
             .await
