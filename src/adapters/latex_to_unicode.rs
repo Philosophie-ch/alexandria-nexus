@@ -23,9 +23,17 @@ const CHUNK_SIZE: usize = 5_000;
 const PYTHON_SCRIPT: &str = r#"
 import json, sys
 
+def preprocess_quotes(text):
+    # TeX quote ligatures: replace before pylatexenc so they survive conversion.
+    # Order matters: double first so individual backticks don't fire early.
+    text = text.replace("``", "\u201c")   # `` → "
+    text = text.replace("''", "\u201d")   # '' → "
+    text = text.replace("`", "\u2018")    # ` → '
+    return text
+
 def convert_one(converter, text):
     try:
-        result = converter.latex_to_text(text)
+        result = converter.latex_to_text(preprocess_quotes(text))
         return {"status": "ok", "result": " ".join(result.split())}
     except Exception as exc:
         return {"status": "error", "message": f"{type(exc).__name__}: {exc}"}
