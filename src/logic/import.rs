@@ -29,39 +29,39 @@ pub struct ImportRowError {
     pub error: String,
 }
 
-/// Error response for missing referenced IDs during bibitem import.
+/// Error response for missing referenced keys during bibitem import.
 #[derive(Debug, Serialize)]
 pub struct MissingReferencesError {
     pub error: &'static str,
     pub message: &'static str,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub missing_author_ids: Vec<i64>,
+    pub missing_author_keys: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub missing_journal_ids: Vec<i64>,
+    pub missing_journal_keys: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub missing_publisher_ids: Vec<i64>,
+    pub missing_publisher_keys: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub missing_institution_ids: Vec<i64>,
+    pub missing_institution_keys: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub missing_school_ids: Vec<i64>,
+    pub missing_school_keys: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub missing_series_ids: Vec<i64>,
+    pub missing_series_keys: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub missing_keyword_ids: Vec<i64>,
+    pub missing_keyword_keys: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub missing_crossref_ids: Vec<i64>,
+    pub missing_crossref_keys: Vec<String>,
 }
 
 impl MissingReferencesError {
     pub fn has_missing(&self) -> bool {
-        !self.missing_author_ids.is_empty()
-            || !self.missing_journal_ids.is_empty()
-            || !self.missing_publisher_ids.is_empty()
-            || !self.missing_institution_ids.is_empty()
-            || !self.missing_school_ids.is_empty()
-            || !self.missing_series_ids.is_empty()
-            || !self.missing_keyword_ids.is_empty()
-            || !self.missing_crossref_ids.is_empty()
+        !self.missing_author_keys.is_empty()
+            || !self.missing_journal_keys.is_empty()
+            || !self.missing_publisher_keys.is_empty()
+            || !self.missing_institution_keys.is_empty()
+            || !self.missing_school_keys.is_empty()
+            || !self.missing_series_keys.is_empty()
+            || !self.missing_keyword_keys.is_empty()
+            || !self.missing_crossref_keys.is_empty()
     }
 }
 
@@ -121,23 +121,23 @@ pub fn build_bibitem_update_dto(create: &CreateBibItem) -> UpdateBibItem {
         title_unicode: create.title_unicode.clone(),
         booktitle_latex: create.booktitle_latex.clone(),
         booktitle_unicode: create.booktitle_unicode.clone(),
-        journal_id: create.journal_id,
-        publisher_id: create.publisher_id,
+        journal_key: create.journal_key.clone(),
+        publisher_key: create.publisher_key.clone(),
         address: create.address.clone(),
         volume: create.volume.clone(),
         number: create.number.clone(),
         pages: create.pages.clone(),
         eid: create.eid.clone(),
-        series_id: create.series_id,
+        series_key: create.series_key.clone(),
         edition: create.edition.clone(),
-        institution_id: create.institution_id,
-        school_id: create.school_id,
+        institution_key: create.institution_key.clone(),
+        school_key: create.school_key.clone(),
         type_field: create.type_field.clone(),
         doi: create.doi.clone(),
         url: create.url.clone(),
         eprint: create.eprint.clone(),
         urn: create.urn.clone(),
-        crossref_id: create.crossref_id,
+        crossref: create.crossref.clone(),
         issuetitle_latex: create.issuetitle_latex.clone(),
         issuetitle_unicode: create.issuetitle_unicode.clone(),
         note_latex: create.note_latex.clone(),
@@ -149,7 +149,7 @@ pub fn build_bibitem_update_dto(create: &CreateBibItem) -> UpdateBibItem {
         epoch: create.epoch,
         options: create.options.clone(),
         shorthand: create.shorthand.clone(),
-        person_id: create.person_id,
+        person_key: create.person_key.clone(),
         has_fulltext: Some(create.has_fulltext),
         fulltext_path: create.fulltext_path.clone(),
     }
@@ -251,20 +251,20 @@ pub struct ParsedBibitemRow {
     pub source_id: Option<i64>,
     pub bibkey: String,
     pub dto: CreateBibItem,
-    pub author_ids: Vec<i64>,
-    pub editor_ids: Vec<i64>,
-    pub guesteditor_ids: Vec<i64>,
-    pub keyword_ids: Vec<i64>,
+    pub author_keys: Vec<String>,
+    pub editor_keys: Vec<String>,
+    pub guesteditor_keys: Vec<String>,
+    pub keyword_keys: Vec<String>,
 }
 
 pub struct ParsedBibitemRefRow {
-    pub source_id: i64,
-    pub target_id: i64,
+    pub source_key: String,
+    pub target_key: String,
     pub ref_type: String,
 }
 
 pub struct ParsedBibitemNotesRow {
-    pub bibitem_id: i64,
+    pub bibkey: String,
     pub note_perso: Option<String>,
     pub note_stock: Option<String>,
     pub note_missing: Option<String>,

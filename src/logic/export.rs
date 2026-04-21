@@ -70,7 +70,7 @@ pub fn opt_display<T: std::fmt::Display>(v: &Option<T>) -> String {
 // Role/keyword formatting helpers (pure functions)
 // =============================================================================
 
-/// Format author IDs for a given role, sorted by position.
+/// Format author keys for a given role, sorted by position.
 pub fn format_role_ids(bib_authors: Option<&Vec<&BibitemAuthorsRow>>, role: AuthorRole) -> String {
     let role_str = role.to_string();
     bib_authors
@@ -83,7 +83,7 @@ pub fn format_role_ids(bib_authors: Option<&Vec<&BibitemAuthorsRow>>, role: Auth
             filtered.sort_by_key(|r| r.position);
             filtered
                 .iter()
-                .map(|r| r.author_id.to_string())
+                .map(|r| r.author_key.to_string())
                 .collect::<Vec<_>>()
                 .join(";")
         })
@@ -97,7 +97,7 @@ pub fn format_role_ids(bib_authors: Option<&Vec<&BibitemAuthorsRow>>, role: Auth
 pub fn format_role_names(
     bib_authors: Option<&Vec<&BibitemAuthorsRow>>,
     role: AuthorRole,
-    authors_map: &HashMap<i64, Author>,
+    authors_map: &HashMap<String, Author>,
 ) -> String {
     let role_str = role.to_string();
     bib_authors
@@ -115,7 +115,7 @@ pub fn format_role_names(
                     if let Some(ref variant) = r.name_variant_latex {
                         return Some(variant.clone());
                     }
-                    authors_map.get(&r.author_id).map(|a| {
+                    authors_map.get(&r.author_key).map(|a| {
                         if let Some(ref mononym) = a.mononym_unicode {
                             mononym.clone()
                         } else {
@@ -140,14 +140,14 @@ pub fn format_role_names(
 pub fn format_keywords_at_level(
     bib_keywords: Option<&Vec<&BibitemKeywordsRow>>,
     level: i16,
-    keywords_map: &HashMap<i64, Keyword>,
+    keywords_map: &HashMap<String, Keyword>,
 ) -> String {
     bib_keywords
         .map(|rows| {
             let names: Vec<&str> = rows
                 .iter()
                 .filter(|r| r.keyword_level == level)
-                .filter_map(|r| keywords_map.get(&r.keyword_id).map(|k| k.name.as_str()))
+                .filter_map(|r| keywords_map.get(&r.keyword_key).map(|k| k.name.as_str()))
                 .collect();
             names.join(";")
         })
@@ -171,17 +171,17 @@ pub const IDS_FORMAT_HEADER: &[&str] = &[
     "title_unicode",
     "booktitle_latex",
     "booktitle_unicode",
-    "crossref_id",
-    "journal_id",
+    "crossref",
+    "journal_key",
     "volume",
     "number",
     "pages",
     "eid",
-    "series_id",
+    "series_key",
     "address",
-    "institution_id",
-    "school_id",
-    "publisher_id",
+    "institution_key",
+    "school_key",
+    "publisher_key",
     "type_field",
     "edition",
     "note_latex",
@@ -197,10 +197,10 @@ pub const IDS_FORMAT_HEADER: &[&str] = &[
     "langid",
     "is_translation",
     "epoch",
-    "author_ids",
-    "editor_ids",
-    "guesteditor_ids",
-    "keyword_ids",
+    "author_keys",
+    "editor_keys",
+    "guesteditor_keys",
+    "keyword_keys",
 ];
 
 /// Expanded format header columns.
@@ -426,32 +426,32 @@ pub fn build_bibitem_id_rows(
         return rows;
     }
 
-    let mut authors_by_bibitem: HashMap<i64, Vec<&BibitemAuthorsRow>> = HashMap::new();
+    let mut authors_by_bibitem: HashMap<String, Vec<&BibitemAuthorsRow>> = HashMap::new();
     for row in author_rows {
         authors_by_bibitem
-            .entry(row.bibitem_id)
+            .entry(row.bibkey.clone())
             .or_default()
             .push(row);
     }
 
-    let mut keywords_by_bibitem: HashMap<i64, Vec<&BibitemKeywordsRow>> = HashMap::new();
+    let mut keywords_by_bibitem: HashMap<String, Vec<&BibitemKeywordsRow>> = HashMap::new();
     for row in keyword_rows {
         keywords_by_bibitem
-            .entry(row.bibitem_id)
+            .entry(row.bibkey.clone())
             .or_default()
             .push(row);
     }
 
     for bib in bibitems {
-        let bib_authors = authors_by_bibitem.get(&bib.id);
+        let bib_authors = authors_by_bibitem.get(&bib.bibkey);
         let author_ids = format_role_ids(bib_authors, AuthorRole::Author);
         let editor_ids = format_role_ids(bib_authors, AuthorRole::Editor);
         let guesteditor_ids = format_role_ids(bib_authors, AuthorRole::Guesteditor);
         let keyword_ids = keywords_by_bibitem
-            .get(&bib.id)
+            .get(&bib.bibkey)
             .map(|kw_rows| {
                 let mut ids: Vec<String> =
-                    kw_rows.iter().map(|r| r.keyword_id.to_string()).collect();
+                    kw_rows.iter().map(|r| r.keyword_key.to_string()).collect();
                 ids.sort();
                 ids.join(";")
             })
@@ -469,17 +469,17 @@ pub fn build_bibitem_id_rows(
             bib.title_unicode.clone().unwrap_or_default(),
             opt_str(&bib.booktitle_latex).to_string(),
             opt_str(&bib.booktitle_unicode).to_string(),
-            opt_i64(bib.crossref_id),
-            opt_i64(bib.journal_id),
+            opt_str(&bib.crossref).to_string(),
+            opt_str(&bib.journal_key).to_string(),
             opt_str(&bib.volume).to_string(),
             opt_str(&bib.number).to_string(),
             opt_str(&bib.pages).to_string(),
             opt_str(&bib.eid).to_string(),
-            opt_i64(bib.series_id),
+            opt_str(&bib.series_key).to_string(),
             opt_str(&bib.address).to_string(),
-            opt_i64(bib.institution_id),
-            opt_i64(bib.school_id),
-            opt_i64(bib.publisher_id),
+            opt_str(&bib.institution_key).to_string(),
+            opt_str(&bib.school_key).to_string(),
+            opt_str(&bib.publisher_key).to_string(),
             opt_str(&bib.type_field).to_string(),
             opt_str(&bib.edition).to_string(),
             opt_str(&bib.note_latex).to_string(),
@@ -512,14 +512,14 @@ pub fn build_bibitem_expanded_rows(
     bibitems: &[BibItem],
     author_rows: &[BibitemAuthorsRow],
     keyword_rows: &[BibitemKeywordsRow],
-    authors_map: &HashMap<i64, Author>,
-    journals_map: &HashMap<i64, Journal>,
-    publishers_map: &HashMap<i64, Publisher>,
-    institutions_map: &HashMap<i64, Institution>,
-    schools_map: &HashMap<i64, School>,
-    series_map: &HashMap<i64, Series>,
-    crossrefs_map: &HashMap<i64, BibItem>,
-    keywords_map: &HashMap<i64, Keyword>,
+    authors_map: &HashMap<String, Author>,
+    journals_map: &HashMap<String, Journal>,
+    publishers_map: &HashMap<String, Publisher>,
+    institutions_map: &HashMap<String, Institution>,
+    schools_map: &HashMap<String, School>,
+    series_map: &HashMap<String, Series>,
+    crossrefs_map: &HashMap<String, BibItem>,
+    keywords_map: &HashMap<String, Keyword>,
 ) -> Vec<Vec<String>> {
     let mut rows = Vec::with_capacity(bibitems.len() + 1);
     rows.push(
@@ -533,67 +533,73 @@ pub fn build_bibitem_expanded_rows(
         return rows;
     }
 
-    let mut authors_by_bibitem: HashMap<i64, Vec<&BibitemAuthorsRow>> = HashMap::new();
+    let mut authors_by_bibitem: HashMap<String, Vec<&BibitemAuthorsRow>> = HashMap::new();
     for row in author_rows {
         authors_by_bibitem
-            .entry(row.bibitem_id)
+            .entry(row.bibkey.clone())
             .or_default()
             .push(row);
     }
 
-    let mut keywords_by_bibitem: HashMap<i64, Vec<&BibitemKeywordsRow>> = HashMap::new();
+    let mut keywords_by_bibitem: HashMap<String, Vec<&BibitemKeywordsRow>> = HashMap::new();
     for row in keyword_rows {
         keywords_by_bibitem
-            .entry(row.bibitem_id)
+            .entry(row.bibkey.clone())
             .or_default()
             .push(row);
     }
 
     for bib in bibitems {
-        let bib_authors = authors_by_bibitem.get(&bib.id);
+        let bib_authors = authors_by_bibitem.get(&bib.bibkey);
 
         let author_col = format_role_names(bib_authors, AuthorRole::Author, authors_map);
         let editor_col = format_role_names(bib_authors, AuthorRole::Editor, authors_map);
         let guesteditor_col = format_role_names(bib_authors, AuthorRole::Guesteditor, authors_map);
 
         let journal_name = bib
-            .journal_id
-            .and_then(|id| journals_map.get(&id))
+            .journal_key
+            .as_deref()
+            .and_then(|k| journals_map.get(k))
             .map(|j| j.name_unicode.as_str())
             .unwrap_or("")
             .to_string();
         let publisher_name = bib
-            .publisher_id
-            .and_then(|id| publishers_map.get(&id))
+            .publisher_key
+            .as_deref()
+            .and_then(|k| publishers_map.get(k))
             .map(|p| p.name_unicode.as_str())
             .unwrap_or("")
             .to_string();
         let institution_name = bib
-            .institution_id
-            .and_then(|id| institutions_map.get(&id))
+            .institution_key
+            .as_deref()
+            .and_then(|k| institutions_map.get(k))
             .map(|i| i.name_unicode.as_str())
             .unwrap_or("")
             .to_string();
         let school_name = bib
-            .school_id
-            .and_then(|id| schools_map.get(&id))
+            .school_key
+            .as_deref()
+            .and_then(|k| schools_map.get(k))
             .map(|s| s.name_unicode.as_str())
             .unwrap_or("")
             .to_string();
         let series_name = bib
-            .series_id
-            .and_then(|id| series_map.get(&id))
+            .series_key
+            .as_deref()
+            .and_then(|k| series_map.get(k))
             .map(|s| s.name_unicode.as_str())
             .unwrap_or("")
             .to_string();
         let crossref_bibkey = bib
-            .crossref_id
-            .and_then(|id| crossrefs_map.get(&id))
+            .crossref
+            .as_deref()
+            .and_then(|k| crossrefs_map.get(k))
             .map(|b| b.bibkey.as_str())
             .unwrap_or("")
             .to_string();
 
-        let bib_keywords = keywords_by_bibitem.get(&bib.id);
+        let bib_keywords = keywords_by_bibitem.get(&bib.bibkey);
         let kw_level1 = format_keywords_at_level(bib_keywords, 1, keywords_map);
         let kw_level2 = format_keywords_at_level(bib_keywords, 2, keywords_map);
         let kw_level3 = format_keywords_at_level(bib_keywords, 3, keywords_map);
@@ -653,10 +659,10 @@ mod tests {
     use crate::domain::junctions::BibitemAuthorsRow;
     use chrono::Utc;
 
-    fn make_author(id: i64, family: &str, given: &str) -> Author {
+    fn make_author(key: &str, family: &str, given: &str) -> Author {
         Author {
-            id,
-            author_key: format!("key{id}"),
+            id: 1,
+            author_key: key.to_string(),
             family_name_latex: None,
             family_name_unicode: Some(family.to_string()),
             famous_name_latex: None,
@@ -676,15 +682,15 @@ mod tests {
     }
 
     fn make_row(
-        bibitem_id: i64,
-        author_id: i64,
+        bibkey: &str,
+        author_key: &str,
         role: &str,
         position: i16,
         name_variant_latex: Option<&str>,
     ) -> BibitemAuthorsRow {
         BibitemAuthorsRow {
-            bibitem_id,
-            author_id,
+            bibkey: bibkey.to_string(),
+            author_key: author_key.to_string(),
             role: role.to_string(),
             position,
             name_variant_latex: name_variant_latex.map(str::to_string),
@@ -694,12 +700,12 @@ mod tests {
 
     #[test]
     fn uses_name_variant_latex_when_present() {
-        let author = make_author(1, "Smith", "John");
-        let row = make_row(10, 1, "author", 1, Some("Schmidt, Hans"));
+        let author = make_author("key1", "Smith", "John");
+        let row = make_row("bib1", "key1", "author", 1, Some("Schmidt, Hans"));
 
         let rows = vec![&row];
         let mut map = HashMap::new();
-        map.insert(1, author);
+        map.insert("key1".to_string(), author);
 
         let result = format_role_names(Some(&rows), AuthorRole::Author, &map);
         assert_eq!(result, "Schmidt, Hans");
@@ -707,12 +713,12 @@ mod tests {
 
     #[test]
     fn falls_back_to_canonical_when_no_variant() {
-        let author = make_author(1, "Smith", "John");
-        let row = make_row(10, 1, "author", 1, None);
+        let author = make_author("key1", "Smith", "John");
+        let row = make_row("bib1", "key1", "author", 1, None);
 
         let rows = vec![&row];
         let mut map = HashMap::new();
-        map.insert(1, author);
+        map.insert("key1".to_string(), author);
 
         let result = format_role_names(Some(&rows), AuthorRole::Author, &map);
         assert_eq!(result, "Smith, John");
@@ -720,15 +726,15 @@ mod tests {
 
     #[test]
     fn mixed_variant_and_canonical() {
-        let a1 = make_author(1, "Smith", "John");
-        let a2 = make_author(2, "Müller", "Hans");
-        let row1 = make_row(10, 1, "author", 1, Some("Schmidt, Johann"));
-        let row2 = make_row(10, 2, "author", 2, None);
+        let a1 = make_author("key1", "Smith", "John");
+        let a2 = make_author("key2", "Müller", "Hans");
+        let row1 = make_row("bib1", "key1", "author", 1, Some("Schmidt, Johann"));
+        let row2 = make_row("bib1", "key2", "author", 2, None);
 
         let rows = vec![&row1, &row2];
         let mut map = HashMap::new();
-        map.insert(1, a1);
-        map.insert(2, a2);
+        map.insert("key1".to_string(), a1);
+        map.insert("key2".to_string(), a2);
 
         let result = format_role_names(Some(&rows), AuthorRole::Author, &map);
         assert_eq!(result, "Schmidt, Johann and Müller, Hans");
@@ -736,13 +742,13 @@ mod tests {
 
     #[test]
     fn mononym_used_when_no_variant() {
-        let mut author = make_author(1, "", "");
+        let mut author = make_author("key1", "", "");
         author.mononym_unicode = Some("Aristotle".to_string());
-        let row = make_row(10, 1, "author", 1, None);
+        let row = make_row("bib1", "key1", "author", 1, None);
 
         let rows = vec![&row];
         let mut map = HashMap::new();
-        map.insert(1, author);
+        map.insert("key1".to_string(), author);
 
         let result = format_role_names(Some(&rows), AuthorRole::Author, &map);
         assert_eq!(result, "Aristotle");
@@ -750,12 +756,12 @@ mod tests {
 
     #[test]
     fn filters_by_role() {
-        let author = make_author(1, "Smith", "John");
-        let row = make_row(10, 1, "editor", 1, Some("Smith, J."));
+        let author = make_author("key1", "Smith", "John");
+        let row = make_row("bib1", "key1", "editor", 1, Some("Smith, J."));
 
         let rows = vec![&row];
         let mut map = HashMap::new();
-        map.insert(1, author);
+        map.insert("key1".to_string(), author);
 
         let author_result = format_role_names(Some(&rows), AuthorRole::Author, &map);
         let editor_result = format_role_names(Some(&rows), AuthorRole::Editor, &map);
@@ -765,7 +771,7 @@ mod tests {
 
     #[test]
     fn empty_when_no_rows() {
-        let map: HashMap<i64, Author> = HashMap::new();
+        let map: HashMap<String, Author> = HashMap::new();
         let result = format_role_names(None, AuthorRole::Author, &map);
         assert_eq!(result, "");
     }

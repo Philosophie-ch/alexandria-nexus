@@ -72,8 +72,8 @@ pub trait BibitemJunctionStore: Send + Sync {
     /// Insert or update a bibitem-author junction record.
     fn insert_author_junction(
         &self,
-        bibitem_id: i64,
-        author_id: i64,
+        bibkey: &str,
+        author_key: &str,
         role: &AuthorRole,
         position: i16,
     ) -> impl Future<Output = Result<(), HexforgeError>> + Send;
@@ -81,60 +81,60 @@ pub trait BibitemJunctionStore: Send + Sync {
     /// Insert a bibitem-keyword junction record (no-op on conflict).
     fn insert_keyword_junction(
         &self,
-        bibitem_id: i64,
-        keyword_id: i64,
+        bibkey: &str,
+        keyword_key: &str,
         keyword_level: i16,
     ) -> impl Future<Output = Result<(), HexforgeError>> + Send;
 
-    /// Look up keyword levels for the given keyword IDs.
-    /// Returns pairs of (keyword_id, level).
+    /// Look up keyword levels for the given keyword keys.
+    /// Returns pairs of (keyword_key, level).
     fn find_keyword_levels(
         &self,
-        keyword_ids: &[i64],
-    ) -> impl Future<Output = Result<Vec<(i64, i16)>, HexforgeError>> + Send;
+        keyword_keys: &[String],
+    ) -> impl Future<Output = Result<Vec<(String, i16)>, HexforgeError>> + Send;
 }
 
-/// Contract for reference validation (checking that referenced IDs exist).
+/// Contract for reference validation (checking that referenced keys exist).
 pub trait ReferenceStore: Send + Sync {
-    fn find_missing_author_ids(
+    fn find_missing_author_keys(
         &self,
-        ids: &HashSet<i64>,
-    ) -> impl Future<Output = Result<Vec<i64>, HexforgeError>> + Send;
+        keys: &HashSet<String>,
+    ) -> impl Future<Output = Result<Vec<String>, HexforgeError>> + Send;
 
-    fn find_missing_journal_ids(
+    fn find_missing_journal_keys(
         &self,
-        ids: &HashSet<i64>,
-    ) -> impl Future<Output = Result<Vec<i64>, HexforgeError>> + Send;
+        keys: &HashSet<String>,
+    ) -> impl Future<Output = Result<Vec<String>, HexforgeError>> + Send;
 
-    fn find_missing_publisher_ids(
+    fn find_missing_publisher_keys(
         &self,
-        ids: &HashSet<i64>,
-    ) -> impl Future<Output = Result<Vec<i64>, HexforgeError>> + Send;
+        keys: &HashSet<String>,
+    ) -> impl Future<Output = Result<Vec<String>, HexforgeError>> + Send;
 
-    fn find_missing_institution_ids(
+    fn find_missing_institution_keys(
         &self,
-        ids: &HashSet<i64>,
-    ) -> impl Future<Output = Result<Vec<i64>, HexforgeError>> + Send;
+        keys: &HashSet<String>,
+    ) -> impl Future<Output = Result<Vec<String>, HexforgeError>> + Send;
 
-    fn find_missing_school_ids(
+    fn find_missing_school_keys(
         &self,
-        ids: &HashSet<i64>,
-    ) -> impl Future<Output = Result<Vec<i64>, HexforgeError>> + Send;
+        keys: &HashSet<String>,
+    ) -> impl Future<Output = Result<Vec<String>, HexforgeError>> + Send;
 
-    fn find_missing_series_ids(
+    fn find_missing_series_keys(
         &self,
-        ids: &HashSet<i64>,
-    ) -> impl Future<Output = Result<Vec<i64>, HexforgeError>> + Send;
+        keys: &HashSet<String>,
+    ) -> impl Future<Output = Result<Vec<String>, HexforgeError>> + Send;
 
-    fn find_missing_keyword_ids(
+    fn find_missing_keyword_keys(
         &self,
-        ids: &HashSet<i64>,
-    ) -> impl Future<Output = Result<Vec<i64>, HexforgeError>> + Send;
+        keys: &HashSet<String>,
+    ) -> impl Future<Output = Result<Vec<String>, HexforgeError>> + Send;
 
-    fn find_missing_bibitem_ids(
+    fn find_missing_bibitem_keys(
         &self,
-        ids: &HashSet<i64>,
-    ) -> impl Future<Output = Result<Vec<i64>, HexforgeError>> + Send;
+        keys: &HashSet<String>,
+    ) -> impl Future<Output = Result<Vec<String>, HexforgeError>> + Send;
 }
 
 // =============================================================================
@@ -1069,6 +1069,7 @@ pub async fn import_keywords(
                         continue;
                     }
                     let update_dto = UpdateKeyword {
+                        keyword_key: None,
                         name: Some(name.clone()),
                         level: Some(level),
                     };
@@ -1094,6 +1095,11 @@ pub async fn import_keywords(
                 None => {
                     // ID not in DB — create with this ID
                     let dto = CreateKeyword {
+                        keyword_key: format!(
+                            "{}:{}",
+                            level,
+                            crate::logic::full_import::generate_key(&name)
+                        ),
                         name: name.clone(),
                         level,
                     };
@@ -1122,6 +1128,11 @@ pub async fn import_keywords(
 
         // No ID — create normally
         let dto = CreateKeyword {
+            keyword_key: format!(
+                "{}:{}",
+                level,
+                crate::logic::full_import::generate_key(&name)
+            ),
             name: name.clone(),
             level,
         };
@@ -1275,39 +1286,22 @@ pub async fn import_bibitems(
         .collect();
     let parse_errors = parse_errors; // make immutable
 
-    // Collect all referenced IDs from valid rows
-    let mut all_author_ids: HashSet<i64> = HashSet::new();
-    let mut all_journal_ids: HashSet<i64> = HashSet::new();
-    let mut all_publisher_ids: HashSet<i64> = HashSet::new();
-    let mut all_institution_ids: HashSet<i64> = HashSet::new();
-    let mut all_school_ids: HashSet<i64> = HashSet::new();
-    let mut all_series_ids: HashSet<i64> = HashSet::new();
-    let mut all_keyword_ids: HashSet<i64> = HashSet::new();
-    let mut all_crossref_ids: HashSet<i64> = HashSet::new();
+    // Collect all referenced keys from valid rows
+    let mut all_author_keys: HashSet<String> = HashSet::new();
+    let all_journal_keys: HashSet<String> = HashSet::new();
+    let all_publisher_keys: HashSet<String> = HashSet::new();
+    let all_institution_keys: HashSet<String> = HashSet::new();
+    let all_school_keys: HashSet<String> = HashSet::new();
+    let all_series_keys: HashSet<String> = HashSet::new();
+    let mut all_keyword_keys: HashSet<String> = HashSet::new();
+    let all_crossref_keys: HashSet<String> = HashSet::new();
 
     for row in &valid_rows {
-        all_author_ids.extend(&row.author_ids);
-        all_author_ids.extend(&row.editor_ids);
-        all_author_ids.extend(&row.guesteditor_ids);
-        all_keyword_ids.extend(&row.keyword_ids);
-        if let Some(id) = row.dto.journal_id {
-            all_journal_ids.insert(id);
-        }
-        if let Some(id) = row.dto.publisher_id {
-            all_publisher_ids.insert(id);
-        }
-        if let Some(id) = row.dto.institution_id {
-            all_institution_ids.insert(id);
-        }
-        if let Some(id) = row.dto.school_id {
-            all_school_ids.insert(id);
-        }
-        if let Some(id) = row.dto.series_id {
-            all_series_ids.insert(id);
-        }
-        if let Some(id) = row.dto.crossref_id {
-            all_crossref_ids.insert(id);
-        }
+        all_author_keys.extend(row.author_keys.iter().cloned());
+        all_author_keys.extend(row.editor_keys.iter().cloned());
+        all_author_keys.extend(row.guesteditor_keys.iter().cloned());
+        all_keyword_keys.extend(row.keyword_keys.iter().cloned());
+        // FK fields (journal_key, publisher_key, etc.) validated via FK constraints at insert time
     }
 
     // If there were parse errors, return them without inserting
@@ -1331,17 +1325,17 @@ pub async fn import_bibitems(
         }));
     }
 
-    // Phase 2: Batch-check all referenced IDs exist
+    // Phase 2: Batch-check all referenced keys exist
     let missing = check_all_references(
         ref_store,
-        &all_author_ids,
-        &all_journal_ids,
-        &all_publisher_ids,
-        &all_institution_ids,
-        &all_school_ids,
-        &all_series_ids,
-        &all_keyword_ids,
-        &all_crossref_ids,
+        &all_author_keys,
+        &all_journal_keys,
+        &all_publisher_keys,
+        &all_institution_keys,
+        &all_school_keys,
+        &all_series_keys,
+        &all_keyword_keys,
+        &all_crossref_keys,
     )
     .await?;
 
@@ -1355,8 +1349,8 @@ pub async fn import_bibitems(
     let mut insert_errors = Vec::new();
 
     for row in &parsed_rows {
-        // Determine the bibitem ID: update existing, insert-with-id, or insert new
-        let (bibitem_id, is_update) = if let Some(id) = row.source_id {
+        // Determine if this is an insert or update; perform the bibitem upsert
+        let is_update = if let Some(id) = row.source_id {
             match bibitem_ds.find_by_id(&id).await {
                 Ok(Some(existing)) => {
                     if existing.bibkey != row.bibkey {
@@ -1374,7 +1368,7 @@ pub async fn import_bibitems(
                     let merged =
                         update_bib_item_transform(build_bibitem_update_dto(&row.dto), existing);
                     match bibitem_ds.update(&id, merged).await {
-                        Ok(Some(_)) => (id, true),
+                        Ok(Some(_)) => true,
                         Ok(None) => {
                             insert_errors.push(ImportRowError {
                                 row: row.row_num,
@@ -1398,7 +1392,7 @@ pub async fn import_bibitems(
                     let mut bibitem = create_bib_item_transform(row.dto.clone());
                     bibitem.id = id;
                     match bibitem_ds.insert_with_id(bibitem).await {
-                        Ok(inserted) => (inserted.id, false),
+                        Ok(_) => false,
                         Err(e) => {
                             insert_errors.push(ImportRowError {
                                 row: row.row_num,
@@ -1422,7 +1416,7 @@ pub async fn import_bibitems(
             // No input ID — insert normally
             let bibitem = create_bib_item_transform(row.dto.clone());
             match bibitem_ds.insert(bibitem).await {
-                Ok(inserted) => (inserted.id, false),
+                Ok(_) => false,
                 Err(e) => {
                     insert_errors.push(ImportRowError {
                         row: row.row_num,
@@ -1437,8 +1431,8 @@ pub async fn import_bibitems(
         // Insert/re-insert junction data
         if let Err(e) = insert_bibitem_authors(
             junction_store,
-            bibitem_id,
-            &row.author_ids,
+            &row.bibkey,
+            &row.author_keys,
             AuthorRole::Author,
         )
         .await
@@ -1452,8 +1446,8 @@ pub async fn import_bibitems(
         }
         if let Err(e) = insert_bibitem_authors(
             junction_store,
-            bibitem_id,
-            &row.editor_ids,
+            &row.bibkey,
+            &row.editor_keys,
             AuthorRole::Editor,
         )
         .await
@@ -1467,8 +1461,8 @@ pub async fn import_bibitems(
         }
         if let Err(e) = insert_bibitem_authors(
             junction_store,
-            bibitem_id,
-            &row.guesteditor_ids,
+            &row.bibkey,
+            &row.guesteditor_keys,
             AuthorRole::Guesteditor,
         )
         .await
@@ -1480,7 +1474,8 @@ pub async fn import_bibitems(
             });
             continue;
         }
-        if let Err(e) = insert_bibitem_keywords(junction_store, bibitem_id, &row.keyword_ids).await
+        if let Err(e) =
+            insert_bibitem_keywords(junction_store, &row.bibkey, &row.keyword_keys).await
         {
             insert_errors.push(ImportRowError {
                 row: row.row_num,
@@ -1510,18 +1505,18 @@ pub async fn import_bibitems(
 // Reference checking
 // =============================================================================
 
-/// Check all referenced IDs exist, returning any missing ones.
+/// Check all referenced keys exist, returning any missing ones.
 #[allow(clippy::too_many_arguments)]
 async fn check_all_references(
     ref_store: &impl ReferenceStore,
-    author_ids: &HashSet<i64>,
-    journal_ids: &HashSet<i64>,
-    publisher_ids: &HashSet<i64>,
-    institution_ids: &HashSet<i64>,
-    school_ids: &HashSet<i64>,
-    series_ids: &HashSet<i64>,
-    keyword_ids: &HashSet<i64>,
-    crossref_ids: &HashSet<i64>,
+    author_keys: &HashSet<String>,
+    journal_keys: &HashSet<String>,
+    publisher_keys: &HashSet<String>,
+    institution_keys: &HashSet<String>,
+    school_keys: &HashSet<String>,
+    series_keys: &HashSet<String>,
+    keyword_keys: &HashSet<String>,
+    crossref_keys: &HashSet<String>,
 ) -> Result<MissingReferencesError, HexforgeError> {
     let (
         missing_authors,
@@ -1533,27 +1528,27 @@ async fn check_all_references(
         missing_keywords,
         missing_crossrefs,
     ) = tokio::try_join!(
-        ref_store.find_missing_author_ids(author_ids),
-        ref_store.find_missing_journal_ids(journal_ids),
-        ref_store.find_missing_publisher_ids(publisher_ids),
-        ref_store.find_missing_institution_ids(institution_ids),
-        ref_store.find_missing_school_ids(school_ids),
-        ref_store.find_missing_series_ids(series_ids),
-        ref_store.find_missing_keyword_ids(keyword_ids),
-        ref_store.find_missing_bibitem_ids(crossref_ids),
+        ref_store.find_missing_author_keys(author_keys),
+        ref_store.find_missing_journal_keys(journal_keys),
+        ref_store.find_missing_publisher_keys(publisher_keys),
+        ref_store.find_missing_institution_keys(institution_keys),
+        ref_store.find_missing_school_keys(school_keys),
+        ref_store.find_missing_series_keys(series_keys),
+        ref_store.find_missing_keyword_keys(keyword_keys),
+        ref_store.find_missing_bibitem_keys(crossref_keys),
     )?;
 
     Ok(MissingReferencesError {
         error: "missing_references",
         message: "Some referenced entities were not found",
-        missing_author_ids: missing_authors,
-        missing_journal_ids: missing_journals,
-        missing_publisher_ids: missing_publishers,
-        missing_institution_ids: missing_institutions,
-        missing_school_ids: missing_schools,
-        missing_series_ids: missing_series,
-        missing_keyword_ids: missing_keywords,
-        missing_crossref_ids: missing_crossrefs,
+        missing_author_keys: missing_authors,
+        missing_journal_keys: missing_journals,
+        missing_publisher_keys: missing_publishers,
+        missing_institution_keys: missing_institutions,
+        missing_school_keys: missing_schools,
+        missing_series_keys: missing_series,
+        missing_keyword_keys: missing_keywords,
+        missing_crossref_keys: missing_crossrefs,
     })
 }
 
@@ -1564,18 +1559,18 @@ async fn check_all_references(
 /// Insert bibitem-author junction records via the junction store.
 async fn insert_bibitem_authors(
     junction_store: &impl BibitemJunctionStore,
-    bibitem_id: i64,
-    author_ids: &[i64],
+    bibkey: &str,
+    author_keys: &[String],
     role: AuthorRole,
 ) -> Result<(), HexforgeError> {
-    for (position, &author_id) in author_ids.iter().enumerate() {
+    for (position, author_key) in author_keys.iter().enumerate() {
         let pos = i16::try_from(position).map_err(|_| {
             HexforgeError::Validation(ValidationError::custom(format!(
                 "author position {position} exceeds i16 range"
             )))
         })?;
         junction_store
-            .insert_author_junction(bibitem_id, author_id, &role, pos)
+            .insert_author_junction(bibkey, author_key, &role, pos)
             .await?;
     }
     Ok(())
@@ -1585,19 +1580,19 @@ async fn insert_bibitem_authors(
 /// Keywords are looked up to determine their level.
 async fn insert_bibitem_keywords(
     junction_store: &impl BibitemJunctionStore,
-    bibitem_id: i64,
-    keyword_ids: &[i64],
+    bibkey: &str,
+    keyword_keys: &[String],
 ) -> Result<(), HexforgeError> {
-    if keyword_ids.is_empty() {
+    if keyword_keys.is_empty() {
         return Ok(());
     }
 
     // Fetch keyword levels via the junction store
-    let kw_levels = junction_store.find_keyword_levels(keyword_ids).await?;
+    let kw_levels = junction_store.find_keyword_levels(keyword_keys).await?;
 
-    for (kw_id, level) in &kw_levels {
+    for (kw_key, level) in &kw_levels {
         junction_store
-            .insert_keyword_junction(bibitem_id, *kw_id, *level)
+            .insert_keyword_junction(bibkey, kw_key, *level)
             .await?;
     }
 
@@ -1612,18 +1607,18 @@ async fn insert_bibitem_keywords(
 pub trait BibitemRefsStore: Send + Sync {
     fn insert_bibitem_ref(
         &self,
-        source_id: i64,
-        target_id: i64,
+        source_key: &str,
+        target_key: &str,
         ref_type: &str,
     ) -> impl Future<Output = Result<(), HexforgeError>> + Send;
 }
 
 /// Import bibitem refs from parsed rows.
 ///
-/// All referenced bibitem IDs must exist; returns a validation error listing any that are missing.
+/// All referenced bibitem keys must exist; returns a validation error listing any that are missing.
 pub async fn import_bibitem_refs(
     refs_store: &impl BibitemRefsStore,
-    id_store: &impl ReferenceStore,
+    key_store: &impl ReferenceStore,
     rows: Vec<ParsedBibitemRefRow>,
     errors: Vec<ImportRowError>,
 ) -> Result<ImportResponse, HexforgeError> {
@@ -1636,15 +1631,15 @@ pub async fn import_bibitem_refs(
         });
     }
 
-    let all_ids: HashSet<i64> = rows
+    let all_keys: HashSet<String> = rows
         .iter()
-        .flat_map(|r| [r.source_id, r.target_id])
+        .flat_map(|r| [r.source_key.clone(), r.target_key.clone()])
         .collect();
-    if !all_ids.is_empty() {
-        let missing = id_store.find_missing_bibitem_ids(&all_ids).await?;
+    if !all_keys.is_empty() {
+        let missing = key_store.find_missing_bibitem_keys(&all_keys).await?;
         if !missing.is_empty() {
             return Err(HexforgeError::Validation(ValidationError::custom(format!(
-                "missing bibitem IDs: {missing:?}"
+                "missing bibitem keys: {missing:?}"
             ))));
         }
     }
@@ -1652,7 +1647,7 @@ pub async fn import_bibitem_refs(
     let total = rows.len();
     for row in &rows {
         refs_store
-            .insert_bibitem_ref(row.source_id, row.target_id, &row.ref_type)
+            .insert_bibitem_ref(&row.source_key, &row.target_key, &row.ref_type)
             .await?;
     }
 
@@ -1682,17 +1677,16 @@ pub struct BibitemNotesData<'a> {
 pub trait BibitemNotesStore: Send + Sync {
     fn upsert_bibitem_notes(
         &self,
-        bibitem_id: i64,
+        bibkey: &str,
         notes: &BibitemNotesData<'_>,
     ) -> impl Future<Output = Result<(), HexforgeError>> + Send;
 }
 
 /// Import bibitem notes from parsed rows.
 ///
-/// Notes are upserted by `bibitem_id`. All bibitem IDs must exist.
+/// Notes are upserted by `bibkey`.
 pub async fn import_bibitem_notes(
     notes_store: &impl BibitemNotesStore,
-    id_store: &impl ReferenceStore,
     rows: Vec<ParsedBibitemNotesRow>,
     errors: Vec<ImportRowError>,
 ) -> Result<ImportResponse, HexforgeError> {
@@ -1705,21 +1699,11 @@ pub async fn import_bibitem_notes(
         });
     }
 
-    let all_ids: HashSet<i64> = rows.iter().map(|r| r.bibitem_id).collect();
-    if !all_ids.is_empty() {
-        let missing = id_store.find_missing_bibitem_ids(&all_ids).await?;
-        if !missing.is_empty() {
-            return Err(HexforgeError::Validation(ValidationError::custom(format!(
-                "missing bibitem IDs: {missing:?}"
-            ))));
-        }
-    }
-
     let total = rows.len();
     for row in &rows {
         notes_store
             .upsert_bibitem_notes(
-                row.bibitem_id,
+                &row.bibkey,
                 &BibitemNotesData {
                     note_perso: row.note_perso.as_deref(),
                     note_stock: row.note_stock.as_deref(),

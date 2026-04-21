@@ -8,23 +8,23 @@ use serde::Deserialize;
 /// Query parameters for filtering bib_item results.
 ///
 /// Supported filters:
-/// - `author_id` — raw SQL filter
+/// - `author_key` — raw SQL filter
 /// - `entry_type` — exact match on `entry_type::entry_type`
 /// - `epoch` — exact match on `epoch::epoch`
-/// - `journal_id` — exact match on `journal_id`
+/// - `journal_key` — exact match on `journal_key`
 /// - `search_term` — LIKE on `title_unicode`
 /// - `year_from` — >= on `date_year`
 /// - `year_to` — <= on `date_year`
 #[derive(Filter, Debug, Default, Deserialize)]
 pub struct BibItemQuery {
-    #[query(raw = "id IN (SELECT bibitem_id FROM bibitem_authors WHERE author_id = $)")]
-    pub author_id: Option<i64>,
+    #[query(raw = "bibkey IN (SELECT bibkey FROM bibitem_authors WHERE author_key = $)")]
+    pub author_key: Option<i64>,
     #[query(eq_cast = "entry_type::entry_type")]
     pub entry_type: Option<String>,
     #[query(eq_cast = "epoch::epoch")]
     pub epoch: Option<String>,
-    #[query(eq = "journal_id")]
-    pub journal_id: Option<i64>,
+    #[query(eq = "journal_key")]
+    pub journal_key: Option<i64>,
     #[query(like = "title_unicode")]
     pub search_term: Option<String>,
     #[query(gte = "date_year")]

@@ -78,49 +78,20 @@ impl EntityWithKey for Series {
     }
 }
 
-/// Trait to extract the id for batch fetching into a HashMap.
-trait EntityWithId {
-    fn entity_id(&self) -> i64;
-}
-
-impl EntityWithId for Author {
+impl EntityWithKey for Keyword {
     fn entity_id(&self) -> i64 {
         self.id
     }
+    fn key_value(&self) -> &str {
+        &self.keyword_key
+    }
 }
-impl EntityWithId for Journal {
+impl EntityWithKey for BibItem {
     fn entity_id(&self) -> i64 {
         self.id
     }
-}
-impl EntityWithId for Publisher {
-    fn entity_id(&self) -> i64 {
-        self.id
-    }
-}
-impl EntityWithId for Institution {
-    fn entity_id(&self) -> i64 {
-        self.id
-    }
-}
-impl EntityWithId for School {
-    fn entity_id(&self) -> i64 {
-        self.id
-    }
-}
-impl EntityWithId for Series {
-    fn entity_id(&self) -> i64 {
-        self.id
-    }
-}
-impl EntityWithId for Keyword {
-    fn entity_id(&self) -> i64 {
-        self.id
-    }
-}
-impl EntityWithId for BibItem {
-    fn entity_id(&self) -> i64 {
-        self.id
+    fn key_value(&self) -> &str {
+        &self.bibkey
     }
 }
 
@@ -287,36 +258,98 @@ where
 }
 
 // =============================================================================
-// PgEntityBatchFetcher — batch fetch by IDs into HashMap
+// EntityBatchFetcher implementation on PgKeyedEntityFetcher
 // =============================================================================
 
-/// Postgres implementation of [`EntityBatchFetcher`].
+impl<T, Q> EntityBatchFetcher<T> for PgKeyedEntityFetcher<'_, T, Q>
+where
+    T: hexforge::PgEntity
+        + Clone
+        + EntityWithKey
+        + Send
+        + Sync
+        + Unpin
+        + for<'r> hexforge::db_exports::FromRow<'r, hexforge::db_exports::PgRow>,
+    Q: hexforge::PgQuery + 'static,
+{
+    async fn fetch_map(&self, keys: &HashSet<String>) -> Result<HashMap<String, T>, ExportError> {
+        if keys.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let key_vec: Vec<String> = keys.iter().cloned().collect();
+        let sql = format!(
+            "SELECT * FROM {} WHERE {} = ANY($1)",
+            self.table, self.key_column
+        );
+        let entities: Vec<T> = query_as::<_, T>(&sql)
+            .bind(&key_vec)
+            .fetch_all(self.pool)
+            .await
+            .map_err(|e| ExportError::Internal(HexforgeError::data_source(e)))?;
+        Ok(entities
+            .into_iter()
+            .map(|e| (e.key_value().to_string(), e))
+            .collect())
+    }
+}
+
+// =============================================================================
+// PgEntityBatchFetcher — batch fetch by string keys into HashMap
+// =============================================================================
+
+/// Postgres implementation of [`EntityBatchFetcher`] that fetches by a key column.
 pub struct PgEntityBatchFetcher<'a, T: hexforge::PgEntity, Q> {
-    ds: &'a DataStore<T, Q>,
+    _ds: &'a DataStore<T, Q>,
+    key_column: &'static str,
+    table: &'static str,
+    pool: &'a PgPool,
 }
 
 impl<'a, T: hexforge::PgEntity, Q> PgEntityBatchFetcher<'a, T, Q> {
-    pub fn new(ds: &'a DataStore<T, Q>) -> Self {
-        Self { ds }
+    pub fn new(
+        ds: &'a DataStore<T, Q>,
+        key_column: &'static str,
+        table: &'static str,
+        pool: &'a PgPool,
+    ) -> Self {
+        Self {
+            _ds: ds,
+            key_column,
+            table,
+            pool,
+        }
     }
 }
 
 impl<T, Q> EntityBatchFetcher<T> for PgEntityBatchFetcher<'_, T, Q>
 where
-    T: hexforge::PgEntity + Clone + EntityWithId + Send + Sync + Unpin,
+    T: hexforge::PgEntity
+        + Clone
+        + EntityWithKey
+        + Send
+        + Sync
+        + Unpin
+        + for<'r> hexforge::db_exports::FromRow<'r, hexforge::db_exports::PgRow>,
     Q: hexforge::PgQuery + 'static,
 {
-    async fn fetch_map(&self, ids: &HashSet<i64>) -> Result<HashMap<i64, T>, ExportError> {
-        if ids.is_empty() {
+    async fn fetch_map(&self, keys: &HashSet<String>) -> Result<HashMap<String, T>, ExportError> {
+        if keys.is_empty() {
             return Ok(HashMap::new());
         }
-        let id_vec: Vec<i64> = ids.iter().copied().collect();
-        let entities = self
-            .ds
-            .find_by_ids(&id_vec)
+        let key_vec: Vec<String> = keys.iter().cloned().collect();
+        let sql = format!(
+            "SELECT * FROM {} WHERE {} = ANY($1)",
+            self.table, self.key_column
+        );
+        let entities: Vec<T> = query_as::<_, T>(&sql)
+            .bind(&key_vec)
+            .fetch_all(self.pool)
             .await
-            .map_err(HexforgeError::data_source)?;
-        Ok(entities.into_iter().map(|e| (e.entity_id(), e)).collect())
+            .map_err(|e| ExportError::Internal(HexforgeError::data_source(e)))?;
+        Ok(entities
+            .into_iter()
+            .map(|e| (e.key_value().to_string(), e))
+            .collect())
     }
 }
 

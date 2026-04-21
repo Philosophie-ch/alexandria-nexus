@@ -58,14 +58,14 @@ pub trait EntityLookup: Send + Sync {
     fn batch_lookup_named_entity(
         &self,
         entity: NamedEntity,
-    ) -> impl Future<Output = Result<HashMap<String, i64>, HexforgeError>> + Send;
+    ) -> impl Future<Output = Result<HashMap<String, String>, HexforgeError>> + Send;
 }
 
 /// Contract for batch-looking up keywords by (name, level).
 pub trait KeywordLookup: Send + Sync {
     fn batch_lookup_keywords(
         &self,
-    ) -> impl Future<Output = Result<HashMap<(String, i16), i64>, HexforgeError>> + Send;
+    ) -> impl Future<Output = Result<HashMap<(String, i16), String>, HexforgeError>> + Send;
 }
 
 /// Contract for fetching all existing bibkeys.
@@ -126,26 +126,26 @@ pub trait BibitemFetcher: Send + Sync {
     ) -> impl Future<Output = Result<Vec<BibItem>, HexforgeError>> + Send;
 }
 
-/// Contract for fetching author display names (id -> name string).
+/// Contract for fetching author display names (author_key -> name string).
 pub trait AuthorNameFetcher: Send + Sync {
     fn fetch_author_names(
         &self,
-    ) -> impl Future<Output = Result<HashMap<i64, String>, HexforgeError>> + Send;
+    ) -> impl Future<Output = Result<HashMap<String, String>, HexforgeError>> + Send;
 }
 
-/// Contract for fetching reverse name maps (id -> name_latex) for entity tables.
+/// Contract for fetching reverse name maps (entity_key -> name_latex) for entity tables.
 pub trait ReverseNameMapFetcher: Send + Sync {
     fn fetch_entity_name_map(
         &self,
         entity: NamedEntity,
-    ) -> impl Future<Output = Result<HashMap<i64, String>, HexforgeError>> + Send;
+    ) -> impl Future<Output = Result<HashMap<String, String>, HexforgeError>> + Send;
 }
 
-/// Contract for fetching keyword names (id -> (name, level)).
+/// Contract for fetching keyword names (keyword_key -> (name, level)).
 pub trait KeywordNameFetcher: Send + Sync {
     fn fetch_keyword_names(
         &self,
-    ) -> impl Future<Output = Result<HashMap<i64, (String, i16)>, HexforgeError>> + Send;
+    ) -> impl Future<Output = Result<HashMap<String, (String, i16)>, HexforgeError>> + Send;
 }
 
 /// Contract for batch-fetching junction data for export.
@@ -164,7 +164,7 @@ pub trait JunctionFetcher: Send + Sync {
 pub trait BibitemNotesFetcher: Send + Sync {
     fn fetch_all_bibitem_notes(
         &self,
-    ) -> impl Future<Output = Result<HashMap<i64, BibitemNotes>, HexforgeError>> + Send;
+    ) -> impl Future<Output = Result<HashMap<String, BibitemNotes>, HexforgeError>> + Send;
 }
 
 // =============================================================================
@@ -404,7 +404,9 @@ async fn create_keyword(
     level: i16,
     ds: &impl DataSource<crate::domain::Keyword, Id = i64, Error = hexforge::DataSourceError>,
 ) -> Result<(), String> {
+    let keyword_key = format!("{}:{}", level, generate_key(name));
     let dto = CreateKeyword {
+        keyword_key,
         name: name.to_string(),
         level,
     };
@@ -508,16 +510,14 @@ pub async fn import_bibitems(
             .await?;
     }
 
-    // 8. Bulk insert all bibitems, get back (id, bibkey) pairs
+    // 8. Bulk insert all bibitems
     let entities: Vec<BibItem> = entities_with_flags.into_iter().map(|(_, e)| e).collect();
-    let inserted_ids = bulk_inserter.bulk_insert_bibitems(&entities).await?;
-    let bibkey_to_id: HashMap<String, i64> =
-        inserted_ids.into_iter().map(|(id, bk)| (bk, id)).collect();
+    let _inserted_ids = bulk_inserter.bulk_insert_bibitems(&entities).await?;
 
     // 9. Collect junction rows and bulk insert
-    let author_rows = collect_author_junction_rows(&parsed_rows, &bibkey_to_id, &ctx);
-    let keyword_rows = collect_keyword_junction_rows(&parsed_rows, &bibkey_to_id, &ctx);
-    let ref_rows = collect_ref_rows(&parsed_rows, &bibkey_to_id);
+    let author_rows = collect_author_junction_rows(&parsed_rows, &ctx);
+    let keyword_rows = collect_keyword_junction_rows(&parsed_rows, &ctx);
+    let ref_rows = collect_ref_rows(&parsed_rows);
 
     bulk_junction
         .bulk_insert_author_junctions(&author_rows)
@@ -536,10 +536,10 @@ pub async fn import_bibitems(
             || row.change_request.is_some()
             || row.dltc_copyediting_note.is_some()
             || row.todo_general.is_some();
-        if has_notes && let Some(&bibitem_id) = bibkey_to_id.get(&row.bibkey) {
+        if has_notes {
             notes_store
                 .upsert_bibitem_notes(
-                    bibitem_id,
+                    &row.bibkey,
                     &BibitemNotesData {
                         note_perso: row.note_perso.as_deref(),
                         note_stock: row.note_stock.as_deref(),
@@ -666,14 +666,20 @@ pub async fn fetch_export_rows(
         .fetch_bibitem_keywords_batch(&bib_ids)
         .await?;
 
-    // Index junction data by bibitem_id
-    let mut authors_by_bib: HashMap<i64, Vec<&BibitemAuthorsRow>> = HashMap::new();
+    // Index junction data by bibkey
+    let mut authors_by_bib: HashMap<String, Vec<&BibitemAuthorsRow>> = HashMap::new();
     for row in &bib_authors {
-        authors_by_bib.entry(row.bibitem_id).or_default().push(row);
+        authors_by_bib
+            .entry(row.bibkey.clone())
+            .or_default()
+            .push(row);
     }
-    let mut keywords_by_bib: HashMap<i64, Vec<&BibitemKeywordsRow>> = HashMap::new();
+    let mut keywords_by_bib: HashMap<String, Vec<&BibitemKeywordsRow>> = HashMap::new();
     for row in &bib_keywords {
-        keywords_by_bib.entry(row.bibitem_id).or_default().push(row);
+        keywords_by_bib
+            .entry(row.bibkey.clone())
+            .or_default()
+            .push(row);
     }
 
     let notes_by_bib = notes_fetcher.fetch_all_bibitem_notes().await?;

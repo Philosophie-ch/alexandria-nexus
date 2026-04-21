@@ -60,6 +60,7 @@ mod tests {
     #[test]
     fn test_valid_level_1_keyword() {
         let input = CreateKeyword {
+            keyword_key: "1:Philosophy".to_string(),
             name: "Philosophy".to_string(),
             level: 1,
         };
@@ -69,6 +70,7 @@ mod tests {
     #[test]
     fn test_valid_level_3_keyword() {
         let input = CreateKeyword {
+            keyword_key: "3:Metaethics".to_string(),
             name: "Metaethics".to_string(),
             level: 3,
         };
@@ -78,6 +80,7 @@ mod tests {
     #[test]
     fn test_invalid_level_zero() {
         let input = CreateKeyword {
+            keyword_key: "0:Test".to_string(),
             name: "Test".to_string(),
             level: 0,
         };
@@ -87,6 +90,7 @@ mod tests {
     #[test]
     fn test_invalid_level_four() {
         let input = CreateKeyword {
+            keyword_key: "4:Test".to_string(),
             name: "Test".to_string(),
             level: 4,
         };
@@ -96,6 +100,7 @@ mod tests {
     #[test]
     fn test_empty_name() {
         let input = CreateKeyword {
+            keyword_key: "1:".to_string(),
             name: String::new(),
             level: 1,
         };
@@ -105,6 +110,7 @@ mod tests {
     #[test]
     fn test_whitespace_only_name() {
         let input = CreateKeyword {
+            keyword_key: "1:   ".to_string(),
             name: "   ".to_string(),
             level: 1,
         };
@@ -114,6 +120,7 @@ mod tests {
     #[test]
     fn test_update_empty_name() {
         let input = UpdateKeyword {
+            keyword_key: None,
             name: Some(String::new()),
             level: None,
         };
@@ -123,6 +130,7 @@ mod tests {
     #[test]
     fn test_update_invalid_level() {
         let input = UpdateKeyword {
+            keyword_key: None,
             name: None,
             level: Some(5),
         };
@@ -132,6 +140,7 @@ mod tests {
     #[test]
     fn test_update_valid() {
         let input = UpdateKeyword {
+            keyword_key: None,
             name: Some("Western Philosophy".to_string()),
             level: None,
         };

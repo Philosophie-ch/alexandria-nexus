@@ -153,7 +153,7 @@ pub fn author_sort_key(authors: &[AuthorName]) -> String {
 pub fn extract_role_authors(
     bib_authors: Option<&Vec<&BibitemAuthorsRow>>,
     role: AuthorRole,
-    authors_map: &HashMap<i64, Author>,
+    authors_map: &HashMap<String, Author>,
 ) -> Vec<AuthorName> {
     let role_str = role.to_string();
     bib_authors
@@ -167,7 +167,7 @@ pub fn extract_role_authors(
             filtered
                 .iter()
                 .filter_map(|r| {
-                    authors_map.get(&r.author_id).map(|a| AuthorName {
+                    authors_map.get(&r.author_key).map(|a| AuthorName {
                         family: a.family_name_unicode.clone(),
                         given: a.given_name_unicode.clone(),
                         mononym: a.mononym_unicode.clone(),
@@ -216,23 +216,23 @@ mod tests {
             title_unicode: Some(title.to_string()),
             booktitle_latex: None,
             booktitle_unicode: None,
-            journal_id: None,
-            publisher_id: None,
+            journal_key: None,
+            publisher_key: None,
             address: None,
             volume: None,
             number: None,
             pages: None,
             eid: None,
-            series_id: None,
+            series_key: None,
             edition: None,
-            institution_id: None,
-            school_id: None,
+            institution_key: None,
+            school_key: None,
             type_field: None,
             doi: None,
             url: None,
             eprint: None,
             urn: None,
-            crossref_id: None,
+            crossref: None,
             issuetitle_latex: None,
             issuetitle_unicode: None,
             note_latex: None,
@@ -244,7 +244,7 @@ mod tests {
             epoch: None,
             options: None,
             shorthand: None,
-            person_id: None,
+            person_key: None,
             has_fulltext: false,
             fulltext_path: None,
             created_at: Utc::now(),

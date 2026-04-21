@@ -265,7 +265,6 @@ pub async fn import_bibitem_notes(
     let data = extract_csv_bytes(multipart).await?;
     let (rows, errors) = parse_bibitem_notes_csv(&data)?;
     let notes_store = PgBibitemNotesStore::new(state.pool.pool());
-    let id_store = PgReferenceStore::new(state.pool.pool());
-    let result = import::import_bibitem_notes(&notes_store, &id_store, rows, errors).await?;
+    let result = import::import_bibitem_notes(&notes_store, rows, errors).await?;
     Ok(Json(result))
 }

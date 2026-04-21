@@ -61,13 +61,13 @@ pub trait KeyedEntityFetcher<T>: Send + Sync {
     ) -> impl Future<Output = Result<Vec<T>, ExportError>> + Send;
 }
 
-/// Contract for fetching entities by IDs into a HashMap keyed by entity ID.
+/// Contract for fetching entities by keys into a HashMap keyed by entity key.
 pub trait EntityBatchFetcher<T>: Send + Sync {
-    /// Batch-fetch entities by IDs, returning a map of id -> entity.
+    /// Batch-fetch entities by keys, returning a map of key -> entity.
     fn fetch_map(
         &self,
-        ids: &HashSet<i64>,
-    ) -> impl Future<Output = Result<HashMap<i64, T>, ExportError>> + Send;
+        keys: &HashSet<String>,
+    ) -> impl Future<Output = Result<HashMap<String, T>, ExportError>> + Send;
 }
 
 /// Contract for fetching bibitem junction data (authors and keywords).
@@ -313,31 +313,31 @@ async fn assemble_bibitem_expanded_rows(
 
     let bibitem_ids: Vec<i64> = bibitems.iter().map(|b| b.id).collect();
 
-    let mut journal_ids = HashSet::new();
-    let mut publisher_ids = HashSet::new();
-    let mut institution_ids = HashSet::new();
-    let mut school_ids = HashSet::new();
-    let mut series_ids = HashSet::new();
-    let mut crossref_ids = HashSet::new();
+    let mut journal_keys = HashSet::new();
+    let mut publisher_keys = HashSet::new();
+    let mut institution_keys = HashSet::new();
+    let mut school_keys = HashSet::new();
+    let mut series_keys = HashSet::new();
+    let mut crossref_keys = HashSet::new();
 
     for bib in bibitems {
-        if let Some(id) = bib.journal_id {
-            journal_ids.insert(id);
+        if let Some(ref k) = bib.journal_key {
+            journal_keys.insert(k.clone());
         }
-        if let Some(id) = bib.publisher_id {
-            publisher_ids.insert(id);
+        if let Some(ref k) = bib.publisher_key {
+            publisher_keys.insert(k.clone());
         }
-        if let Some(id) = bib.institution_id {
-            institution_ids.insert(id);
+        if let Some(ref k) = bib.institution_key {
+            institution_keys.insert(k.clone());
         }
-        if let Some(id) = bib.school_id {
-            school_ids.insert(id);
+        if let Some(ref k) = bib.school_key {
+            school_keys.insert(k.clone());
         }
-        if let Some(id) = bib.series_id {
-            series_ids.insert(id);
+        if let Some(ref k) = bib.series_key {
+            series_keys.insert(k.clone());
         }
-        if let Some(id) = bib.crossref_id {
-            crossref_ids.insert(id);
+        if let Some(ref k) = bib.crossref {
+            crossref_keys.insert(k.clone());
         }
     }
 
@@ -364,20 +364,22 @@ async fn assemble_bibitem_expanded_rows(
                 .await
                 .map_err(ExportError::from)
         },
-        journal_batch.fetch_map(&journal_ids),
-        publisher_batch.fetch_map(&publisher_ids),
-        institution_batch.fetch_map(&institution_ids),
-        school_batch.fetch_map(&school_ids),
-        series_batch.fetch_map(&series_ids),
-        bibitem_batch.fetch_map(&crossref_ids),
+        journal_batch.fetch_map(&journal_keys),
+        publisher_batch.fetch_map(&publisher_keys),
+        institution_batch.fetch_map(&institution_keys),
+        school_batch.fetch_map(&school_keys),
+        series_batch.fetch_map(&series_keys),
+        bibitem_batch.fetch_map(&crossref_keys),
     )?;
 
     // Round 2: author and keyword maps depend on junction data
-    let all_author_ids: HashSet<i64> = author_rows.iter().map(|r| r.author_id).collect();
-    let all_keyword_ids: HashSet<i64> = keyword_rows.iter().map(|r| r.keyword_id).collect();
+    let all_author_keys: HashSet<String> =
+        author_rows.iter().map(|r| r.author_key.clone()).collect();
+    let all_keyword_keys: HashSet<String> =
+        keyword_rows.iter().map(|r| r.keyword_key.clone()).collect();
     let (authors_map, keywords_map) = tokio::try_join!(
-        author_batch.fetch_map(&all_author_ids),
-        keyword_batch.fetch_map(&all_keyword_ids),
+        author_batch.fetch_map(&all_author_keys),
+        keyword_batch.fetch_map(&all_keyword_keys),
     )?;
 
     Ok(build_bibitem_expanded_rows(

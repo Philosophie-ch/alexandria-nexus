@@ -12,7 +12,7 @@ pub async fn fetch_bibitem_authors_batch(
     ids: &[i64],
 ) -> Result<Vec<BibitemAuthorsRow>, HexforgeError> {
     query_as::<_, BibitemAuthorsRow>(
-        "SELECT bibitem_id, author_id, role::text as role, position, name_variant_latex, name_variant_unicode FROM bibitem_authors WHERE bibitem_id = ANY($1) ORDER BY bibitem_id, role, position"
+        "SELECT bibkey, author_key, role::text as role, position, name_variant_latex, name_variant_unicode FROM bibitem_authors WHERE bibkey = ANY($1) ORDER BY bibkey, role, position"
     )
     .bind(ids)
     .fetch_all(pool)
@@ -25,7 +25,7 @@ pub async fn fetch_bibitem_depends_on_batch(
     ids: &[i64],
 ) -> Result<Vec<BibitemDependsOnRow>, HexforgeError> {
     query_as::<_, BibitemDependsOnRow>(
-        "SELECT source_id, dep_id FROM bibitem_depends_on WHERE source_id = ANY($1) ORDER BY source_id"
+        "SELECT source_key, dep_key FROM bibitem_depends_on WHERE source_key = ANY($1) ORDER BY source_key"
     )
     .bind(ids)
     .fetch_all(pool)
@@ -38,7 +38,7 @@ pub async fn fetch_bibitem_further_refs_batch(
     ids: &[i64],
 ) -> Result<Vec<BibitemFurtherRefsRow>, HexforgeError> {
     query_as::<_, BibitemFurtherRefsRow>(
-        "SELECT source_id, dep_id FROM bibitem_further_refs WHERE source_id = ANY($1) ORDER BY source_id"
+        "SELECT source_key, dep_key FROM bibitem_further_refs WHERE source_key = ANY($1) ORDER BY source_key"
     )
     .bind(ids)
     .fetch_all(pool)
@@ -51,7 +51,7 @@ pub async fn fetch_bibitem_keywords_batch(
     ids: &[i64],
 ) -> Result<Vec<BibitemKeywordsRow>, HexforgeError> {
     query_as::<_, BibitemKeywordsRow>(
-        "SELECT bibitem_id, keyword_id, keyword_level FROM bibitem_keywords WHERE bibitem_id = ANY($1) ORDER BY bibitem_id"
+        "SELECT bibkey, keyword_key, keyword_level FROM bibitem_keywords WHERE bibkey = ANY($1) ORDER BY bibkey"
     )
     .bind(ids)
     .fetch_all(pool)
@@ -64,7 +64,7 @@ pub async fn fetch_bibitem_refs_batch(
     ids: &[i64],
 ) -> Result<Vec<BibitemRefsRow>, HexforgeError> {
     query_as::<_, BibitemRefsRow>(
-        "SELECT source_id, target_id, ref_type::text as ref_type FROM bibitem_refs WHERE source_id = ANY($1) ORDER BY source_id, ref_type"
+        "SELECT source_key, target_key, ref_type::text as ref_type FROM bibitem_refs WHERE source_key = ANY($1) ORDER BY source_key, ref_type"
     )
     .bind(ids)
     .fetch_all(pool)

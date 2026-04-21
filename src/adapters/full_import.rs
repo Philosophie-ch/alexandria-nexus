@@ -30,25 +30,13 @@ use crate::process::import::{BibitemNotesData, BibitemNotesStore};
 #[derive(FromRow)]
 struct AuthorRow {
     id: i64,
+    author_key: String,
     family_name_latex: Option<String>,
     given_name_latex: Option<String>,
     mononym_latex: Option<String>,
     famous: bool,
     name_variants_latex: Option<Vec<String>>,
     name_variants_unicode: Option<Vec<String>>,
-}
-
-#[derive(FromRow)]
-struct NameIdRow {
-    id: i64,
-    name_latex: String,
-}
-
-#[derive(FromRow)]
-struct KeywordRow {
-    id: i64,
-    name: String,
-    level: i16,
 }
 
 #[derive(FromRow)]
@@ -80,17 +68,19 @@ impl<'a> PgFullImportStore<'a> {
 impl AuthorLookup for PgFullImportStore<'_> {
     async fn batch_lookup_authors(&self) -> Result<AuthorLookupResult, HexforgeError> {
         let rows: Vec<AuthorRow> = query_as(
-            "SELECT id, family_name_latex, given_name_latex, mononym_latex, famous, name_variants_latex, name_variants_unicode FROM authors",
+            "SELECT id, author_key, family_name_latex, given_name_latex, mononym_latex, famous, name_variants_latex, name_variants_unicode FROM authors",
         )
         .fetch_all(self.pool)
         .await
         .map_err(HexforgeError::data_source)?;
 
         let mut id_map: HashMap<AuthorNameKey, Vec<i64>> = HashMap::new();
+        let mut key_map: HashMap<AuthorNameKey, Vec<String>> = HashMap::new();
         let mut variant_map: HashMap<AuthorNameKey, VariantInfo> = HashMap::new();
         // Famous-only map for _person resolution: name string → author IDs.
         // Indexed by stripped mononym OR family name, famous authors only.
         let mut famous_person_map: HashMap<String, Vec<i64>> = HashMap::new();
+        let mut famous_person_key_map: HashMap<String, Vec<String>> = HashMap::new();
 
         for row in &rows {
             // Primary name key
@@ -104,7 +94,11 @@ impl AuthorLookup for PgFullImportStore<'_> {
             } else {
                 continue;
             };
-            id_map.entry(key).or_default().push(row.id);
+            id_map.entry(key.clone()).or_default().push(row.id);
+            key_map
+                .entry(key.clone())
+                .or_default()
+                .push(row.author_key.clone());
 
             // Famous-only index for _person resolution
             if row.famous {
@@ -115,7 +109,14 @@ impl AuthorLookup for PgFullImportStore<'_> {
                 } else {
                     continue;
                 };
-                famous_person_map.entry(name).or_default().push(row.id);
+                famous_person_map
+                    .entry(name.clone())
+                    .or_default()
+                    .push(row.id);
+                famous_person_key_map
+                    .entry(name)
+                    .or_default()
+                    .push(row.author_key.clone());
             }
 
             // LaTeX name variants
@@ -124,6 +125,10 @@ impl AuthorLookup for PgFullImportStore<'_> {
                     let keys = parse_variant_to_keys(variant);
                     for variant_key in keys {
                         id_map.entry(variant_key.clone()).or_default().push(row.id);
+                        key_map
+                            .entry(variant_key.clone())
+                            .or_default()
+                            .push(row.author_key.clone());
                         variant_map
                             .entry(variant_key)
                             .or_insert_with(|| VariantInfo {
@@ -140,6 +145,10 @@ impl AuthorLookup for PgFullImportStore<'_> {
                     let keys = parse_variant_to_keys(variant);
                     for variant_key in keys {
                         id_map.entry(variant_key.clone()).or_default().push(row.id);
+                        key_map
+                            .entry(variant_key.clone())
+                            .or_default()
+                            .push(row.author_key.clone());
                         variant_map
                             .entry(variant_key)
                             .or_insert_with(|| VariantInfo {
@@ -152,8 +161,10 @@ impl AuthorLookup for PgFullImportStore<'_> {
         }
         Ok(AuthorLookupResult {
             id_map,
+            key_map,
             variant_map,
             famous_person_map,
+            famous_person_key_map,
         })
     }
 }
@@ -166,20 +177,28 @@ impl EntityLookup for PgFullImportStore<'_> {
     async fn batch_lookup_named_entity(
         &self,
         entity: NamedEntity,
-    ) -> Result<HashMap<String, i64>, HexforgeError> {
-        let table = match entity {
-            NamedEntity::Journals => "journals",
-            NamedEntity::Publishers => "publishers",
-            NamedEntity::Institutions => "institutions",
-            NamedEntity::Schools => "schools",
-            NamedEntity::Series => "series",
+    ) -> Result<HashMap<String, String>, HexforgeError> {
+        let (table, key_col) = match entity {
+            NamedEntity::Journals => ("journals", "journal_key"),
+            NamedEntity::Publishers => ("publishers", "publisher_key"),
+            NamedEntity::Institutions => ("institutions", "institution_key"),
+            NamedEntity::Schools => ("schools", "school_key"),
+            NamedEntity::Series => ("series", "series_key"),
         };
-        let sql = format!("SELECT id, name_latex FROM {table}");
-        let rows: Vec<NameIdRow> = query_as(&sql)
+        #[derive(FromRow)]
+        struct NameKeyRow {
+            name_latex: String,
+            entity_key: String,
+        }
+        let sql = format!("SELECT name_latex, {key_col} AS entity_key FROM {table}");
+        let rows: Vec<NameKeyRow> = query_as(&sql)
             .fetch_all(self.pool)
             .await
             .map_err(HexforgeError::data_source)?;
-        Ok(rows.into_iter().map(|r| (r.name_latex, r.id)).collect())
+        Ok(rows
+            .into_iter()
+            .map(|r| (r.name_latex, r.entity_key))
+            .collect())
     }
 }
 
@@ -188,15 +207,21 @@ impl EntityLookup for PgFullImportStore<'_> {
 // =============================================================================
 
 impl KeywordLookup for PgFullImportStore<'_> {
-    async fn batch_lookup_keywords(&self) -> Result<HashMap<(String, i16), i64>, HexforgeError> {
-        let rows: Vec<KeywordRow> = query_as("SELECT id, name, level FROM keywords")
+    async fn batch_lookup_keywords(&self) -> Result<HashMap<(String, i16), String>, HexforgeError> {
+        #[derive(FromRow)]
+        struct KeywordLookupRow {
+            keyword_key: String,
+            name: String,
+            level: i16,
+        }
+        let rows: Vec<KeywordLookupRow> = query_as("SELECT keyword_key, name, level FROM keywords")
             .fetch_all(self.pool)
             .await
             .map_err(HexforgeError::data_source)?;
 
         Ok(rows
             .into_iter()
-            .map(|r| ((r.name, r.level), r.id))
+            .map(|r| ((r.name, r.level), r.keyword_key))
             .collect())
     }
 }
@@ -254,7 +279,7 @@ impl BulkBibitemInsert for PgFullImportStore<'_> {
         let mut bibkey: Vec<String> = Vec::new();
         let mut booktitle_latex: Vec<Option<String>> = Vec::new();
         let mut booktitle_unicode: Vec<Option<String>> = Vec::new();
-        let mut crossref_id: Vec<Option<i64>> = Vec::new();
+        let mut crossref: Vec<Option<String>> = Vec::new();
         let mut date_day: Vec<Option<i16>> = Vec::new();
         let mut date_is_no_date: Vec<bool> = Vec::new();
         let mut date_month: Vec<Option<i16>> = Vec::new();
@@ -271,22 +296,22 @@ impl BulkBibitemInsert for PgFullImportStore<'_> {
         let mut extra_note_unicode: Vec<Option<String>> = Vec::new();
         let mut fulltext_path: Vec<Option<String>> = Vec::new();
         let mut has_fulltext: Vec<bool> = Vec::new();
-        let mut institution_id: Vec<Option<i64>> = Vec::new();
+        let mut institution_key: Vec<Option<String>> = Vec::new();
         let mut is_translation: Vec<bool> = Vec::new();
         let mut issuetitle_latex: Vec<Option<String>> = Vec::new();
         let mut issuetitle_unicode: Vec<Option<String>> = Vec::new();
-        let mut journal_id: Vec<Option<i64>> = Vec::new();
+        let mut journal_key: Vec<Option<String>> = Vec::new();
         let mut langid: Vec<Option<String>> = Vec::new();
         let mut note_latex: Vec<Option<String>> = Vec::new();
         let mut note_unicode: Vec<Option<String>> = Vec::new();
         let mut number: Vec<Option<String>> = Vec::new();
         let mut options: Vec<Option<String>> = Vec::new();
         let mut pages: Vec<Option<String>> = Vec::new();
-        let mut person_id: Vec<Option<i64>> = Vec::new();
-        let mut publisher_id: Vec<Option<i64>> = Vec::new();
+        let mut person_key: Vec<Option<String>> = Vec::new();
+        let mut publisher_key: Vec<Option<String>> = Vec::new();
         let mut pubstate: Vec<Option<String>> = Vec::new();
-        let mut school_id: Vec<Option<i64>> = Vec::new();
-        let mut series_id: Vec<Option<i64>> = Vec::new();
+        let mut school_key: Vec<Option<String>> = Vec::new();
+        let mut series_key: Vec<Option<String>> = Vec::new();
         let mut shorthand: Vec<Option<String>> = Vec::new();
         let mut title_latex: Vec<String> = Vec::new();
         let mut title_unicode: Vec<Option<String>> = Vec::new();
@@ -300,7 +325,7 @@ impl BulkBibitemInsert for PgFullImportStore<'_> {
             bibkey.push(e.bibkey.clone());
             booktitle_latex.push(e.booktitle_latex.clone());
             booktitle_unicode.push(e.booktitle_unicode.clone());
-            crossref_id.push(e.crossref_id);
+            crossref.push(e.crossref.clone());
             date_day.push(e.date_day);
             date_is_no_date.push(e.date_is_no_date);
             date_month.push(e.date_month);
@@ -317,22 +342,22 @@ impl BulkBibitemInsert for PgFullImportStore<'_> {
             extra_note_unicode.push(e.extra_note_unicode.clone());
             fulltext_path.push(e.fulltext_path.clone());
             has_fulltext.push(e.has_fulltext);
-            institution_id.push(e.institution_id);
+            institution_key.push(e.institution_key.clone());
             is_translation.push(e.is_translation);
             issuetitle_latex.push(e.issuetitle_latex.clone());
             issuetitle_unicode.push(e.issuetitle_unicode.clone());
-            journal_id.push(e.journal_id);
+            journal_key.push(e.journal_key.clone());
             langid.push(e.langid.as_ref().map(LangId::to_string));
             note_latex.push(e.note_latex.clone());
             note_unicode.push(e.note_unicode.clone());
             number.push(e.number.clone());
             options.push(e.options.clone());
             pages.push(e.pages.clone());
-            person_id.push(e.person_id);
-            publisher_id.push(e.publisher_id);
+            person_key.push(e.person_key.clone());
+            publisher_key.push(e.publisher_key.clone());
             pubstate.push(e.pubstate.as_ref().map(PubState::to_string));
-            school_id.push(e.school_id);
-            series_id.push(e.series_id);
+            school_key.push(e.school_key.clone());
+            series_key.push(e.series_key.clone());
             shorthand.push(e.shorthand.clone());
             title_latex.push(e.title_latex.clone());
             title_unicode.push(e.title_unicode.clone());
@@ -345,40 +370,40 @@ impl BulkBibitemInsert for PgFullImportStore<'_> {
         let rows: Vec<InsertedBibitem> = query_as(
             "INSERT INTO bibitems (
                address, bibkey, booktitle_latex, booktitle_unicode,
-               crossref_id, date_day, date_is_no_date, date_month, date_year,
+               crossref, date_day, date_is_no_date, date_month, date_year,
                date_year_2_hyphen, date_year_2_slash, doi, edition, eid, entry_type,
                epoch, eprint, extra_note_latex, extra_note_unicode, fulltext_path,
-               has_fulltext, institution_id, is_translation, issuetitle_latex, issuetitle_unicode,
-               journal_id, langid, note_latex, note_unicode, number, options, pages,
-               person_id, publisher_id, pubstate, school_id, series_id, shorthand,
+               has_fulltext, institution_key, is_translation, issuetitle_latex, issuetitle_unicode,
+               journal_key, langid, note_latex, note_unicode, number, options, pages,
+               person_key, publisher_key, pubstate, school_key, series_key, shorthand,
                title_latex, title_unicode, type_field, url, urn, volume
              )
              SELECT
                address, bibkey, booktitle_latex, booktitle_unicode,
-               crossref_id, date_day, date_is_no_date, date_month, date_year,
+               crossref, date_day, date_is_no_date, date_month, date_year,
                date_year_2_hyphen, date_year_2_slash, doi, edition, eid, entry_type::entry_type,
                epoch::epoch, eprint, extra_note_latex, extra_note_unicode, fulltext_path,
-               has_fulltext, institution_id, is_translation, issuetitle_latex, issuetitle_unicode,
-               journal_id, langid::langid, note_latex, note_unicode, number, options, pages,
-               person_id, publisher_id, pubstate::pubstate, school_id, series_id, shorthand,
+               has_fulltext, institution_key, is_translation, issuetitle_latex, issuetitle_unicode,
+               journal_key, langid::langid, note_latex, note_unicode, number, options, pages,
+               person_key, publisher_key, pubstate::pubstate, school_key, series_key, shorthand,
                title_latex, title_unicode, type_field, url, urn, volume
              FROM unnest(
                $1::text[], $2::text[], $3::text[], $4::text[],
-               $5::int8[], $6::int2[], $7::bool[], $8::int2[], $9::int2[],
+               $5::text[], $6::int2[], $7::bool[], $8::int2[], $9::int2[],
                $10::int2[], $11::int2[], $12::text[], $13::text[], $14::text[], $15::text[],
                $16::text[], $17::text[], $18::text[], $19::text[], $20::text[],
-               $21::bool[], $22::int8[], $23::bool[], $24::text[], $25::text[],
-               $26::int8[], $27::text[], $28::text[], $29::text[], $30::text[], $31::text[], $32::text[],
-               $33::int8[], $34::int8[], $35::text[], $36::int8[], $37::int8[], $38::text[],
+               $21::bool[], $22::text[], $23::bool[], $24::text[], $25::text[],
+               $26::text[], $27::text[], $28::text[], $29::text[], $30::text[], $31::text[], $32::text[],
+               $33::text[], $34::text[], $35::text[], $36::text[], $37::text[], $38::text[],
                $39::text[], $40::text[], $41::text[], $42::text[], $43::text[], $44::text[]
              ) AS t(
                address, bibkey, booktitle_latex, booktitle_unicode,
-               crossref_id, date_day, date_is_no_date, date_month, date_year,
+               crossref, date_day, date_is_no_date, date_month, date_year,
                date_year_2_hyphen, date_year_2_slash, doi, edition, eid, entry_type,
                epoch, eprint, extra_note_latex, extra_note_unicode, fulltext_path,
-               has_fulltext, institution_id, is_translation, issuetitle_latex, issuetitle_unicode,
-               journal_id, langid, note_latex, note_unicode, number, options, pages,
-               person_id, publisher_id, pubstate, school_id, series_id, shorthand,
+               has_fulltext, institution_key, is_translation, issuetitle_latex, issuetitle_unicode,
+               journal_key, langid, note_latex, note_unicode, number, options, pages,
+               person_key, publisher_key, pubstate, school_key, series_key, shorthand,
                title_latex, title_unicode, type_field, url, urn, volume
              )
              RETURNING id, bibkey",
@@ -387,7 +412,7 @@ impl BulkBibitemInsert for PgFullImportStore<'_> {
         .bind(bibkey)
         .bind(booktitle_latex)
         .bind(booktitle_unicode)
-        .bind(crossref_id)
+        .bind(crossref)
         .bind(date_day)
         .bind(date_is_no_date)
         .bind(date_month)
@@ -404,22 +429,22 @@ impl BulkBibitemInsert for PgFullImportStore<'_> {
         .bind(extra_note_unicode)
         .bind(fulltext_path)
         .bind(has_fulltext)
-        .bind(institution_id)
+        .bind(institution_key)
         .bind(is_translation)
         .bind(issuetitle_latex)
         .bind(issuetitle_unicode)
-        .bind(journal_id)
+        .bind(journal_key)
         .bind(langid)
         .bind(note_latex)
         .bind(note_unicode)
         .bind(number)
         .bind(options)
         .bind(pages)
-        .bind(person_id)
-        .bind(publisher_id)
+        .bind(person_key)
+        .bind(publisher_key)
         .bind(pubstate)
-        .bind(school_id)
-        .bind(series_id)
+        .bind(school_key)
+        .bind(series_key)
         .bind(shorthand)
         .bind(title_latex)
         .bind(title_unicode)
@@ -447,34 +472,34 @@ impl BulkJunctionInsert for PgFullImportStore<'_> {
         if rows.is_empty() {
             return Ok(());
         }
-        let mut bibitem_ids: Vec<i64> = Vec::new();
-        let mut author_ids: Vec<i64> = Vec::new();
+        let mut bibkeys: Vec<String> = Vec::new();
+        let mut author_keys: Vec<String> = Vec::new();
         let mut roles: Vec<String> = Vec::new();
         let mut positions: Vec<i16> = Vec::new();
         let mut variant_latexes: Vec<Option<String>> = Vec::new();
         let mut variant_unicodes: Vec<Option<String>> = Vec::new();
         for r in rows {
-            bibitem_ids.push(r.bibitem_id);
-            author_ids.push(r.author_id);
+            bibkeys.push(r.bibkey.clone());
+            author_keys.push(r.author_key.clone());
             roles.push(r.role.to_string());
             positions.push(r.position);
             variant_latexes.push(r.variant_latex.clone());
             variant_unicodes.push(r.variant_unicode.clone());
         }
         query(
-            "INSERT INTO bibitem_authors (bibitem_id, author_id, role, position, name_variant_latex, name_variant_unicode)
-             SELECT DISTINCT ON (bibitem_id, author_id, role)
-               bibitem_id, author_id, role::author_role, position, name_variant_latex, name_variant_unicode
-             FROM unnest($1::int8[], $2::int8[], $3::text[], $4::int2[], $5::text[], $6::text[])
-               AS t(bibitem_id, author_id, role, position, name_variant_latex, name_variant_unicode)
-             ORDER BY bibitem_id, author_id, role, position
-             ON CONFLICT (bibitem_id, author_id, role) DO UPDATE SET
+            "INSERT INTO bibitem_authors (bibkey, author_key, role, position, name_variant_latex, name_variant_unicode)
+             SELECT DISTINCT ON (bibkey, author_key, role)
+               bibkey, author_key, role::author_role, position, name_variant_latex, name_variant_unicode
+             FROM unnest($1::text[], $2::text[], $3::text[], $4::int2[], $5::text[], $6::text[])
+               AS t(bibkey, author_key, role, position, name_variant_latex, name_variant_unicode)
+             ORDER BY bibkey, author_key, role, position
+             ON CONFLICT (bibkey, author_key, role) DO UPDATE SET
                position = EXCLUDED.position,
                name_variant_latex = EXCLUDED.name_variant_latex,
                name_variant_unicode = EXCLUDED.name_variant_unicode",
         )
-        .bind(bibitem_ids)
-        .bind(author_ids)
+        .bind(bibkeys)
+        .bind(author_keys)
         .bind(roles)
         .bind(positions)
         .bind(variant_latexes)
@@ -492,22 +517,22 @@ impl BulkJunctionInsert for PgFullImportStore<'_> {
         if rows.is_empty() {
             return Ok(());
         }
-        let mut bibitem_ids: Vec<i64> = Vec::new();
-        let mut keyword_ids: Vec<i64> = Vec::new();
+        let mut bibkeys: Vec<String> = Vec::new();
+        let mut keyword_keys: Vec<String> = Vec::new();
         let mut keyword_levels: Vec<i16> = Vec::new();
         for r in rows {
-            bibitem_ids.push(r.bibitem_id);
-            keyword_ids.push(r.keyword_id);
+            bibkeys.push(r.bibkey.clone());
+            keyword_keys.push(r.keyword_key.clone());
             keyword_levels.push(r.keyword_level);
         }
         query(
-            "INSERT INTO bibitem_keywords (bibitem_id, keyword_id, keyword_level)
-             SELECT bibitem_id, keyword_id, keyword_level
-             FROM unnest($1::int8[], $2::int8[], $3::int2[]) AS t(bibitem_id, keyword_id, keyword_level)
-             ON CONFLICT (bibitem_id, keyword_id) DO NOTHING",
+            "INSERT INTO bibitem_keywords (bibkey, keyword_key, keyword_level)
+             SELECT bibkey, keyword_key, keyword_level
+             FROM unnest($1::text[], $2::text[], $3::int2[]) AS t(bibkey, keyword_key, keyword_level)
+             ON CONFLICT (bibkey, keyword_key) DO NOTHING",
         )
-        .bind(bibitem_ids)
-        .bind(keyword_ids)
+        .bind(bibkeys)
+        .bind(keyword_keys)
         .bind(keyword_levels)
         .execute(self.pool)
         .await
@@ -522,23 +547,24 @@ impl BulkJunctionInsert for PgFullImportStore<'_> {
         if rows.is_empty() {
             return Ok(());
         }
-        let mut source_ids: Vec<i64> = Vec::new();
+        let mut source_bibkeys: Vec<String> = Vec::new();
         let mut target_bibkeys: Vec<String> = Vec::new();
         let mut ref_types: Vec<String> = Vec::new();
         for r in rows {
-            source_ids.push(r.source_id);
+            source_bibkeys.push(r.source_bibkey.clone());
             target_bibkeys.push(r.target_bibkey.clone());
             ref_types.push(r.ref_type.to_string());
         }
-        // JOIN resolves bibkeys to IDs; non-existent targets are skipped (inner join).
+        // Both source and target are resolved by bibkey; non-existent targets are skipped (inner join).
         query(
             "INSERT INTO bibitem_refs (source_id, target_id, ref_type)
-             SELECT t.source_id, b.id, t.ref_type::ref_type
-             FROM unnest($1::int8[], $2::text[], $3::text[]) AS t(source_id, target_bibkey, ref_type)
-             JOIN bibitems b ON b.bibkey = t.target_bibkey
+             SELECT s.id, t.id, r.ref_type::ref_type
+             FROM unnest($1::text[], $2::text[], $3::text[]) AS r(source_bibkey, target_bibkey, ref_type)
+             JOIN bibitems s ON s.bibkey = r.source_bibkey
+             JOIN bibitems t ON t.bibkey = r.target_bibkey
              ON CONFLICT (source_id, target_id, ref_type) DO NOTHING",
         )
-        .bind(source_ids)
+        .bind(source_bibkeys)
         .bind(target_bibkeys)
         .bind(ref_types)
         .execute(self.pool)
@@ -566,9 +592,16 @@ impl BibitemFetcher for PgFullImportStore<'_> {
 // =============================================================================
 
 impl AuthorNameFetcher for PgFullImportStore<'_> {
-    async fn fetch_author_names(&self) -> Result<HashMap<i64, String>, HexforgeError> {
-        let rows: Vec<AuthorRow> = query_as(
-            "SELECT id, family_name_latex, given_name_latex, mononym_latex, name_variants_latex, name_variants_unicode FROM authors",
+    async fn fetch_author_names(&self) -> Result<HashMap<String, String>, HexforgeError> {
+        #[derive(FromRow)]
+        struct AuthorNameRow {
+            author_key: String,
+            family_name_latex: Option<String>,
+            given_name_latex: Option<String>,
+            mononym_latex: Option<String>,
+        }
+        let rows: Vec<AuthorNameRow> = query_as(
+            "SELECT author_key, family_name_latex, given_name_latex, mononym_latex FROM authors",
         )
         .fetch_all(self.pool)
         .await
@@ -586,7 +619,7 @@ impl AuthorNameFetcher for PgFullImportStore<'_> {
                         _ => String::new(),
                     }
                 };
-                (a.id, name)
+                (a.author_key, name)
             })
             .collect())
     }
@@ -600,20 +633,28 @@ impl ReverseNameMapFetcher for PgFullImportStore<'_> {
     async fn fetch_entity_name_map(
         &self,
         entity: NamedEntity,
-    ) -> Result<HashMap<i64, String>, HexforgeError> {
-        let table = match entity {
-            NamedEntity::Journals => "journals",
-            NamedEntity::Publishers => "publishers",
-            NamedEntity::Institutions => "institutions",
-            NamedEntity::Schools => "schools",
-            NamedEntity::Series => "series",
+    ) -> Result<HashMap<String, String>, HexforgeError> {
+        let (table, key_col) = match entity {
+            NamedEntity::Journals => ("journals", "journal_key"),
+            NamedEntity::Publishers => ("publishers", "publisher_key"),
+            NamedEntity::Institutions => ("institutions", "institution_key"),
+            NamedEntity::Schools => ("schools", "school_key"),
+            NamedEntity::Series => ("series", "series_key"),
         };
-        let sql = format!("SELECT id, name_latex FROM {table}");
-        let rows: Vec<NameIdRow> = query_as(&sql)
+        #[derive(FromRow)]
+        struct KeyNameRow {
+            entity_key: String,
+            name_latex: String,
+        }
+        let sql = format!("SELECT {key_col} AS entity_key, name_latex FROM {table}");
+        let rows: Vec<KeyNameRow> = query_as(&sql)
             .fetch_all(self.pool)
             .await
             .map_err(HexforgeError::data_source)?;
-        Ok(rows.into_iter().map(|r| (r.id, r.name_latex)).collect())
+        Ok(rows
+            .into_iter()
+            .map(|r| (r.entity_key, r.name_latex))
+            .collect())
     }
 }
 
@@ -622,14 +663,20 @@ impl ReverseNameMapFetcher for PgFullImportStore<'_> {
 // =============================================================================
 
 impl KeywordNameFetcher for PgFullImportStore<'_> {
-    async fn fetch_keyword_names(&self) -> Result<HashMap<i64, (String, i16)>, HexforgeError> {
-        let rows: Vec<KeywordRow> = query_as("SELECT id, name, level FROM keywords")
+    async fn fetch_keyword_names(&self) -> Result<HashMap<String, (String, i16)>, HexforgeError> {
+        #[derive(FromRow)]
+        struct KeywordKeyRow {
+            keyword_key: String,
+            name: String,
+            level: i16,
+        }
+        let rows: Vec<KeywordKeyRow> = query_as("SELECT keyword_key, name, level FROM keywords")
             .fetch_all(self.pool)
             .await
             .map_err(HexforgeError::data_source)?;
         Ok(rows
             .into_iter()
-            .map(|k| (k.id, (k.name, k.level)))
+            .map(|k| (k.keyword_key, (k.name, k.level)))
             .collect())
     }
 }
@@ -708,8 +755,8 @@ impl JunctionFetcher for PgFullImportStore<'_> {
         ids: &[i64],
     ) -> Result<Vec<BibitemAuthorsRow>, HexforgeError> {
         query_as::<_, BibitemAuthorsRow>(
-            "SELECT bibitem_id, author_id, role::text as role, position, name_variant_latex, name_variant_unicode \
-             FROM bibitem_authors WHERE bibitem_id = ANY($1) ORDER BY bibitem_id, role, position",
+            "SELECT ba.bibkey, ba.author_key, ba.role::text as role, ba.position, ba.name_variant_latex, ba.name_variant_unicode \
+             FROM bibitem_authors ba JOIN bibitems b ON b.bibkey = ba.bibkey WHERE b.id = ANY($1) ORDER BY ba.bibkey, ba.role, ba.position",
         )
         .bind(ids)
         .fetch_all(self.pool)
@@ -722,8 +769,8 @@ impl JunctionFetcher for PgFullImportStore<'_> {
         ids: &[i64],
     ) -> Result<Vec<BibitemKeywordsRow>, HexforgeError> {
         query_as::<_, BibitemKeywordsRow>(
-            "SELECT bibitem_id, keyword_id, keyword_level \
-             FROM bibitem_keywords WHERE bibitem_id = ANY($1) ORDER BY bibitem_id",
+            "SELECT bk.bibkey, bk.keyword_key, bk.keyword_level \
+             FROM bibitem_keywords bk JOIN bibitems b ON b.bibkey = bk.bibkey WHERE b.id = ANY($1) ORDER BY bk.bibkey",
         )
         .bind(ids)
         .fetch_all(self.pool)
@@ -735,14 +782,14 @@ impl JunctionFetcher for PgFullImportStore<'_> {
 impl BibitemNotesStore for PgFullImportStore<'_> {
     async fn upsert_bibitem_notes(
         &self,
-        bibitem_id: i64,
+        bibkey: &str,
         notes: &BibitemNotesData<'_>,
     ) -> Result<(), HexforgeError> {
         query(
             "INSERT INTO bibitem_notes \
-             (bibitem_id, note_perso, note_stock, note_missing, change_request, dltc_copyediting_note, todo_general) \
+             (bibkey, note_perso, note_stock, note_missing, change_request, dltc_copyediting_note, todo_general) \
              VALUES ($1, $2, $3, $4, $5, $6, $7) \
-             ON CONFLICT (bibitem_id) DO UPDATE SET \
+             ON CONFLICT (bibkey) DO UPDATE SET \
              note_perso = EXCLUDED.note_perso, \
              note_stock = EXCLUDED.note_stock, \
              note_missing = EXCLUDED.note_missing, \
@@ -751,7 +798,7 @@ impl BibitemNotesStore for PgFullImportStore<'_> {
              todo_general = EXCLUDED.todo_general, \
              updated_at = NOW()",
         )
-        .bind(bibitem_id)
+        .bind(bibkey)
         .bind(notes.note_perso)
         .bind(notes.note_stock)
         .bind(notes.note_missing)
@@ -766,16 +813,14 @@ impl BibitemNotesStore for PgFullImportStore<'_> {
 }
 
 impl BibitemNotesFetcher for PgFullImportStore<'_> {
-    async fn fetch_all_bibitem_notes(&self) -> Result<HashMap<i64, BibitemNotes>, HexforgeError> {
-        let rows = query_as::<_, BibitemNotes>(
-            "SELECT id, bibitem_id, note_perso, note_stock, note_missing, \
-             change_request, dltc_copyediting_note, todo_general, \
-             created_at, updated_at FROM bibitem_notes",
-        )
-        .fetch_all(self.pool)
-        .await
-        .map_err(HexforgeError::data_source)?;
-        Ok(rows.into_iter().map(|n| (n.bibitem_id, n)).collect())
+    async fn fetch_all_bibitem_notes(
+        &self,
+    ) -> Result<HashMap<String, BibitemNotes>, HexforgeError> {
+        let rows = query_as::<_, BibitemNotes>("SELECT * FROM bibitem_notes")
+            .fetch_all(self.pool)
+            .await
+            .map_err(HexforgeError::data_source)?;
+        Ok(rows.into_iter().map(|n| (n.bibkey.clone(), n)).collect())
     }
 }
 

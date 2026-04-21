@@ -6,8 +6,8 @@ use hexforge::db_exports::FromRow;
 
 #[derive(Debug, Clone, FromRow)]
 pub struct BibitemAuthorsRow {
-    pub bibitem_id: i64,
-    pub author_id: i64,
+    pub bibkey: String,
+    pub author_key: String,
     pub role: String,
     pub position: i16,
     pub name_variant_latex: Option<String>,
@@ -16,26 +16,26 @@ pub struct BibitemAuthorsRow {
 
 #[derive(Debug, Clone, FromRow)]
 pub struct BibitemDependsOnRow {
-    pub source_id: i64,
-    pub dep_id: i64,
+    pub source_key: i64,
+    pub dep_key: i64,
 }
 
 #[derive(Debug, Clone, FromRow)]
 pub struct BibitemFurtherRefsRow {
-    pub source_id: i64,
-    pub dep_id: i64,
+    pub source_key: i64,
+    pub dep_key: i64,
 }
 
 #[derive(Debug, Clone, FromRow)]
 pub struct BibitemKeywordsRow {
-    pub bibitem_id: i64,
-    pub keyword_id: i64,
+    pub bibkey: String,
+    pub keyword_key: String,
     pub keyword_level: i16,
 }
 
 #[derive(Debug, Clone, FromRow)]
 pub struct BibitemRefsRow {
-    pub source_id: i64,
-    pub target_id: i64,
+    pub source_key: String,
+    pub target_key: String,
     pub ref_type: String,
 }

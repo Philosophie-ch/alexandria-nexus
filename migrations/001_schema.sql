@@ -91,6 +91,7 @@ CREATE TABLE journals (
 
 CREATE TABLE keywords (
     id BIGSERIAL PRIMARY KEY,
+    keyword_key TEXT NOT NULL UNIQUE,
     level SMALLINT NOT NULL CHECK (level BETWEEN 1 AND 3),
     name TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -131,7 +132,7 @@ CREATE TABLE bibitems (
     bibkey TEXT NOT NULL UNIQUE,
     booktitle_latex TEXT,
     booktitle_unicode TEXT,
-    crossref_id BIGINT REFERENCES bibitems(id),
+    crossref TEXT REFERENCES bibitems(bibkey),
     date_day SMALLINT,
     date_is_no_date BOOLEAN NOT NULL DEFAULT FALSE,
     date_month SMALLINT,
@@ -148,22 +149,22 @@ CREATE TABLE bibitems (
     extra_note_unicode TEXT,
     fulltext_path TEXT,
     has_fulltext BOOLEAN NOT NULL DEFAULT FALSE,
-    institution_id BIGINT REFERENCES institutions(id),
+    institution_key TEXT REFERENCES institutions(institution_key),
     is_translation BOOLEAN NOT NULL DEFAULT FALSE,
     issuetitle_latex TEXT,
     issuetitle_unicode TEXT,
-    journal_id BIGINT REFERENCES journals(id),
+    journal_key TEXT REFERENCES journals(journal_key),
     langid langid,
     note_latex TEXT,
     note_unicode TEXT,
     number TEXT,
     options TEXT,
     pages TEXT,
-    person_id BIGINT REFERENCES authors(id),
-    publisher_id BIGINT REFERENCES publishers(id),
+    person_key TEXT REFERENCES authors(author_key),
+    publisher_key TEXT REFERENCES publishers(publisher_key),
     pubstate pubstate,
-    school_id BIGINT REFERENCES schools(id),
-    series_id BIGINT REFERENCES series(id),
+    school_key TEXT REFERENCES schools(school_key),
+    series_key TEXT REFERENCES series(series_key),
     shorthand TEXT,
     title_latex TEXT NOT NULL,
     title_unicode TEXT,
@@ -177,7 +178,7 @@ CREATE TABLE bibitems (
 
 CREATE TABLE bibitem_notes (
     id BIGSERIAL PRIMARY KEY,
-    bibitem_id BIGINT NOT NULL UNIQUE REFERENCES bibitems(id),
+    bibkey TEXT NOT NULL UNIQUE REFERENCES bibitems(bibkey),
     change_request TEXT,
     dltc_copyediting_note TEXT,
     note_missing TEXT,
@@ -194,45 +195,45 @@ CREATE TABLE bibitem_notes (
 -- =============================================================================
 
 CREATE TABLE bibitem_authors (
-    bibitem_id BIGINT NOT NULL REFERENCES bibitems(id) ON DELETE CASCADE,
-    author_id BIGINT NOT NULL REFERENCES authors(id) ON DELETE RESTRICT,
+    bibkey TEXT NOT NULL REFERENCES bibitems(bibkey) ON DELETE CASCADE,
+    author_key TEXT NOT NULL REFERENCES authors(author_key) ON DELETE RESTRICT,
     role author_role NOT NULL DEFAULT 'author',
     position SMALLINT NOT NULL,
     name_variant_latex TEXT,
     name_variant_unicode TEXT,
-    PRIMARY KEY (bibitem_id, author_id, role)
+    PRIMARY KEY (bibkey, author_key, role)
 );
-CREATE INDEX idx_bibitem_authors_author_id ON bibitem_authors(author_id);
+CREATE INDEX idx_bibitem_authors_author_key ON bibitem_authors(author_key);
 
 CREATE TABLE bibitem_depends_on (
-    source_id BIGINT NOT NULL REFERENCES bibitems(id) ON DELETE CASCADE,
-    dep_id BIGINT NOT NULL REFERENCES bibitems(id) ON DELETE RESTRICT,
-    PRIMARY KEY (source_id, dep_id)
+    source_key TEXT NOT NULL REFERENCES bibitems(bibkey) ON DELETE CASCADE,
+    dep_key TEXT NOT NULL REFERENCES bibitems(bibkey) ON DELETE RESTRICT,
+    PRIMARY KEY (source_key, dep_key)
 );
-CREATE INDEX idx_bibitem_depends_on_dep_id ON bibitem_depends_on(dep_id);
+CREATE INDEX idx_bibitem_depends_on_dep_key ON bibitem_depends_on(dep_key);
 
 CREATE TABLE bibitem_further_refs (
-    source_id BIGINT NOT NULL REFERENCES bibitems(id) ON DELETE CASCADE,
-    dep_id BIGINT NOT NULL REFERENCES bibitems(id) ON DELETE RESTRICT,
-    PRIMARY KEY (source_id, dep_id)
+    source_key TEXT NOT NULL REFERENCES bibitems(bibkey) ON DELETE CASCADE,
+    dep_key TEXT NOT NULL REFERENCES bibitems(bibkey) ON DELETE RESTRICT,
+    PRIMARY KEY (source_key, dep_key)
 );
-CREATE INDEX idx_bibitem_further_refs_dep_id ON bibitem_further_refs(dep_id);
+CREATE INDEX idx_bibitem_further_refs_dep_key ON bibitem_further_refs(dep_key);
 
 CREATE TABLE bibitem_keywords (
-    bibitem_id BIGINT NOT NULL REFERENCES bibitems(id) ON DELETE CASCADE,
-    keyword_id BIGINT NOT NULL REFERENCES keywords(id) ON DELETE RESTRICT,
+    bibkey TEXT NOT NULL REFERENCES bibitems(bibkey) ON DELETE CASCADE,
+    keyword_key TEXT NOT NULL REFERENCES keywords(keyword_key) ON DELETE RESTRICT,
     keyword_level SMALLINT NOT NULL,
-    PRIMARY KEY (bibitem_id, keyword_id)
+    PRIMARY KEY (bibkey, keyword_key)
 );
-CREATE INDEX idx_bibitem_keywords_keyword_id ON bibitem_keywords(keyword_id);
+CREATE INDEX idx_bibitem_keywords_keyword_key ON bibitem_keywords(keyword_key);
 
 CREATE TABLE bibitem_refs (
-    source_id BIGINT NOT NULL REFERENCES bibitems(id) ON DELETE CASCADE,
-    target_id BIGINT NOT NULL REFERENCES bibitems(id) ON DELETE RESTRICT,
+    source_key TEXT NOT NULL REFERENCES bibitems(bibkey) ON DELETE CASCADE,
+    target_key TEXT NOT NULL REFERENCES bibitems(bibkey) ON DELETE RESTRICT,
     ref_type ref_type NOT NULL,
-    PRIMARY KEY (source_id, target_id, ref_type)
+    PRIMARY KEY (source_key, target_key, ref_type)
 );
-CREATE INDEX idx_bibitem_refs_target_id ON bibitem_refs(target_id);
+CREATE INDEX idx_bibitem_refs_target_key ON bibitem_refs(target_key);
 
 
 -- =============================================================================
@@ -249,9 +250,9 @@ CREATE INDEX idx_authors_name_variants_unicode_gin ON authors USING gin(name_var
 CREATE INDEX idx_authors_given_name_unicode_trgm ON authors USING gin(given_name_unicode gin_trgm_ops);
 CREATE INDEX idx_bibitems_entry_type ON bibitems(entry_type);
 CREATE INDEX idx_bibitems_date_year ON bibitems(date_year);
-CREATE INDEX idx_bibitems_journal_id ON bibitems(journal_id);
-CREATE INDEX idx_bibitems_publisher_id ON bibitems(publisher_id);
-CREATE INDEX idx_bibitems_crossref_id ON bibitems(crossref_id);
+CREATE INDEX idx_bibitems_journal_key ON bibitems(journal_key);
+CREATE INDEX idx_bibitems_publisher_key ON bibitems(publisher_key);
+CREATE INDEX idx_bibitems_crossref ON bibitems(crossref);
 CREATE INDEX idx_bibitems_title_unicode_trgm ON bibitems USING gin(title_unicode gin_trgm_ops);
 CREATE INDEX idx_bibitems_bibkey_trgm ON bibitems USING gin(bibkey gin_trgm_ops);
 CREATE INDEX idx_institutions_name_unicode ON institutions(name_unicode);

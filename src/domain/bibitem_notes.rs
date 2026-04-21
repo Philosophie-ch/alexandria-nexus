@@ -13,7 +13,7 @@ pub struct BibitemNotes {
     #[entity(id)]
     pub id: i64,
     #[crud(required)]
-    pub bibitem_id: i64,
+    pub bibkey: String,
     pub change_request: Option<String>,
     pub dltc_copyediting_note: Option<String>,
     pub note_missing: Option<String>,

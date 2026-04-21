@@ -13,6 +13,8 @@ pub struct Keyword {
     #[entity(id)]
     pub id: i64,
     #[crud(required)]
+    pub keyword_key: String,
+    #[crud(required)]
     pub level: i16,
     #[crud(required)]
     pub name: String,

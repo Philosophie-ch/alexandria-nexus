@@ -252,14 +252,22 @@ pub async fn export_bibitems(
     let pool = state.pool.pool();
     let bibitem_fetcher = PgBibitemFetcher::new(&state.bibitem_ds, pool);
     let junction_fetcher = PgExportJunctionFetcher::new(pool);
-    let author_batch = PgEntityBatchFetcher::new(&state.author_ds);
-    let journal_batch = PgEntityBatchFetcher::new(&state.journal_ds);
-    let publisher_batch = PgEntityBatchFetcher::new(&state.publisher_ds);
-    let institution_batch = PgEntityBatchFetcher::new(&state.institution_ds);
-    let school_batch = PgEntityBatchFetcher::new(&state.school_ds);
-    let series_batch = PgEntityBatchFetcher::new(&state.series_ds);
-    let bibitem_batch = PgEntityBatchFetcher::new(&state.bibitem_ds);
-    let keyword_batch = PgEntityBatchFetcher::new(&state.keyword_ds);
+    let author_batch = PgEntityBatchFetcher::new(&state.author_ds, "author_key", "authors", pool);
+    let journal_batch =
+        PgEntityBatchFetcher::new(&state.journal_ds, "journal_key", "journals", pool);
+    let publisher_batch =
+        PgEntityBatchFetcher::new(&state.publisher_ds, "publisher_key", "publishers", pool);
+    let institution_batch = PgEntityBatchFetcher::new(
+        &state.institution_ds,
+        "institution_key",
+        "institutions",
+        pool,
+    );
+    let school_batch = PgEntityBatchFetcher::new(&state.school_ds, "school_key", "schools", pool);
+    let series_batch = PgEntityBatchFetcher::new(&state.series_ds, "series_key", "series", pool);
+    let bibitem_batch = PgEntityBatchFetcher::new(&state.bibitem_ds, "bibkey", "bibitems", pool);
+    let keyword_batch =
+        PgEntityBatchFetcher::new(&state.keyword_ds, "keyword_key", "keywords", pool);
 
     let result = export::export_bibitems(
         &bibitem_fetcher,

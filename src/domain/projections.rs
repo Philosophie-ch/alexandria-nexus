@@ -67,6 +67,7 @@ pub struct JournalExpanded {
 #[projection(entity = "Keyword")]
 pub struct KeywordExpanded {
     pub id: i64,
+    pub keyword_key: String,
     pub name: String,
     pub level: i16,
 }

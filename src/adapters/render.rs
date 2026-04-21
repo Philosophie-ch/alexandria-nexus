@@ -22,28 +22,31 @@ use crate::process::render::{
 
 /// Row type for batch name lookups.
 #[derive(Debug, FromRow)]
-struct IdNameRow {
-    id: i64,
+struct KeyNameRow {
+    key: String,
     name: String,
 }
 
-/// Batch-fetch a single column from a table for a set of IDs.
-async fn batch_fetch_names(
+/// Batch-fetch a single column from a table for a set of entity keys.
+async fn batch_fetch_names_by_key(
     pool: &PgPool,
     table: &str,
+    key_column: &str,
     name_column: &str,
-    ids: &[i64],
-) -> Result<HashMap<i64, String>, HexforgeError> {
-    if ids.is_empty() {
+    keys: &[String],
+) -> Result<HashMap<String, String>, HexforgeError> {
+    if keys.is_empty() {
         return Ok(HashMap::new());
     }
-    let sql = format!("SELECT id, {name_column} AS name FROM {table} WHERE id = ANY($1)");
-    let rows: Vec<IdNameRow> = query_as(&sql)
-        .bind(ids)
+    let sql = format!(
+        "SELECT {key_column} AS key, {name_column} AS name FROM {table} WHERE {key_column} = ANY($1)"
+    );
+    let rows: Vec<KeyNameRow> = query_as(&sql)
+        .bind(keys)
         .fetch_all(pool)
         .await
         .map_err(HexforgeError::data_source)?;
-    Ok(rows.into_iter().map(|r| (r.id, r.name)).collect())
+    Ok(rows.into_iter().map(|r| (r.key, r.name)).collect())
 }
 
 // =============================================================================
@@ -98,38 +101,58 @@ impl<'a> PgRenderEntityFetcher<'a> {
 impl RenderEntityFetcher for PgRenderEntityFetcher<'_> {
     async fn fetch_journal_names(
         &self,
-        ids: &[i64],
-    ) -> Result<HashMap<i64, String>, HexforgeError> {
-        batch_fetch_names(self.pool, "journals", "name_unicode", ids).await
+        keys: &[String],
+    ) -> Result<HashMap<String, String>, HexforgeError> {
+        batch_fetch_names_by_key(self.pool, "journals", "journal_key", "name_unicode", keys).await
     }
 
     async fn fetch_publisher_names(
         &self,
-        ids: &[i64],
-    ) -> Result<HashMap<i64, String>, HexforgeError> {
-        batch_fetch_names(self.pool, "publishers", "name_unicode", ids).await
+        keys: &[String],
+    ) -> Result<HashMap<String, String>, HexforgeError> {
+        batch_fetch_names_by_key(
+            self.pool,
+            "publishers",
+            "publisher_key",
+            "name_unicode",
+            keys,
+        )
+        .await
     }
 
     async fn fetch_institution_names(
         &self,
-        ids: &[i64],
-    ) -> Result<HashMap<i64, String>, HexforgeError> {
-        batch_fetch_names(self.pool, "institutions", "name_unicode", ids).await
+        keys: &[String],
+    ) -> Result<HashMap<String, String>, HexforgeError> {
+        batch_fetch_names_by_key(
+            self.pool,
+            "institutions",
+            "institution_key",
+            "name_unicode",
+            keys,
+        )
+        .await
     }
 
-    async fn fetch_school_names(&self, ids: &[i64]) -> Result<HashMap<i64, String>, HexforgeError> {
-        batch_fetch_names(self.pool, "schools", "name_unicode", ids).await
+    async fn fetch_school_names(
+        &self,
+        keys: &[String],
+    ) -> Result<HashMap<String, String>, HexforgeError> {
+        batch_fetch_names_by_key(self.pool, "schools", "school_key", "name_unicode", keys).await
     }
 
-    async fn fetch_series_names(&self, ids: &[i64]) -> Result<HashMap<i64, String>, HexforgeError> {
-        batch_fetch_names(self.pool, "series", "name_unicode", ids).await
+    async fn fetch_series_names(
+        &self,
+        keys: &[String],
+    ) -> Result<HashMap<String, String>, HexforgeError> {
+        batch_fetch_names_by_key(self.pool, "series", "series_key", "name_unicode", keys).await
     }
 
     async fn fetch_crossref_bibkeys(
         &self,
-        ids: &[i64],
-    ) -> Result<HashMap<i64, String>, HexforgeError> {
-        batch_fetch_names(self.pool, "bibitems", "bibkey", ids).await
+        keys: &[String],
+    ) -> Result<HashMap<String, String>, HexforgeError> {
+        batch_fetch_names_by_key(self.pool, "bibitems", "bibkey", "bibkey", keys).await
     }
 }
 
@@ -140,12 +163,15 @@ impl RenderEntityFetcher for PgRenderEntityFetcher<'_> {
 /// Concrete fetcher for author junction data and author entities.
 pub struct PgRenderAuthorFetcher<'a> {
     pool: &'a PgPool,
-    author_ds: &'a DataStore<Author, AuthorQuery>,
+    _author_ds: &'a DataStore<Author, AuthorQuery>,
 }
 
 impl<'a> PgRenderAuthorFetcher<'a> {
     pub fn new(pool: &'a PgPool, author_ds: &'a DataStore<Author, AuthorQuery>) -> Self {
-        Self { pool, author_ds }
+        Self {
+            pool,
+            _author_ds: author_ds,
+        }
     }
 }
 
@@ -157,19 +183,23 @@ impl RenderAuthorFetcher for PgRenderAuthorFetcher<'_> {
         fetch_bibitem_authors_batch(self.pool, bibitem_ids).await
     }
 
-    async fn fetch_authors_by_ids(
+    async fn fetch_authors_by_keys(
         &self,
-        ids: &[i64],
-    ) -> Result<HashMap<i64, Author>, HexforgeError> {
-        if ids.is_empty() {
+        keys: &[String],
+    ) -> Result<HashMap<String, Author>, HexforgeError> {
+        if keys.is_empty() {
             return Ok(HashMap::new());
         }
-        let authors = self
-            .author_ds
-            .find_by_ids(ids)
+        let sql = "SELECT * FROM authors WHERE author_key = ANY($1)";
+        let authors: Vec<Author> = hexforge::db_exports::query_as(sql)
+            .bind(keys)
+            .fetch_all(self.pool)
             .await
             .map_err(HexforgeError::data_source)?;
-        Ok(authors.into_iter().map(|a| (a.id, a)).collect())
+        Ok(authors
+            .into_iter()
+            .map(|a| (a.author_key.clone(), a))
+            .collect())
     }
 }
 

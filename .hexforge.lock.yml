@@ -261,7 +261,9 @@ models:
   # ---------------------------------------------------------------------------
   Keyword:
     table: "keywords"
+    key_field: "keyword_key"
     fields:
+      keyword_key: { type: string, required: true, unique: true }
       name: { type: string, required: true }
       level: { type: i16, required: true, check_range: [1, 3] }
     filters:
@@ -300,19 +302,19 @@ models:
       booktitle: { type: bib_string }
 
       # Publication info
-      journal_id: { type: "i64?" }
-      publisher_id: { type: "i64?" }
+      journal_key: { type: "string?" }
+      publisher_key: { type: "string?" }
       address: { type: "string?" }
       volume: { type: "string?" }
       number: { type: "string?" }
       pages: { type: "string?" }
       eid: { type: "string?" }
-      series_id: { type: "i64?" }
+      series_key: { type: "string?" }
       edition: { type: "string?" }
 
       # Institutional
-      institution_id: { type: "i64?" }
-      school_id: { type: "i64?" }
+      institution_key: { type: "string?" }
+      school_key: { type: "string?" }
       type_field: { type: "string?" }
 
       # Identifiers
@@ -322,7 +324,7 @@ models:
       urn: { type: "string?" }
 
       # References
-      crossref_id: { type: "i64?" }
+      crossref: { type: "string?" }
 
       # Issue/notes
       issuetitle_latex: { type: "string?" }
@@ -340,44 +342,53 @@ models:
       shorthand: { type: "string?" }
 
       # Internal tracking
-      person_id: { type: "i64?" }
+      person_key: { type: "string?" }
       has_fulltext: { type: bool }
       fulltext_path: { type: "string?" }
 
     relations:
       journal:
         type: belongs_to
-        fk: journal_id
+        fk: journal_key
         target: Journal
+        target_key: journal_key
       publisher:
         type: belongs_to
-        fk: publisher_id
+        fk: publisher_key
         target: Publisher
+        target_key: publisher_key
       institution:
         type: belongs_to
-        fk: institution_id
+        fk: institution_key
         target: Institution
+        target_key: institution_key
       school:
         type: belongs_to
-        fk: school_id
+        fk: school_key
         target: School
+        target_key: school_key
       series:
         type: belongs_to
-        fk: series_id
+        fk: series_key
         target: Series
+        target_key: series_key
       crossref:
         type: belongs_to
-        fk: crossref_id
+        fk: crossref
         target: BibItem
+        target_key: bibkey
       person:
         type: belongs_to
-        fk: person_id
+        fk: person_key
         target: Author
+        target_key: author_key
       authors:
         type: many_to_many
         through: bibitem_authors
-        local_fk: bibitem_id
-        foreign_fk: author_id
+        local_fk: bibkey
+        local_key: bibkey
+        foreign_fk: author_key
+        foreign_key: author_key
         target: Author
         extra_columns:
           - { name: role, type: "AuthorRole", default: "'author'", primary_key: true }
@@ -387,31 +398,39 @@ models:
       keywords:
         type: many_to_many
         through: bibitem_keywords
-        local_fk: bibitem_id
-        foreign_fk: keyword_id
+        local_fk: bibkey
+        local_key: bibkey
+        foreign_fk: keyword_key
+        foreign_key: keyword_key
         target: Keyword
         extra_columns:
           - { name: keyword_level, type: "i16" }
       refs:
         type: many_to_many
         through: bibitem_refs
-        local_fk: source_id
-        foreign_fk: target_id
+        local_fk: source_key
+        local_key: bibkey
+        foreign_fk: target_key
+        foreign_key: bibkey
         target: BibItem
         extra_columns:
           - { name: ref_type, type: "RefType", primary_key: true }
       further_refs:
         type: many_to_many
         through: bibitem_further_refs
-        local_fk: source_id
-        foreign_fk: dep_id
+        local_fk: source_key
+        local_key: bibkey
+        foreign_fk: dep_key
+        foreign_key: bibkey
         target: BibItem
         internal: true
       depends_on:
         type: many_to_many
         through: bibitem_depends_on
-        local_fk: source_id
-        foreign_fk: dep_id
+        local_fk: source_key
+        local_key: bibkey
+        foreign_fk: dep_key
+        foreign_key: bibkey
         target: BibItem
         internal: true
 
@@ -419,17 +438,17 @@ models:
       entry_type: { op: eq_cast, column: "entry_type::entry_type" }
       year_from: { op: gte, column: "date_year" }
       year_to: { op: lte, column: "date_year" }
-      author_id: { op: raw, sql: "id IN (SELECT bibitem_id FROM bibitem_authors WHERE author_id = $)" }
-      journal_id: { op: eq, column: "journal_id" }
+      author_key: { op: raw, sql: "bibkey IN (SELECT bibkey FROM bibitem_authors WHERE author_key = $)" }
+      journal_key: { op: eq, column: "journal_key" }
       epoch: { op: eq_cast, column: "epoch::epoch" }
       search_term: { op: like, column: "title_unicode" }
 
     indexes:
       - { columns: [entry_type] }
       - { columns: [date_year] }
-      - { columns: [journal_id] }
-      - { columns: [publisher_id] }
-      - { columns: [crossref_id] }
+      - { columns: [journal_key] }
+      - { columns: [publisher_key] }
+      - { columns: [crossref] }
       - { columns: [title_unicode], type: gin_trgm }
       - { columns: [bibkey], type: gin_trgm }
 
@@ -444,57 +463,71 @@ models:
     expand:
       journal:
         type: fk
-        fk: journal_id
+        fk: journal_key
         target: Journal
+        target_key: journal_key
         projection: [journal_key, name_unicode]
       publisher:
         type: fk
-        fk: publisher_id
+        fk: publisher_key
         target: Publisher
+        target_key: publisher_key
         projection: [publisher_key, name_unicode]
       institution:
         type: fk
-        fk: institution_id
+        fk: institution_key
         target: Institution
+        target_key: institution_key
         projection: [institution_key, name_unicode]
       school:
         type: fk
-        fk: school_id
+        fk: school_key
         target: School
+        target_key: school_key
         projection: [school_key, name_unicode]
       series:
         type: fk
-        fk: series_id
+        fk: series_key
         target: Series
+        target_key: series_key
         projection: [series_key, name_unicode]
       crossref:
         type: fk
-        fk: crossref_id
+        fk: crossref
         target: BibItem
+        target_key: bibkey
         projection: [bibkey, entry_type, title_unicode, date_year]
       authors:
         type: junction
         through: bibitem_authors
+        local_fk: bibkey
+        foreign_fk: author_key
         filter: "role = 'author'"
         target: Author
         projection: [author_key, given_name_unicode, family_name_unicode, mononym_unicode]
       editors:
         type: junction
         through: bibitem_authors
+        local_fk: bibkey
+        foreign_fk: author_key
         filter: "role = 'editor'"
         target: Author
         projection: [author_key, given_name_unicode, family_name_unicode, mononym_unicode]
       guesteditors:
         type: junction
         through: bibitem_authors
+        local_fk: bibkey
+        foreign_fk: author_key
         filter: "role = 'guesteditor'"
         target: Author
         projection: [author_key, given_name_unicode, family_name_unicode, mononym_unicode]
       keywords:
         type: junction
         through: bibitem_keywords
+        local_fk: bibkey
+        foreign_fk: keyword_key
         target: Keyword
-        projection: [name, level]
+        projection: [keyword_key, name, level]
 
   # ---------------------------------------------------------------------------
   # ApiKey (authentication table)
@@ -505,7 +538,7 @@ models:
   BibitemNotes:
     table: "bibitem_notes"
     fields:
-      bibitem_id: { type: "i64", required: true, unique: true }
+      bibkey: { type: "string", required: true, unique: true }
       note_perso: { type: "string?" }
       note_stock: { type: "string?" }
       note_missing: { type: "string?" }
@@ -515,8 +548,9 @@ models:
     relations:
       bibitem:
         type: belongs_to
-        fk: bibitem_id
+        fk: bibkey
         target: BibItem
+        target_key: bibkey
 
   # ---------------------------------------------------------------------------
   # DataVersion (data version tracking — append-only log)

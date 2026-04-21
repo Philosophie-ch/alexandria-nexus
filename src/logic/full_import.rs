@@ -374,10 +374,14 @@ pub struct VariantInfo {
 pub struct AuthorLookupResult {
     /// AuthorNameKey -> list of matching author IDs (for validation: detect ambiguous)
     pub id_map: HashMap<AuthorNameKey, Vec<i64>>,
+    /// AuthorNameKey -> list of matching author_key strings (parallel to id_map)
+    pub key_map: HashMap<AuthorNameKey, Vec<String>>,
     /// AuthorNameKey -> variant info (only for keys matched via a name variant)
     pub variant_map: HashMap<AuthorNameKey, VariantInfo>,
     /// name string -> author IDs, famous authors only (for _person resolution)
     pub famous_person_map: HashMap<String, Vec<i64>>,
+    /// name string -> author_key strings, famous authors only (parallel to famous_person_map)
+    pub famous_person_key_map: HashMap<String, Vec<String>>,
 }
 
 // =============================================================================
@@ -387,12 +391,12 @@ pub struct AuthorLookupResult {
 /// All DB lookup maps, built once per import operation.
 pub struct LookupMaps {
     pub authors: AuthorLookupResult,
-    pub journals: HashMap<String, i64>,
-    pub publishers: HashMap<String, i64>,
-    pub institutions: HashMap<String, i64>,
-    pub schools: HashMap<String, i64>,
-    pub series: HashMap<String, i64>,
-    pub keywords: HashMap<(String, i16), i64>,
+    pub journals: HashMap<String, String>,
+    pub publishers: HashMap<String, String>,
+    pub institutions: HashMap<String, String>,
+    pub schools: HashMap<String, String>,
+    pub series: HashMap<String, String>,
+    pub keywords: HashMap<(String, i16), String>,
     pub bibkeys: HashSet<String>,
 }
 
@@ -403,16 +407,20 @@ pub struct LookupMaps {
 /// Resolution context for bibitem upsert (single-match authors only).
 pub struct ResolutionCtx {
     pub author_resolve: HashMap<AuthorNameKey, i64>,
+    /// AuthorNameKey → single author_key string (unambiguous matches only).
+    pub author_key_resolve: HashMap<AuthorNameKey, String>,
     /// For keys that matched via a name variant, stores the variant strings.
     pub author_variants: HashMap<AuthorNameKey, VariantInfo>,
     /// Unambiguous famous-author name → ID, used exclusively for _person resolution.
     pub famous_person_resolve: HashMap<String, i64>,
-    pub journal_map: HashMap<String, i64>,
-    pub publisher_map: HashMap<String, i64>,
-    pub institution_map: HashMap<String, i64>,
-    pub school_map: HashMap<String, i64>,
-    pub series_map: HashMap<String, i64>,
-    pub keyword_map: HashMap<(String, i16), i64>,
+    /// Unambiguous famous-author name → author_key string.
+    pub famous_person_key_resolve: HashMap<String, String>,
+    pub journal_map: HashMap<String, String>,
+    pub publisher_map: HashMap<String, String>,
+    pub institution_map: HashMap<String, String>,
+    pub school_map: HashMap<String, String>,
+    pub series_map: HashMap<String, String>,
+    pub keyword_map: HashMap<(String, i16), String>,
     pub existing_bibkeys: HashSet<String>,
 }
 
@@ -432,6 +440,30 @@ impl ResolutionCtx {
                 }
             })
             .collect();
+        let famous_person_key_resolve = maps
+            .authors
+            .famous_person_key_map
+            .into_iter()
+            .filter_map(|(k, keys)| {
+                if keys.len() == 1 {
+                    Some((k, keys.into_iter().next().unwrap()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let author_key_resolve = maps
+            .authors
+            .key_map
+            .into_iter()
+            .filter_map(|(k, keys)| {
+                if keys.len() == 1 {
+                    Some((k, keys.into_iter().next().unwrap()))
+                } else {
+                    None
+                }
+            })
+            .collect();
         ResolutionCtx {
             author_resolve: maps
                 .authors
@@ -445,8 +477,10 @@ impl ResolutionCtx {
                     }
                 })
                 .collect(),
+            author_key_resolve,
             author_variants,
             famous_person_resolve,
+            famous_person_key_resolve,
             journal_map: maps.journals,
             publisher_map: maps.publishers,
             institution_map: maps.institutions,
@@ -546,7 +580,7 @@ impl CollectedNames {
 
 pub fn find_missing_names(
     requested: &HashSet<String>,
-    existing: &HashMap<String, i64>,
+    existing: &HashMap<String, String>,
 ) -> Vec<String> {
     let mut missing: Vec<String> = requested
         .iter()
@@ -560,7 +594,7 @@ pub fn find_missing_names(
 pub fn find_missing_keywords(
     requested: &HashSet<String>,
     level: i16,
-    existing: &HashMap<(String, i16), i64>,
+    existing: &HashMap<(String, i16), String>,
 ) -> Vec<String> {
     let mut missing: Vec<String> = requested
         .iter()
@@ -617,7 +651,13 @@ pub fn resolve_person_id(person: &ParsedAuthor, ctx: &ResolutionCtx) -> Option<i
 // =============================================================================
 
 pub fn build_bibitem_dto(row: &ParsedBibRow, ctx: &ResolutionCtx) -> Result<CreateBibItem, String> {
-    let person_id = row.person.as_ref().and_then(|p| resolve_person_id(p, ctx));
+    let person_key = row.person.as_ref().and_then(|p| {
+        let name = match p {
+            ParsedAuthor::Mononym(m) => m.as_str(),
+            ParsedAuthor::Named { family_name, .. } => family_name.as_str(),
+        };
+        ctx.famous_person_key_resolve.get(name).cloned()
+    });
 
     let mut dto = CreateBibItem {
         bibkey: row.bibkey.clone(),
@@ -633,38 +673,38 @@ pub fn build_bibitem_dto(row: &ParsedBibRow, ctx: &ResolutionCtx) -> Result<Crea
         title_unicode: None,
         booktitle_latex: row.booktitle.clone(),
         booktitle_unicode: None,
-        journal_id: row
+        journal_key: row
             .journal_name
             .as_ref()
-            .and_then(|n| ctx.journal_map.get(n).copied()),
-        publisher_id: row
+            .and_then(|n| ctx.journal_map.get(n).cloned()),
+        publisher_key: row
             .publisher_name
             .as_ref()
-            .and_then(|n| ctx.publisher_map.get(n).copied()),
+            .and_then(|n| ctx.publisher_map.get(n).cloned()),
         address: row.address.clone(),
         volume: row.volume.clone(),
         number: row.number.clone(),
         pages: row.pages.clone(),
         eid: row.eid.clone(),
-        series_id: row
+        series_key: row
             .series_name
             .as_ref()
-            .and_then(|n| ctx.series_map.get(n).copied()),
+            .and_then(|n| ctx.series_map.get(n).cloned()),
         edition: row.edition.clone(),
-        institution_id: row
+        institution_key: row
             .institution_name
             .as_ref()
-            .and_then(|n| ctx.institution_map.get(n).copied()),
-        school_id: row
+            .and_then(|n| ctx.institution_map.get(n).cloned()),
+        school_key: row
             .school_name
             .as_ref()
-            .and_then(|n| ctx.school_map.get(n).copied()),
+            .and_then(|n| ctx.school_map.get(n).cloned()),
         type_field: row.type_field.clone(),
         doi: row.doi.clone(),
         url: row.url.clone(),
         eprint: row.eprint.clone(),
         urn: row.urn.clone(),
-        crossref_id: None, // resolved after all bibitems inserted -- skip for now
+        crossref: None, // resolved after all bibitems inserted -- skip for now
         issuetitle_latex: row.issuetitle.clone(),
         issuetitle_unicode: None,
         note_latex: row.note.clone(),
@@ -676,7 +716,7 @@ pub fn build_bibitem_dto(row: &ParsedBibRow, ctx: &ResolutionCtx) -> Result<Crea
         epoch: row.epoch,
         options: row.options.clone(),
         shorthand: row.shorthand.clone(),
-        person_id,
+        person_key,
         has_fulltext: row.has_fulltext,
         fulltext_path: None,
     };
@@ -813,17 +853,17 @@ pub fn assemble_validation_report(
 
 /// Pre-resolved lookup data for building export records.
 pub struct ExportContext<'a> {
-    pub author_names: &'a HashMap<i64, String>,
-    pub journal_names: &'a HashMap<i64, String>,
-    pub publisher_names: &'a HashMap<i64, String>,
-    pub institution_names: &'a HashMap<i64, String>,
-    pub school_names: &'a HashMap<i64, String>,
-    pub series_names: &'a HashMap<i64, String>,
-    pub keyword_names: &'a HashMap<i64, (String, i16)>,
+    pub author_names: &'a HashMap<String, String>,
+    pub journal_names: &'a HashMap<String, String>,
+    pub publisher_names: &'a HashMap<String, String>,
+    pub institution_names: &'a HashMap<String, String>,
+    pub school_names: &'a HashMap<String, String>,
+    pub series_names: &'a HashMap<String, String>,
+    pub keyword_names: &'a HashMap<String, (String, i16)>,
     pub bibkey_by_id: &'a HashMap<i64, String>,
-    pub authors_by_bib: &'a HashMap<i64, Vec<&'a crate::domain::junctions::BibitemAuthorsRow>>,
-    pub keywords_by_bib: &'a HashMap<i64, Vec<&'a crate::domain::junctions::BibitemKeywordsRow>>,
-    pub notes_by_bib: &'a HashMap<i64, crate::domain::BibitemNotes>,
+    pub authors_by_bib: &'a HashMap<String, Vec<&'a crate::domain::junctions::BibitemAuthorsRow>>,
+    pub keywords_by_bib: &'a HashMap<String, Vec<&'a crate::domain::junctions::BibitemKeywordsRow>>,
+    pub notes_by_bib: &'a HashMap<String, crate::domain::BibitemNotes>,
 }
 
 /// Build the record for a single bibitem.
@@ -834,14 +874,14 @@ pub fn build_export_record(bib: &crate::domain::BibItem, ctx: &ExportContext<'_>
     let authors_for_role = |role: AuthorRole| -> String {
         let role_str = role.to_string();
         ctx.authors_by_bib
-            .get(&bib.id)
+            .get(&bib.bibkey)
             .map(|rows| {
                 let mut filtered: Vec<&&crate::domain::junctions::BibitemAuthorsRow> =
                     rows.iter().filter(|r| r.role == role_str).collect();
                 filtered.sort_by_key(|r| r.position);
                 filtered
                     .iter()
-                    .filter_map(|r| ctx.author_names.get(&r.author_id))
+                    .filter_map(|r| ctx.author_names.get(&r.author_key))
                     .cloned()
                     .collect::<Vec<_>>()
                     .join(" and ")
@@ -851,18 +891,20 @@ pub fn build_export_record(bib: &crate::domain::BibItem, ctx: &ExportContext<'_>
 
     let keywords_for_level = |level: i16| -> String {
         ctx.keywords_by_bib
-            .get(&bib.id)
+            .get(&bib.bibkey)
             .map(|rows| {
                 let names: Vec<&str> = rows
                     .iter()
                     .filter_map(|r| {
-                        ctx.keyword_names.get(&r.keyword_id).and_then(|(name, lv)| {
-                            if *lv == level {
-                                Some(name.as_str())
-                            } else {
-                                None
-                            }
-                        })
+                        ctx.keyword_names
+                            .get(&r.keyword_key)
+                            .and_then(|(name, lv)| {
+                                if *lv == level {
+                                    Some(name.as_str())
+                                } else {
+                                    None
+                                }
+                            })
                     })
                     .collect();
                 if names.is_empty() {
@@ -875,14 +917,11 @@ pub fn build_export_record(bib: &crate::domain::BibItem, ctx: &ExportContext<'_>
     };
 
     let date = format_date_for_export(bib);
-    let crossref = bib
-        .crossref_id
-        .and_then(|id| ctx.bibkey_by_id.get(&id))
-        .cloned()
-        .unwrap_or_default();
+    let crossref = bib.crossref.clone().unwrap_or_default();
     let person = bib
-        .person_id
-        .and_then(|id| ctx.author_names.get(&id))
+        .person_key
+        .as_deref()
+        .and_then(|k| ctx.author_names.get(k))
         .map(|n| format!("{n};"))
         .unwrap_or_default();
 
@@ -896,24 +935,29 @@ pub fn build_export_record(bib: &crate::domain::BibItem, ctx: &ExportContext<'_>
         bib.pubstate.map(|p| p.to_string()).unwrap_or_default(),
         bib.title_latex.clone(),
         bib.booktitle_latex.clone().unwrap_or_default(),
-        bib.journal_id
-            .and_then(|id| ctx.journal_names.get(&id))
+        bib.journal_key
+            .as_deref()
+            .and_then(|k| ctx.journal_names.get(k))
             .cloned()
             .unwrap_or_default(),
-        bib.publisher_id
-            .and_then(|id| ctx.publisher_names.get(&id))
+        bib.publisher_key
+            .as_deref()
+            .and_then(|k| ctx.publisher_names.get(k))
             .cloned()
             .unwrap_or_default(),
-        bib.institution_id
-            .and_then(|id| ctx.institution_names.get(&id))
+        bib.institution_key
+            .as_deref()
+            .and_then(|k| ctx.institution_names.get(k))
             .cloned()
             .unwrap_or_default(),
-        bib.school_id
-            .and_then(|id| ctx.school_names.get(&id))
+        bib.school_key
+            .as_deref()
+            .and_then(|k| ctx.school_names.get(k))
             .cloned()
             .unwrap_or_default(),
-        bib.series_id
-            .and_then(|id| ctx.series_names.get(&id))
+        bib.series_key
+            .as_deref()
+            .and_then(|k| ctx.series_names.get(k))
             .cloned()
             .unwrap_or_default(),
         bib.volume.clone().unwrap_or_default(),
@@ -950,27 +994,27 @@ pub fn build_export_record(bib: &crate::domain::BibItem, ctx: &ExportContext<'_>
         bib.eprint.clone().unwrap_or_default(),
         bib.urn.clone().unwrap_or_default(),
         ctx.notes_by_bib
-            .get(&bib.id)
+            .get(&bib.bibkey)
             .and_then(|n| n.note_perso.clone())
             .unwrap_or_default(),
         ctx.notes_by_bib
-            .get(&bib.id)
+            .get(&bib.bibkey)
             .and_then(|n| n.note_stock.clone())
             .unwrap_or_default(),
         ctx.notes_by_bib
-            .get(&bib.id)
+            .get(&bib.bibkey)
             .and_then(|n| n.note_missing.clone())
             .unwrap_or_default(),
         ctx.notes_by_bib
-            .get(&bib.id)
+            .get(&bib.bibkey)
             .and_then(|n| n.change_request.clone())
             .unwrap_or_default(),
         ctx.notes_by_bib
-            .get(&bib.id)
+            .get(&bib.bibkey)
             .and_then(|n| n.dltc_copyediting_note.clone())
             .unwrap_or_default(),
         ctx.notes_by_bib
-            .get(&bib.id)
+            .get(&bib.bibkey)
             .and_then(|n| n.todo_general.clone())
             .unwrap_or_default(),
     ]
@@ -1000,8 +1044,8 @@ pub fn format_date_for_export(bib: &crate::domain::BibItem) -> String {
 // =============================================================================
 
 pub struct AuthorJunctionRow {
-    pub bibitem_id: i64,
-    pub author_id: i64,
+    pub bibkey: String,
+    pub author_key: String,
     pub role: AuthorRole,
     pub position: i16,
     pub variant_latex: Option<String>,
@@ -1009,13 +1053,13 @@ pub struct AuthorJunctionRow {
 }
 
 pub struct KeywordJunctionRow {
-    pub bibitem_id: i64,
-    pub keyword_id: i64,
+    pub bibkey: String,
+    pub keyword_key: String,
     pub keyword_level: i16,
 }
 
 pub struct BibitemRefInsertRow {
-    pub source_id: i64,
+    pub source_bibkey: String,
     pub target_bibkey: String,
     pub ref_type: RefType,
 }
@@ -1028,14 +1072,10 @@ pub struct BibitemRefInsertRow {
 /// Authors that cannot be resolved are silently skipped (already reported in validation).
 pub fn collect_author_junction_rows(
     parsed_rows: &[ParsedBibRow],
-    bibkey_to_id: &HashMap<String, i64>,
     ctx: &ResolutionCtx,
 ) -> Vec<AuthorJunctionRow> {
     let mut rows = Vec::new();
     for parsed in parsed_rows {
-        let Some(&bibitem_id) = bibkey_to_id.get(&parsed.bibkey) else {
-            continue;
-        };
         for (role, authors) in [
             (AuthorRole::Author, &parsed.authors),
             (AuthorRole::Editor, &parsed.editors),
@@ -1043,7 +1083,7 @@ pub fn collect_author_junction_rows(
         ] {
             for (position, author) in authors.iter().enumerate() {
                 let key = AuthorNameKey::from_parsed(author);
-                let Some(&author_id) = ctx.author_resolve.get(&key) else {
+                let Some(author_key) = ctx.author_key_resolve.get(&key).cloned() else {
                     continue;
                 };
                 let Ok(pos) = i16::try_from(position) else {
@@ -1051,8 +1091,8 @@ pub fn collect_author_junction_rows(
                 };
                 let variant = ctx.author_variants.get(&key);
                 rows.push(AuthorJunctionRow {
-                    bibitem_id,
-                    author_id,
+                    bibkey: parsed.bibkey.clone(),
+                    author_key,
                     role,
                     position: pos,
                     variant_latex: variant.and_then(|v| v.variant_latex.clone()),
@@ -1068,14 +1108,10 @@ pub fn collect_author_junction_rows(
 /// Keywords that cannot be resolved are silently skipped.
 pub fn collect_keyword_junction_rows(
     parsed_rows: &[ParsedBibRow],
-    bibkey_to_id: &HashMap<String, i64>,
     ctx: &ResolutionCtx,
 ) -> Vec<KeywordJunctionRow> {
     let mut rows = Vec::new();
     for parsed in parsed_rows {
-        let Some(&bibitem_id) = bibkey_to_id.get(&parsed.bibkey) else {
-            continue;
-        };
         let all_keywords: Vec<(&String, i16)> = parsed
             .keywords
             .level_1
@@ -1085,12 +1121,12 @@ pub fn collect_keyword_junction_rows(
             .chain(parsed.keywords.level_3.iter().map(|k| (k, 3i16)))
             .collect();
         for (name, level) in all_keywords {
-            let Some(&keyword_id) = ctx.keyword_map.get(&(name.clone(), level)) else {
+            let Some(keyword_key) = ctx.keyword_map.get(&(name.clone(), level)).cloned() else {
                 continue;
             };
             rows.push(KeywordJunctionRow {
-                bibitem_id,
-                keyword_id,
+                bibkey: parsed.bibkey.clone(),
+                keyword_key,
                 keyword_level: level,
             });
         }
@@ -1184,16 +1220,9 @@ fn collect_missing_for_row(row: &ParsedBibRow, ctx: &ResolutionCtx) -> Vec<Strin
 ///
 /// Further-ref sources: `\cite*` commands in `title` and `note` fields.
 /// Depends-on sources: `\cite*` commands in `extra_note` and `crossref_bibkey`.
-pub fn collect_ref_rows(
-    parsed_rows: &[ParsedBibRow],
-    bibkey_to_id: &HashMap<String, i64>,
-) -> Vec<BibitemRefInsertRow> {
+pub fn collect_ref_rows(parsed_rows: &[ParsedBibRow]) -> Vec<BibitemRefInsertRow> {
     let mut rows = Vec::new();
     for parsed in parsed_rows {
-        let Some(&source_id) = bibkey_to_id.get(&parsed.bibkey) else {
-            continue;
-        };
-
         let title_keys = extract_cite_keys(&parsed.title);
         let note_keys = parsed
             .note
@@ -1218,14 +1247,14 @@ pub fn collect_ref_rows(
 
         for bibkey in further {
             rows.push(BibitemRefInsertRow {
-                source_id,
+                source_bibkey: parsed.bibkey.clone(),
                 target_bibkey: bibkey.to_string(),
                 ref_type: RefType::FurtherRef,
             });
         }
         for bibkey in depends_on {
             rows.push(BibitemRefInsertRow {
-                source_id,
+                source_bibkey: parsed.bibkey.clone(),
                 target_bibkey: bibkey.to_string(),
                 ref_type: RefType::DependsOn,
             });
@@ -1249,8 +1278,10 @@ mod tests {
             .collect();
         ResolutionCtx {
             author_resolve: HashMap::new(),
+            author_key_resolve: HashMap::new(),
             author_variants: HashMap::new(),
             famous_person_resolve,
+            famous_person_key_resolve: HashMap::new(),
             journal_map: HashMap::new(),
             publisher_map: HashMap::new(),
             institution_map: HashMap::new(),

@@ -139,7 +139,7 @@ impl SnapshotFetcher for PgSnapshotFetcher {
         let pool = self.pool.clone();
         async move {
             query_as::<_, BibitemAuthorsRow>(
-                "SELECT bibitem_id, author_id, role::text, position, name_variant_latex, name_variant_unicode FROM bibitem_authors ORDER BY bibitem_id, position",
+                "SELECT bibkey, author_key, role::text as role, position, name_variant_latex, name_variant_unicode FROM bibitem_authors ORDER BY bibkey, position",
             )
             .fetch_all(&pool)
             .await
@@ -154,7 +154,7 @@ impl SnapshotFetcher for PgSnapshotFetcher {
         let pool = self.pool.clone();
         async move {
             query_as::<_, BibitemKeywordsRow>(
-                "SELECT * FROM bibitem_keywords ORDER BY bibitem_id, keyword_id",
+                "SELECT * FROM bibitem_keywords ORDER BY bibkey, keyword_key",
             )
             .fetch_all(&pool)
             .await
@@ -168,8 +168,8 @@ impl SnapshotFetcher for PgSnapshotFetcher {
         let pool = self.pool.clone();
         async move {
             query_as::<_, BibitemRefsRow>(
-                "SELECT source_id, target_id, ref_type::text AS ref_type \
-                 FROM bibitem_refs ORDER BY source_id, target_id",
+                "SELECT source_key, target_key, ref_type::text AS ref_type \
+                 FROM bibitem_refs ORDER BY source_key, target_key",
             )
             .fetch_all(&pool)
             .await
@@ -182,7 +182,7 @@ impl SnapshotFetcher for PgSnapshotFetcher {
     ) -> impl std::future::Future<Output = Result<Vec<BibitemNotes>, HexforgeError>> + Send {
         let pool = self.pool.clone();
         async move {
-            query_as::<_, BibitemNotes>("SELECT * FROM bibitem_notes ORDER BY bibitem_id")
+            query_as::<_, BibitemNotes>("SELECT * FROM bibitem_notes ORDER BY bibkey")
                 .fetch_all(&pool)
                 .await
                 .map_err(HexforgeError::data_source)
@@ -229,8 +229,8 @@ fn author_key_prefix(author_key: &str) -> String {
 fn build_bibitem_authors_csv(rows: &[&BibitemAuthorsRow]) -> Result<Vec<u8>, HexforgeError> {
     let mut wtr = csv::Writer::from_writer(vec![]);
     wtr.write_record([
-        "bibitem_id",
-        "author_id",
+        "bibkey",
+        "author_key",
         "role",
         "position",
         "name_variant_latex",
@@ -239,8 +239,8 @@ fn build_bibitem_authors_csv(rows: &[&BibitemAuthorsRow]) -> Result<Vec<u8>, Hex
     .map_err(internal_err)?;
     for r in rows {
         wtr.write_record([
-            &r.bibitem_id.to_string(),
-            &r.author_id.to_string(),
+            &r.bibkey,
+            &r.author_key,
             &r.role,
             &r.position.to_string(),
             opt_str(&r.name_variant_latex),
@@ -254,15 +254,11 @@ fn build_bibitem_authors_csv(rows: &[&BibitemAuthorsRow]) -> Result<Vec<u8>, Hex
 /// Build `bibitem_keywords` CSV bytes for one prefix group.
 fn build_bibitem_keywords_csv(rows: &[&BibitemKeywordsRow]) -> Result<Vec<u8>, HexforgeError> {
     let mut wtr = csv::Writer::from_writer(vec![]);
-    wtr.write_record(["bibitem_id", "keyword_id", "keyword_level"])
+    wtr.write_record(["bibkey", "keyword_key", "keyword_level"])
         .map_err(internal_err)?;
     for r in rows {
-        wtr.write_record([
-            &r.bibitem_id.to_string(),
-            &r.keyword_id.to_string(),
-            &r.keyword_level.to_string(),
-        ])
-        .map_err(internal_err)?;
+        wtr.write_record([&r.bibkey, &r.keyword_key, &r.keyword_level.to_string()])
+            .map_err(internal_err)?;
     }
     wtr.into_inner().map_err(internal_err)
 }
@@ -270,15 +266,11 @@ fn build_bibitem_keywords_csv(rows: &[&BibitemKeywordsRow]) -> Result<Vec<u8>, H
 /// Build `bibitem_refs` CSV bytes (single file).
 fn build_bibitem_refs_csv(rows: &[BibitemRefsRow]) -> Result<Vec<u8>, HexforgeError> {
     let mut wtr = csv::Writer::from_writer(vec![]);
-    wtr.write_record(["source_id", "target_id", "ref_type"])
+    wtr.write_record(["source_key", "target_key", "ref_type"])
         .map_err(internal_err)?;
     for r in rows {
-        wtr.write_record([
-            &r.source_id.to_string(),
-            &r.target_id.to_string(),
-            &r.ref_type,
-        ])
-        .map_err(internal_err)?;
+        wtr.write_record([&r.source_key, &r.target_key, &r.ref_type])
+            .map_err(internal_err)?;
     }
     wtr.into_inner().map_err(internal_err)
 }
@@ -287,7 +279,7 @@ fn build_bibitem_refs_csv(rows: &[BibitemRefsRow]) -> Result<Vec<u8>, HexforgeEr
 fn build_bibitem_notes_csv(rows: &[BibitemNotes]) -> Result<Vec<u8>, HexforgeError> {
     let mut wtr = csv::Writer::from_writer(vec![]);
     wtr.write_record([
-        "bibitem_id",
+        "bibkey",
         "note_perso",
         "note_stock",
         "note_missing",
@@ -298,7 +290,7 @@ fn build_bibitem_notes_csv(rows: &[BibitemNotes]) -> Result<Vec<u8>, HexforgeErr
     .map_err(internal_err)?;
     for r in rows {
         wtr.write_record([
-            &r.bibitem_id.to_string(),
+            &r.bibkey,
             r.note_perso.as_deref().unwrap_or(""),
             r.note_stock.as_deref().unwrap_or(""),
             r.note_missing.as_deref().unwrap_or(""),
@@ -387,13 +379,6 @@ pub fn build_snapshot_zip(data: SnapshotData) -> Result<Vec<u8>, HexforgeError> 
     }
 
     // ── Bibitems — split by 2-char prefix ─────────────────────────────────────
-    // Build bibitem_id → prefix map (used later for junction splits)
-    let bibitem_id_to_prefix: HashMap<i64, String> = data
-        .bibitems
-        .iter()
-        .map(|b| (b.id, bibkey_prefix(&b.bibkey)))
-        .collect();
-
     let mut bibitems_by_prefix: HashMap<String, Vec<&BibItem>> = HashMap::new();
     for b in &data.bibitems {
         bibitems_by_prefix
@@ -401,18 +386,20 @@ pub fn build_snapshot_zip(data: SnapshotData) -> Result<Vec<u8>, HexforgeError> 
             .or_default()
             .push(b);
     }
-    // Group junction rows by bibitem prefix (needed per-bibitem-group)
+    // Group junction rows by bibitem bibkey prefix
     let mut ba_by_prefix: HashMap<String, Vec<&BibitemAuthorsRow>> = HashMap::new();
     for r in &data.bibitem_authors {
-        if let Some(prefix) = bibitem_id_to_prefix.get(&r.bibitem_id) {
-            ba_by_prefix.entry(prefix.clone()).or_default().push(r);
-        }
+        ba_by_prefix
+            .entry(bibkey_prefix(&r.bibkey))
+            .or_default()
+            .push(r);
     }
     let mut bk_by_prefix: HashMap<String, Vec<&BibitemKeywordsRow>> = HashMap::new();
     for r in &data.bibitem_keywords {
-        if let Some(prefix) = bibitem_id_to_prefix.get(&r.bibitem_id) {
-            bk_by_prefix.entry(prefix.clone()).or_default().push(r);
-        }
+        bk_by_prefix
+            .entry(bibkey_prefix(&r.bibkey))
+            .or_default()
+            .push(r);
     }
 
     let mut bib_prefixes: Vec<&String> = bibitems_by_prefix.keys().collect();
@@ -521,23 +508,23 @@ mod tests {
             pubstate: None,
             booktitle_latex: None,
             booktitle_unicode: None,
-            journal_id: None,
-            publisher_id: None,
+            journal_key: None,
+            publisher_key: None,
             address: None,
             volume: None,
             number: None,
             pages: None,
             eid: None,
-            series_id: None,
+            series_key: None,
             edition: None,
-            institution_id: None,
-            school_id: None,
+            institution_key: None,
+            school_key: None,
             type_field: None,
             doi: None,
             url: None,
             eprint: None,
             urn: None,
-            crossref_id: None,
+            crossref: None,
             issuetitle_latex: None,
             issuetitle_unicode: None,
             note_latex: None,
@@ -549,7 +536,7 @@ mod tests {
             epoch: None,
             options: None,
             shorthand: None,
-            person_id: None,
+            person_key: None,
             has_fulltext: false,
             fulltext_path: None,
             created_at: Utc::now(),
@@ -680,8 +667,11 @@ mod tests {
         let header = csv.lines().next().unwrap();
         assert!(header.contains("bibkey"), "missing bibkey column");
         assert!(header.contains("entry_type"), "missing entry_type column");
-        assert!(header.contains("author_ids"), "missing author_ids column");
-        assert!(header.contains("keyword_ids"), "missing keyword_ids column");
+        assert!(header.contains("author_keys"), "missing author_keys column");
+        assert!(
+            header.contains("keyword_keys"),
+            "missing keyword_keys column"
+        );
     }
 
     #[test]
@@ -716,8 +706,8 @@ mod tests {
         let mut data = empty_snapshot();
         data.bibitems = vec![make_bibitem(1, "kant:1781")];
         data.bibitem_authors = vec![BibitemAuthorsRow {
-            bibitem_id: 1,
-            author_id: 99,
+            bibkey: "kant:1781".to_string(),
+            author_key: "kant".to_string(),
             role: "author".to_string(),
             position: 1,
             name_variant_latex: None,
@@ -726,12 +716,12 @@ mod tests {
         let bytes = build_snapshot_zip(data).unwrap();
         let csv = zip_file_content(&bytes, "bibitem_authors/ka.csv");
         let header = csv.lines().next().unwrap();
-        assert!(header.contains("bibitem_id"));
-        assert!(header.contains("author_id"));
+        assert!(header.contains("bibkey"));
+        assert!(header.contains("author_key"));
         assert!(header.contains("role"));
         assert!(header.contains("position"));
         // Data row
-        assert!(csv.contains("99"), "author_id not found in CSV");
+        assert!(csv.contains("kant"), "author_key not found in CSV");
         assert!(csv.contains("author"), "role not found in CSV");
     }
 }

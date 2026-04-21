@@ -34,38 +34,38 @@ pub trait BibitemResolver: Send + Sync {
 
 /// Contract for batch-fetching related entity names for rendering.
 ///
-/// Each method returns a map of entity ID → display name (unicode).
-/// The crossref method returns ID → bibkey instead.
+/// Each method returns a map of entity key → display name (unicode).
+/// The crossref method returns crossref key → bibkey instead.
 pub trait RenderEntityFetcher: Send + Sync {
     fn fetch_journal_names(
         &self,
-        ids: &[i64],
-    ) -> impl Future<Output = Result<HashMap<i64, String>, HexforgeError>> + Send;
+        keys: &[String],
+    ) -> impl Future<Output = Result<HashMap<String, String>, HexforgeError>> + Send;
 
     fn fetch_publisher_names(
         &self,
-        ids: &[i64],
-    ) -> impl Future<Output = Result<HashMap<i64, String>, HexforgeError>> + Send;
+        keys: &[String],
+    ) -> impl Future<Output = Result<HashMap<String, String>, HexforgeError>> + Send;
 
     fn fetch_institution_names(
         &self,
-        ids: &[i64],
-    ) -> impl Future<Output = Result<HashMap<i64, String>, HexforgeError>> + Send;
+        keys: &[String],
+    ) -> impl Future<Output = Result<HashMap<String, String>, HexforgeError>> + Send;
 
     fn fetch_school_names(
         &self,
-        ids: &[i64],
-    ) -> impl Future<Output = Result<HashMap<i64, String>, HexforgeError>> + Send;
+        keys: &[String],
+    ) -> impl Future<Output = Result<HashMap<String, String>, HexforgeError>> + Send;
 
     fn fetch_series_names(
         &self,
-        ids: &[i64],
-    ) -> impl Future<Output = Result<HashMap<i64, String>, HexforgeError>> + Send;
+        keys: &[String],
+    ) -> impl Future<Output = Result<HashMap<String, String>, HexforgeError>> + Send;
 
     fn fetch_crossref_bibkeys(
         &self,
-        ids: &[i64],
-    ) -> impl Future<Output = Result<HashMap<i64, String>, HexforgeError>> + Send;
+        keys: &[String],
+    ) -> impl Future<Output = Result<HashMap<String, String>, HexforgeError>> + Send;
 }
 
 /// Contract for fetching transitive further-ref dep IDs for a set of source IDs.
@@ -83,10 +83,10 @@ pub trait RenderAuthorFetcher: Send + Sync {
         bibitem_ids: &[i64],
     ) -> impl Future<Output = Result<Vec<BibitemAuthorsRow>, HexforgeError>> + Send;
 
-    fn fetch_authors_by_ids(
+    fn fetch_authors_by_keys(
         &self,
-        ids: &[i64],
-    ) -> impl Future<Output = Result<HashMap<i64, Author>, HexforgeError>> + Send;
+        keys: &[String],
+    ) -> impl Future<Output = Result<HashMap<String, Author>, HexforgeError>> + Send;
 }
 
 // =============================================================================
@@ -229,32 +229,32 @@ async fn fetch_and_render(
 ) -> Result<String, HexforgeError> {
     let bibitem_ids: Vec<i64> = bibitems.iter().map(|b| b.id).collect();
 
-    // Collect unique FK IDs
-    let mut journal_ids = Vec::new();
-    let mut publisher_ids = Vec::new();
-    let mut institution_ids = Vec::new();
-    let mut school_ids = Vec::new();
-    let mut series_ids = Vec::new();
-    let mut crossref_ids = Vec::new();
+    // Collect unique FK keys
+    let mut journal_keys: Vec<String> = Vec::new();
+    let mut publisher_keys: Vec<String> = Vec::new();
+    let mut institution_keys: Vec<String> = Vec::new();
+    let mut school_keys: Vec<String> = Vec::new();
+    let mut series_keys: Vec<String> = Vec::new();
+    let mut crossref_keys: Vec<String> = Vec::new();
 
     for bib in &bibitems {
-        if let Some(id) = bib.journal_id {
-            journal_ids.push(id);
+        if let Some(ref k) = bib.journal_key {
+            journal_keys.push(k.clone());
         }
-        if let Some(id) = bib.publisher_id {
-            publisher_ids.push(id);
+        if let Some(ref k) = bib.publisher_key {
+            publisher_keys.push(k.clone());
         }
-        if let Some(id) = bib.institution_id {
-            institution_ids.push(id);
+        if let Some(ref k) = bib.institution_key {
+            institution_keys.push(k.clone());
         }
-        if let Some(id) = bib.school_id {
-            school_ids.push(id);
+        if let Some(ref k) = bib.school_key {
+            school_keys.push(k.clone());
         }
-        if let Some(id) = bib.series_id {
-            series_ids.push(id);
+        if let Some(ref k) = bib.series_key {
+            series_keys.push(k.clone());
         }
-        if let Some(id) = bib.crossref_id {
-            crossref_ids.push(id);
+        if let Some(ref k) = bib.crossref {
+            crossref_keys.push(k.clone());
         }
     }
 
@@ -268,29 +268,31 @@ async fn fetch_and_render(
         crossrefs_map,
         author_rows,
     ) = tokio::try_join!(
-        entity_fetcher.fetch_journal_names(&journal_ids),
-        entity_fetcher.fetch_publisher_names(&publisher_ids),
-        entity_fetcher.fetch_institution_names(&institution_ids),
-        entity_fetcher.fetch_school_names(&school_ids),
-        entity_fetcher.fetch_series_names(&series_ids),
-        entity_fetcher.fetch_crossref_bibkeys(&crossref_ids),
+        entity_fetcher.fetch_journal_names(&journal_keys),
+        entity_fetcher.fetch_publisher_names(&publisher_keys),
+        entity_fetcher.fetch_institution_names(&institution_keys),
+        entity_fetcher.fetch_school_names(&school_keys),
+        entity_fetcher.fetch_series_names(&series_keys),
+        entity_fetcher.fetch_crossref_bibkeys(&crossref_keys),
         author_fetcher.fetch_bibitem_authors(&bibitem_ids),
     )?;
 
     // Batch-fetch author entities
-    let all_author_ids: Vec<i64> = author_rows
+    let all_author_keys: Vec<String> = author_rows
         .iter()
-        .map(|r| r.author_id)
+        .map(|r| r.author_key.clone())
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
-    let authors_map = author_fetcher.fetch_authors_by_ids(&all_author_ids).await?;
+    let authors_map = author_fetcher
+        .fetch_authors_by_keys(&all_author_keys)
+        .await?;
 
-    // Group junction data by bibitem_id
-    let mut authors_by_bibitem: HashMap<i64, Vec<&BibitemAuthorsRow>> = HashMap::new();
+    // Group junction data by bibkey
+    let mut authors_by_bibitem: HashMap<String, Vec<&BibitemAuthorsRow>> = HashMap::new();
     for row in &author_rows {
         authors_by_bibitem
-            .entry(row.bibitem_id)
+            .entry(row.bibkey.clone())
             .or_default()
             .push(row);
     }
@@ -299,7 +301,7 @@ async fn fetch_and_render(
     let mut items_with_ctx: Vec<(BibItem, RenderContext)> = bibitems
         .into_iter()
         .map(|bib| {
-            let bib_authors = authors_by_bibitem.get(&bib.id);
+            let bib_authors = authors_by_bibitem.get(&bib.bibkey);
 
             let authors = extract_role_authors(bib_authors, AuthorRole::Author, &authors_map);
             let editors = extract_role_authors(bib_authors, AuthorRole::Editor, &authors_map);
@@ -310,18 +312,30 @@ async fn fetch_and_render(
                 authors,
                 editors,
                 guesteditors,
-                journal_name: bib.journal_id.and_then(|id| journals_map.get(&id).cloned()),
+                journal_name: bib
+                    .journal_key
+                    .as_deref()
+                    .and_then(|k| journals_map.get(k).cloned()),
                 publisher_name: bib
-                    .publisher_id
-                    .and_then(|id| publishers_map.get(&id).cloned()),
-                series_name: bib.series_id.and_then(|id| series_map.get(&id).cloned()),
+                    .publisher_key
+                    .as_deref()
+                    .and_then(|k| publishers_map.get(k).cloned()),
+                series_name: bib
+                    .series_key
+                    .as_deref()
+                    .and_then(|k| series_map.get(k).cloned()),
                 institution_name: bib
-                    .institution_id
-                    .and_then(|id| institutions_map.get(&id).cloned()),
-                school_name: bib.school_id.and_then(|id| schools_map.get(&id).cloned()),
+                    .institution_key
+                    .as_deref()
+                    .and_then(|k| institutions_map.get(k).cloned()),
+                school_name: bib
+                    .school_key
+                    .as_deref()
+                    .and_then(|k| schools_map.get(k).cloned()),
                 crossref_bibkey: bib
-                    .crossref_id
-                    .and_then(|id| crossrefs_map.get(&id).cloned()),
+                    .crossref
+                    .as_deref()
+                    .and_then(|k| crossrefs_map.get(k).cloned()),
                 suppress_author: false,
             };
             (bib, ctx)
