@@ -224,14 +224,14 @@ impl TransitiveDepsResolver for PgTransitiveDepsResolver<'_> {
         }
         #[derive(FromRow)]
         struct DepRow {
-            dep_id: i64,
+            id: i64,
         }
         let rows: Vec<DepRow> =
-            query_as("SELECT DISTINCT dep_id FROM bibitem_further_refs WHERE source_id = ANY($1)")
+            query_as("SELECT DISTINCT b.id FROM bibitem_further_refs bfr JOIN bibitems src ON src.bibkey = bfr.source_key JOIN bibitems b ON b.bibkey = bfr.dep_key WHERE src.id = ANY($1)")
                 .bind(source_ids)
                 .fetch_all(self.pool)
                 .await
                 .map_err(HexforgeError::data_source)?;
-        Ok(rows.into_iter().map(|r| r.dep_id).collect())
+        Ok(rows.into_iter().map(|r| r.id).collect())
     }
 }

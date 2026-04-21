@@ -50,16 +50,18 @@ async fn create_journal(app: &TestApp, suffix: &str, key_prefix: &str) -> (i64, 
     (body["id"].as_i64().unwrap(), key)
 }
 
-/// Helper: create a keyword via the API and return id.
-async fn create_keyword(app: &TestApp, name: &str, level: i16) -> i64 {
+/// Helper: create a keyword via the API and return (id, keyword_key).
+async fn create_keyword(app: &TestApp, name: &str, level: i16) -> (i64, String) {
+    let keyword_key = format!("{level}:{name}");
     let payload = json!({
+        "keyword_key": &keyword_key,
         "name": name,
         "level": level
     });
     let resp = app.post_json("/api/v1/keywords", &payload).await;
     assert_eq!(resp.status(), 200, "Failed to create keyword {name}");
     let body: serde_json::Value = resp.json().await.unwrap();
-    body["id"].as_i64().unwrap()
+    (body["id"].as_i64().unwrap(), keyword_key)
 }
 
 /// Helper: create a bibitem via the API and return id.
@@ -252,7 +254,7 @@ async fn test_export_keywords_by_ids() {
     let suffix = unique_suffix();
 
     let kw_name = format!("epistemology-{suffix}");
-    let kw_id = create_keyword(&app, &kw_name, 1).await;
+    let (kw_id, _kw_key) = create_keyword(&app, &kw_name, 1).await;
 
     let resp = app
         .post_json(
@@ -284,7 +286,7 @@ async fn test_export_bibitems_ids_format() {
     let suffix = unique_suffix();
 
     // Create author and bibitem
-    let (author_id, _) = create_author(&app, &suffix, "exp-bib-auth").await;
+    let (author_id, author_key) = create_author(&app, &suffix, "exp-bib-auth").await;
     let bibitem_id = create_bibitem(&app, &suffix, "test:exp-bib").await;
 
     // Add author to bibitem via junction endpoint
@@ -292,13 +294,14 @@ async fn test_export_bibitems_ids_format() {
         .post_json(
             &format!("/api/v1/bibitems/{bibitem_id}/authors"),
             &json!({
-                "author_id": author_id,
+                "author_key": author_key,
                 "role": "author",
                 "position": 0
             }),
         )
         .await;
     assert_eq!(add_author_resp.status(), 200);
+    let _ = author_id;
 
     // Export in IDs format
     let resp = app
@@ -324,11 +327,11 @@ async fn test_export_bibitems_ids_format() {
     );
     assert_eq!(row.get("date_year").map(String::as_str), Some("2024"));
 
-    // The author_ids field should contain the author ID
-    let author_ids_str = row.get("author_ids").map(String::as_str).unwrap_or("");
+    // The author_keys field should contain the author key
+    let author_keys_str = row.get("author_keys").map(String::as_str).unwrap_or("");
     assert!(
-        author_ids_str.contains(&author_id.to_string()),
-        "author_ids should contain {author_id}; got: {author_ids_str}"
+        author_keys_str.contains(&author_key),
+        "author_keys should contain {author_key}; got: {author_keys_str}"
     );
 }
 
@@ -354,8 +357,6 @@ async fn test_export_bibitems_expanded_format() {
     });
     let author_resp = app.post_json("/api/v1/authors", &author_payload).await;
     assert_eq!(author_resp.status(), 200);
-    let author: serde_json::Value = author_resp.json().await.unwrap();
-    let author_id = author["id"].as_i64().unwrap();
 
     // Create bibitem
     let bibitem_id = create_bibitem(&app, &suffix, "test:exp-expand").await;
@@ -364,7 +365,7 @@ async fn test_export_bibitems_expanded_format() {
     app.post_json(
         &format!("/api/v1/bibitems/{bibitem_id}/authors"),
         &json!({
-            "author_id": author_id,
+            "author_key": &author_key,
             "role": "author",
             "position": 0
         }),
@@ -663,8 +664,8 @@ async fn test_export_import_roundtrip_bibitems() {
     let suffix = unique_suffix();
 
     // Create author + bibitem + link them
-    let (author_id, _) = create_author(&app, &suffix, "rt-bib-auth").await;
-    let (journal_id, _) = create_journal(&app, &suffix, "rt-bib-jrnl").await;
+    let (_, author_key) = create_author(&app, &suffix, "rt-bib-auth").await;
+    let (_, journal_key) = create_journal(&app, &suffix, "rt-bib-jrnl").await;
 
     let bibkey = format!("test:rt-bib-{suffix}");
     let bib_payload = json!({
@@ -673,7 +674,7 @@ async fn test_export_import_roundtrip_bibitems() {
         "title_latex": "Round Trip Test",
         "title_unicode": "Round Trip Test",
         "title_simplified": "round trip test",
-        "journal_id": journal_id,
+        "journal_key": journal_key,
         "date_year": 2024
     });
     let bib_resp = app.post_json("/api/v1/bibitems", &bib_payload).await;
@@ -685,7 +686,7 @@ async fn test_export_import_roundtrip_bibitems() {
     app.post_json(
         &format!("/api/v1/bibitems/{bibitem_id}/authors"),
         &json!({
-            "author_id": author_id,
+            "author_key": &author_key,
             "role": "author",
             "position": 0
         }),
@@ -715,12 +716,12 @@ async fn test_export_import_roundtrip_bibitems() {
     assert_eq!(row_field(row, "entry_type"), "article");
     assert_eq!(row_field(row, "title_latex"), "Round Trip Test");
     assert_eq!(row_field(row, "date_year"), "2024");
-    assert_eq!(row_field(row, "journal_id"), journal_id.to_string());
+    assert_eq!(row_field(row, "journal_key"), journal_key);
 
-    // Author IDs should be in the CSV
-    let exported_author_ids = row_field(row, "author_ids");
+    // Author keys should be in the CSV
+    let exported_author_keys = row_field(row, "author_keys");
     assert!(
-        exported_author_ids.contains(&author_id.to_string()),
-        "Exported author_ids should contain {author_id}; got: {exported_author_ids}"
+        exported_author_keys.contains(&author_key),
+        "Exported author_keys should contain {author_key}; got: {exported_author_keys}"
     );
 }

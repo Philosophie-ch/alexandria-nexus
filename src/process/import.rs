@@ -1687,6 +1687,7 @@ pub trait BibitemNotesStore: Send + Sync {
 /// Notes are upserted by `bibkey`.
 pub async fn import_bibitem_notes(
     notes_store: &impl BibitemNotesStore,
+    key_store: &impl ReferenceStore,
     rows: Vec<ParsedBibitemNotesRow>,
     errors: Vec<ImportRowError>,
 ) -> Result<ImportResponse, HexforgeError> {
@@ -1697,6 +1698,17 @@ pub async fn import_bibitem_notes(
             failed: errors.len(),
             errors,
         });
+    }
+
+    let all_keys: std::collections::HashSet<String> =
+        rows.iter().map(|r| r.bibkey.clone()).collect();
+    if !all_keys.is_empty() {
+        let missing = key_store.find_missing_bibitem_keys(&all_keys).await?;
+        if !missing.is_empty() {
+            return Err(HexforgeError::Validation(ValidationError::custom(format!(
+                "missing bibitem keys: {missing:?}"
+            ))));
+        }
     }
 
     let total = rows.len();

@@ -622,7 +622,10 @@ async fn test_full_pipeline() {
     let bib: serde_json::Value = bib_resp.json().await.unwrap();
     assert_eq!(bib["title_latex"], "Pipeline Paper");
     assert_eq!(bib["date_year"], 2024);
-    assert!(bib["journal_id"].is_number(), "Should have journal_id set");
+    assert!(
+        bib["journal_key"].is_string(),
+        "Should have journal_key set"
+    );
 }
 
 // ============================================================================

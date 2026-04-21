@@ -67,7 +67,7 @@ impl BibitemSearcher for PgBibitemSearcher<'_> {
 
         if request.author_id.is_some() {
             conditions.push(format!(
-                "id IN (SELECT bibitem_id FROM bibitem_authors WHERE author_id = ${param_idx})"
+                "bibkey IN (SELECT bibkey FROM bibitem_authors WHERE author_key = ${param_idx})"
             ));
             param_idx += 1;
         }

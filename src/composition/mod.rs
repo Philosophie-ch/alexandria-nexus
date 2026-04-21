@@ -193,13 +193,17 @@ pub fn build_app(
             .junction(
                 JunctionConfig::new("authors", "bibitem_authors", state.pool.pool().clone())
                     .local_fk("bibkey")
+                    .parent_id_to_local_fk("SELECT bibkey FROM bibitems WHERE id = $1")
                     .foreign_fk("author_key")
+                    .foreign_fk_text()
                     .extra_columns_typed(&[("role", Some("author_role")), ("position", None)]),
             )
             .junction(
                 JunctionConfig::new("keywords", "bibitem_keywords", state.pool.pool().clone())
                     .local_fk("bibkey")
+                    .parent_id_to_local_fk("SELECT bibkey FROM bibitems WHERE id = $1")
                     .foreign_fk("keyword_key")
+                    .foreign_fk_text()
                     .extra_columns(&["keyword_level"]),
             )
             // FK expansions — projected (no timestamps, only what's needed)

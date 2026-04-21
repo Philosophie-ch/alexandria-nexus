@@ -22,9 +22,9 @@ pub fn substitute_citations(latex: &str, resolved: &HashMap<String, CitationData
     do_substitute(latex, resolved).0
 }
 
-/// Like `substitute_citations` but also returns `true` if any citation in the text
-/// could not be fully rendered (missing key, missing author, or missing year).
-/// Use this to decide whether to null out the unicode field entirely.
+/// Like `substitute_citations` but also returns `true` if the text contained any
+/// `\cite*` command at all — resolved or not.  Any citation in a title means the
+/// unicode field depends on external data and should be stored as NULL.
 pub fn substitute_citations_checked(
     latex: &str,
     resolved: &HashMap<String, CitationData>,
@@ -93,10 +93,8 @@ fn do_substitute(latex: &str, resolved: &HashMap<String, CitationData>) -> (Stri
         if keys.is_empty() {
             result.push_str(&cmd_start[..cmd_len]);
         } else {
+            had_unresolvable = true;
             let substituted = format_cite(cmd_name, &keys, resolved);
-            if substituted.is_empty() {
-                had_unresolvable = true;
-            }
             result.push_str(&substituted);
         }
 

@@ -309,25 +309,23 @@ async fn test_import_bibitems_csv() {
     });
     let author_resp = app.post_json("/api/v1/authors", &author_payload).await;
     assert_eq!(author_resp.status(), 200);
-    let author: serde_json::Value = author_resp.json().await.unwrap();
-    let author_id = author["id"].as_i64().unwrap();
+    let author_key = format!("kant-{suffix}");
 
     // Step 2: Create a journal via API
+    let journal_key = format!("mind-{suffix}");
     let journal_payload = json!({
-        "journal_key": format!("mind-{suffix}"),
+        "journal_key": &journal_key,
         "name_latex": "Mind",
         "name_unicode": "Mind",
         "name_simplified": "mind"
     });
     let journal_resp = app.post_json("/api/v1/journals", &journal_payload).await;
     assert_eq!(journal_resp.status(), 200);
-    let journal: serde_json::Value = journal_resp.json().await.unwrap();
-    let journal_id = journal["id"].as_i64().unwrap();
 
-    // Step 3: Import bibitem CSV referencing the author and journal
+    // Step 3: Import bibitem CSV referencing the author and journal by keys
     let csv = format!(
-        "entry_type,bibkey,title_latex,title_unicode,title_simplified,author_ids,journal_id,date_year\n\
-         article,kant:1781-{suffix},Critique of Pure Reason,Critique of Pure Reason,critique of pure reason,{author_id},{journal_id},1781"
+        "entry_type,bibkey,title_latex,title_unicode,title_simplified,author_keys,journal_key,date_year\n\
+         article,kant:1781-{suffix},Critique of Pure Reason,Critique of Pure Reason,critique of pure reason,{author_key},{journal_key},1781"
     );
 
     let resp = upload_csv(&app, "/api/v1/admin/import/bibitems", &csv).await;
@@ -345,7 +343,7 @@ async fn test_import_bibitems_csv() {
     let bibitem: serde_json::Value = bibitem_resp.json().await.unwrap();
     assert_eq!(bibitem["entry_type"], "article");
     assert_eq!(bibitem["title_unicode"], "Critique of Pure Reason");
-    assert_eq!(bibitem["journal_id"], journal_id);
+    assert_eq!(bibitem["journal_key"], journal_key);
     assert_eq!(bibitem["date_year"], 1781);
 
     // Step 5: Verify the author junction was created
@@ -356,7 +354,7 @@ async fn test_import_bibitems_csv() {
     assert_eq!(authors_resp.status(), 200);
     let authors_list: Vec<serde_json::Value> = authors_resp.json().await.unwrap();
     assert_eq!(authors_list.len(), 1);
-    assert_eq!(authors_list[0]["author_id"], author_id);
+    assert_eq!(authors_list[0]["author_key"], author_key);
     assert_eq!(authors_list[0]["role"], "author");
 }
 
@@ -366,7 +364,7 @@ async fn test_import_bibitems_with_editors() {
     let suffix = unique_suffix();
 
     // Create two authors -- one as author, one as editor
-    let author1_resp = app
+    let r1 = app
         .post_json(
             "/api/v1/authors",
             &json!({
@@ -375,10 +373,10 @@ async fn test_import_bibitems_with_editors() {
             }),
         )
         .await;
-    let author1: serde_json::Value = author1_resp.json().await.unwrap();
-    let author1_id = author1["id"].as_i64().unwrap();
+    assert_eq!(r1.status(), 200);
+    let author1_key = format!("author1-{suffix}");
 
-    let author2_resp = app
+    let r2 = app
         .post_json(
             "/api/v1/authors",
             &json!({
@@ -387,13 +385,13 @@ async fn test_import_bibitems_with_editors() {
             }),
         )
         .await;
-    let author2: serde_json::Value = author2_resp.json().await.unwrap();
-    let editor_id = author2["id"].as_i64().unwrap();
+    assert_eq!(r2.status(), 200);
+    let editor_key = format!("editor1-{suffix}");
 
-    // Import bibitem with both author_ids and editor_ids
+    // Import bibitem with both author_keys and editor_keys
     let csv = format!(
-        "entry_type,bibkey,title_latex,title_unicode,title_simplified,author_ids,editor_ids\n\
-         incollection,test:collection-{suffix},A Chapter,A Chapter,a chapter,{author1_id},{editor_id}"
+        "entry_type,bibkey,title_latex,title_unicode,title_simplified,author_keys,editor_keys\n\
+         incollection,test:collection-{suffix},A Chapter,A Chapter,a chapter,{author1_key},{editor_key}"
     );
 
     let resp = upload_csv(&app, "/api/v1/admin/import/bibitems", &csv).await;
@@ -421,10 +419,10 @@ async fn test_import_bibitems_with_editors() {
     // Check that roles are correct
     let has_author = authors_list
         .iter()
-        .any(|a| a["author_id"] == author1_id && a["role"] == "author");
+        .any(|a| a["author_key"] == author1_key && a["role"] == "author");
     let has_editor = authors_list
         .iter()
-        .any(|a| a["author_id"] == editor_id && a["role"] == "editor");
+        .any(|a| a["author_key"] == editor_key && a["role"] == "editor");
     assert!(has_author, "Should have an author-role link");
     assert!(has_editor, "Should have an editor-role link");
 }
@@ -434,10 +432,10 @@ async fn test_import_bibitems_missing_references() {
     let app = TestApp::spawn().await;
     let suffix = unique_suffix();
 
-    // CSV with non-existent author_id
+    // CSV with non-existent author_key
     let csv = format!(
-        "entry_type,bibkey,title_latex,title_unicode,title_simplified,author_ids\n\
-         article,test:missing-{suffix},Title,Title,title,99999"
+        "entry_type,bibkey,title_latex,title_unicode,title_simplified,author_keys\n\
+         article,test:missing-{suffix},Title,Title,title,nonexistent-author-{suffix}"
     );
 
     let resp = upload_csv(&app, "/api/v1/admin/import/bibitems", &csv).await;
@@ -449,12 +447,14 @@ async fn test_import_bibitems_missing_references() {
 
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["error"], "missing_references");
-    let missing_authors = body["missing_author_ids"]
+    let missing_authors = body["missing_author_keys"]
         .as_array()
-        .expect("Expected missing_author_ids array");
+        .expect("Expected missing_author_keys array");
     assert!(
-        missing_authors.iter().any(|id| id.as_i64() == Some(99999)),
-        "Should report 99999 as missing author ID"
+        missing_authors
+            .iter()
+            .any(|k| k.as_str() == Some(&format!("nonexistent-author-{suffix}"))),
+        "Should report missing author key; got: {missing_authors:?}"
     );
 
     // Verify nothing was inserted
@@ -474,36 +474,36 @@ async fn test_import_bibitems_with_keywords() {
     let suffix = unique_suffix();
 
     // Create keywords at different levels
+    let kw1_key = format!("1:epistemology-{suffix}");
     let kw1_resp = app
         .post_json(
             "/api/v1/keywords",
             &json!({
+                "keyword_key": &kw1_key,
                 "name": format!("epistemology-{suffix}"),
                 "level": 1
             }),
         )
         .await;
     assert_eq!(kw1_resp.status(), 200);
-    let kw1: serde_json::Value = kw1_resp.json().await.unwrap();
-    let kw1_id = kw1["id"].as_i64().unwrap();
 
+    let kw2_key = format!("2:perception-{suffix}");
     let kw2_resp = app
         .post_json(
             "/api/v1/keywords",
             &json!({
+                "keyword_key": &kw2_key,
                 "name": format!("perception-{suffix}"),
                 "level": 2
             }),
         )
         .await;
     assert_eq!(kw2_resp.status(), 200);
-    let kw2: serde_json::Value = kw2_resp.json().await.unwrap();
-    let kw2_id = kw2["id"].as_i64().unwrap();
 
-    // Import bibitem with keyword_ids (comma-separated within the field)
+    // Import bibitem with keyword_keys (semicolon-separated within the field)
     let csv = format!(
-        "entry_type,bibkey,title_latex,title_unicode,title_simplified,keyword_ids\n\
-         article,test:kw-{suffix},Knowledge,Knowledge,knowledge,\"{kw1_id},{kw2_id}\""
+        "entry_type,bibkey,title_latex,title_unicode,title_simplified,keyword_keys\n\
+         article,test:kw-{suffix},Knowledge,Knowledge,knowledge,\"{kw1_key};{kw2_key}\""
     );
 
     let resp = upload_csv(&app, "/api/v1/admin/import/bibitems", &csv).await;
@@ -526,8 +526,8 @@ async fn test_import_bibitems_with_keywords() {
     let kw_list: Vec<serde_json::Value> = kw_resp.json().await.unwrap();
 
     // Check that both keywords were linked
-    let has_kw1 = kw_list.iter().any(|k| k["keyword_id"] == kw1_id);
-    let has_kw2 = kw_list.iter().any(|k| k["keyword_id"] == kw2_id);
+    let has_kw1 = kw_list.iter().any(|k| k["keyword_key"] == kw1_key);
+    let has_kw2 = kw_list.iter().any(|k| k["keyword_key"] == kw2_key);
     assert!(
         has_kw1 && has_kw2,
         "Both keywords should be linked; got: {kw_list:?}"
@@ -955,30 +955,22 @@ async fn test_import_bibitem_refs_happy_path() {
     let app = TestApp::spawn().await;
     let s = unique_suffix();
 
-    let bib1: serde_json::Value = app
-        .post_json(
-            "/api/v1/bibitems",
-            &json!({ "bibkey": format!("source:{s}"), "entry_type": "article",
-                      "title_latex": "S", "title_unicode": "S" }),
-        )
-        .await
-        .json()
-        .await
-        .unwrap();
-    let bib2: serde_json::Value = app
-        .post_json(
-            "/api/v1/bibitems",
-            &json!({ "bibkey": format!("target:{s}"), "entry_type": "book",
-                      "title_latex": "T", "title_unicode": "T" }),
-        )
-        .await
-        .json()
-        .await
-        .unwrap();
-    let src_id = bib1["id"].as_i64().unwrap();
-    let tgt_id = bib2["id"].as_i64().unwrap();
+    app.post_json(
+        "/api/v1/bibitems",
+        &json!({ "bibkey": format!("source:{s}"), "entry_type": "article",
+                  "title_latex": "S", "title_unicode": "S" }),
+    )
+    .await;
+    app.post_json(
+        "/api/v1/bibitems",
+        &json!({ "bibkey": format!("target:{s}"), "entry_type": "book",
+                  "title_latex": "T", "title_unicode": "T" }),
+    )
+    .await;
+    let src_key = format!("source:{s}");
+    let tgt_key = format!("target:{s}");
 
-    let csv = format!("source_id,target_id,ref_type\n{src_id},{tgt_id},further_ref");
+    let csv = format!("source_key,target_key,ref_type\n{src_key},{tgt_key},further_ref");
     let resp = upload_csv(&app, "/api/v1/admin/import/bibitem-refs", &csv).await;
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.unwrap();
@@ -988,8 +980,14 @@ async fn test_import_bibitem_refs_happy_path() {
     // Verify via snapshot
     let zip = snapshot_bytes(&app).await;
     let refs_csv = zip_file_content(&zip, "bibitem_refs/all.csv");
-    assert!(refs_csv.contains(&src_id.to_string()));
-    assert!(refs_csv.contains(&tgt_id.to_string()));
+    assert!(
+        refs_csv.contains(&src_key),
+        "refs_csv should contain src_key"
+    );
+    assert!(
+        refs_csv.contains(&tgt_key),
+        "refs_csv should contain tgt_key"
+    );
     assert!(refs_csv.contains("further_ref"));
 }
 
@@ -998,30 +996,22 @@ async fn test_import_bibitem_refs_idempotent() {
     let app = TestApp::spawn().await;
     let s = unique_suffix();
 
-    let bib1: serde_json::Value = app
-        .post_json(
-            "/api/v1/bibitems",
-            &json!({ "bibkey": format!("src2:{s}"), "entry_type": "article",
-                      "title_latex": "S", "title_unicode": "S" }),
-        )
-        .await
-        .json()
-        .await
-        .unwrap();
-    let bib2: serde_json::Value = app
-        .post_json(
-            "/api/v1/bibitems",
-            &json!({ "bibkey": format!("tgt2:{s}"), "entry_type": "book",
-                      "title_latex": "T", "title_unicode": "T" }),
-        )
-        .await
-        .json()
-        .await
-        .unwrap();
-    let src_id = bib1["id"].as_i64().unwrap();
-    let tgt_id = bib2["id"].as_i64().unwrap();
+    app.post_json(
+        "/api/v1/bibitems",
+        &json!({ "bibkey": format!("src2:{s}"), "entry_type": "article",
+                  "title_latex": "S", "title_unicode": "S" }),
+    )
+    .await;
+    app.post_json(
+        "/api/v1/bibitems",
+        &json!({ "bibkey": format!("tgt2:{s}"), "entry_type": "book",
+                  "title_latex": "T", "title_unicode": "T" }),
+    )
+    .await;
+    let src_key = format!("src2:{s}");
+    let tgt_key = format!("tgt2:{s}");
 
-    let csv = format!("source_id,target_id,ref_type\n{src_id},{tgt_id},depends_on");
+    let csv = format!("source_key,target_key,ref_type\n{src_key},{tgt_key},depends_on");
     upload_csv(&app, "/api/v1/admin/import/bibitem-refs", &csv).await;
     let resp = upload_csv(&app, "/api/v1/admin/import/bibitem-refs", &csv).await;
     assert_eq!(resp.status(), 200);
@@ -1033,7 +1023,7 @@ async fn test_import_bibitem_refs_idempotent() {
 #[tokio::test]
 async fn test_import_bibitem_refs_missing_bibitem_ids() {
     let app = TestApp::spawn().await;
-    let csv = "source_id,target_id,ref_type\n99991,99992,further_ref";
+    let csv = "source_key,target_key,ref_type\nnonexistent-src,nonexistent-tgt,further_ref";
     let resp = upload_csv(&app, "/api/v1/admin/import/bibitem-refs", csv).await;
     assert!(
         resp.status() == 400 || resp.status() == 422,
@@ -1047,30 +1037,22 @@ async fn test_import_bibitem_refs_invalid_ref_type() {
     let app = TestApp::spawn().await;
     let s = unique_suffix();
 
-    let bib1: serde_json::Value = app
-        .post_json(
-            "/api/v1/bibitems",
-            &json!({ "bibkey": format!("src3:{s}"), "entry_type": "article",
-                      "title_latex": "S", "title_unicode": "S" }),
-        )
-        .await
-        .json()
-        .await
-        .unwrap();
-    let bib2: serde_json::Value = app
-        .post_json(
-            "/api/v1/bibitems",
-            &json!({ "bibkey": format!("tgt3:{s}"), "entry_type": "book",
-                      "title_latex": "T", "title_unicode": "T" }),
-        )
-        .await
-        .json()
-        .await
-        .unwrap();
-    let src_id = bib1["id"].as_i64().unwrap();
-    let tgt_id = bib2["id"].as_i64().unwrap();
+    app.post_json(
+        "/api/v1/bibitems",
+        &json!({ "bibkey": format!("src3:{s}"), "entry_type": "article",
+                  "title_latex": "S", "title_unicode": "S" }),
+    )
+    .await;
+    app.post_json(
+        "/api/v1/bibitems",
+        &json!({ "bibkey": format!("tgt3:{s}"), "entry_type": "book",
+                  "title_latex": "T", "title_unicode": "T" }),
+    )
+    .await;
+    let src_key = format!("src3:{s}");
+    let tgt_key = format!("tgt3:{s}");
 
-    let csv = format!("source_id,target_id,ref_type\n{src_id},{tgt_id},bad_type");
+    let csv = format!("source_key,target_key,ref_type\n{src_key},{tgt_key},bad_type");
     let resp = upload_csv(&app, "/api/v1/admin/import/bibitem-refs", &csv).await;
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.unwrap();
@@ -1107,19 +1089,15 @@ async fn test_import_bibitem_notes_happy_path() {
     let app = TestApp::spawn().await;
     let s = unique_suffix();
 
-    let bib: serde_json::Value = app
-        .post_json(
-            "/api/v1/bibitems",
-            &json!({ "bibkey": format!("bib-notes:{s}"), "entry_type": "book",
-                      "title_latex": "B", "title_unicode": "B" }),
-        )
-        .await
-        .json()
-        .await
-        .unwrap();
-    let bib_id = bib["id"].as_i64().unwrap();
+    let bib_bibkey = format!("bib-notes:{s}");
+    app.post_json(
+        "/api/v1/bibitems",
+        &json!({ "bibkey": &bib_bibkey, "entry_type": "book",
+                  "title_latex": "B", "title_unicode": "B" }),
+    )
+    .await;
 
-    let csv = format!("bibitem_id,note_perso\n{bib_id},a personal note");
+    let csv = format!("bibkey,note_perso\n{bib_bibkey},a personal note");
     let resp = upload_csv(&app, "/api/v1/admin/import/bibitem-notes", &csv).await;
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.unwrap();
@@ -1129,7 +1107,7 @@ async fn test_import_bibitem_notes_happy_path() {
     // Verify via snapshot
     let zip = snapshot_bytes(&app).await;
     let notes_csv = zip_file_content(&zip, "bibitem_notes/all.csv");
-    assert!(notes_csv.contains(&bib_id.to_string()));
+    assert!(notes_csv.contains(&bib_bibkey));
     assert!(notes_csv.contains("a personal note"));
 }
 
@@ -1138,24 +1116,20 @@ async fn test_import_bibitem_notes_upsert_updates_existing() {
     let app = TestApp::spawn().await;
     let s = unique_suffix();
 
-    let bib: serde_json::Value = app
-        .post_json(
-            "/api/v1/bibitems",
-            &json!({ "bibkey": format!("bib-notes2:{s}"), "entry_type": "book",
-                      "title_latex": "B", "title_unicode": "B" }),
-        )
-        .await
-        .json()
-        .await
-        .unwrap();
-    let bib_id = bib["id"].as_i64().unwrap();
+    let bib_bibkey = format!("bib-notes2:{s}");
+    app.post_json(
+        "/api/v1/bibitems",
+        &json!({ "bibkey": &bib_bibkey, "entry_type": "book",
+                  "title_latex": "B", "title_unicode": "B" }),
+    )
+    .await;
 
     // First import
-    let csv1 = format!("bibitem_id,note_perso\n{bib_id},first note");
+    let csv1 = format!("bibkey,note_perso\n{bib_bibkey},first note");
     upload_csv(&app, "/api/v1/admin/import/bibitem-notes", &csv1).await;
 
     // Second import with different note — should upsert
-    let csv2 = format!("bibitem_id,note_perso\n{bib_id},updated note");
+    let csv2 = format!("bibkey,note_perso\n{bib_bibkey},updated note");
     let resp = upload_csv(&app, "/api/v1/admin/import/bibitem-notes", &csv2).await;
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.unwrap();
@@ -1166,7 +1140,7 @@ async fn test_import_bibitem_notes_upsert_updates_existing() {
     let notes_csv = zip_file_content(&zip, "bibitem_notes/all.csv");
     let count = notes_csv
         .lines()
-        .filter(|l| l.contains(&bib_id.to_string()))
+        .filter(|l| l.contains(&bib_bibkey))
         .count();
     assert_eq!(count, 1, "upsert must not create a duplicate row");
     assert!(notes_csv.contains("updated note"));
@@ -1175,7 +1149,7 @@ async fn test_import_bibitem_notes_upsert_updates_existing() {
 #[tokio::test]
 async fn test_import_bibitem_notes_missing_bibitem_id() {
     let app = TestApp::spawn().await;
-    let csv = "bibitem_id,note_perso\n99993,some note";
+    let csv = "bibkey,note_perso\nnonexistent-bibkey,some note";
     let resp = upload_csv(&app, "/api/v1/admin/import/bibitem-notes", csv).await;
     assert!(
         resp.status() == 400 || resp.status() == 422,
@@ -1189,20 +1163,16 @@ async fn test_import_bibitem_notes_multiple_columns() {
     let app = TestApp::spawn().await;
     let s = unique_suffix();
 
-    let bib: serde_json::Value = app
-        .post_json(
-            "/api/v1/bibitems",
-            &json!({ "bibkey": format!("bib-notes3:{s}"), "entry_type": "book",
-                      "title_latex": "B", "title_unicode": "B" }),
-        )
-        .await
-        .json()
-        .await
-        .unwrap();
-    let bib_id = bib["id"].as_i64().unwrap();
+    let bib_bibkey = format!("bib-notes3:{s}");
+    app.post_json(
+        "/api/v1/bibitems",
+        &json!({ "bibkey": &bib_bibkey, "entry_type": "book",
+                  "title_latex": "B", "title_unicode": "B" }),
+    )
+    .await;
 
     let csv = format!(
-        "bibitem_id,note_perso,note_stock,change_request\n{bib_id},perso note,stock note,fix this"
+        "bibkey,note_perso,note_stock,change_request\n{bib_bibkey},perso note,stock note,fix this"
     );
     let resp = upload_csv(&app, "/api/v1/admin/import/bibitem-notes", &csv).await;
     assert_eq!(resp.status(), 200);

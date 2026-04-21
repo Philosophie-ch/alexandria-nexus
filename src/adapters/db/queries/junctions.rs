@@ -12,7 +12,11 @@ pub async fn fetch_bibitem_authors_batch(
     ids: &[i64],
 ) -> Result<Vec<BibitemAuthorsRow>, HexforgeError> {
     query_as::<_, BibitemAuthorsRow>(
-        "SELECT bibkey, author_key, role::text as role, position, name_variant_latex, name_variant_unicode FROM bibitem_authors WHERE bibkey = ANY($1) ORDER BY bibkey, role, position"
+        "SELECT ba.bibkey, ba.author_key, ba.role::text as role, ba.position, ba.name_variant_latex, ba.name_variant_unicode \
+         FROM bibitem_authors ba \
+         JOIN bibitems b ON b.bibkey = ba.bibkey \
+         WHERE b.id = ANY($1) \
+         ORDER BY ba.bibkey, ba.role, ba.position"
     )
     .bind(ids)
     .fetch_all(pool)
@@ -25,7 +29,11 @@ pub async fn fetch_bibitem_depends_on_batch(
     ids: &[i64],
 ) -> Result<Vec<BibitemDependsOnRow>, HexforgeError> {
     query_as::<_, BibitemDependsOnRow>(
-        "SELECT source_key, dep_key FROM bibitem_depends_on WHERE source_key = ANY($1) ORDER BY source_key"
+        "SELECT bdo.source_key, bdo.dep_key \
+         FROM bibitem_depends_on bdo \
+         JOIN bibitems b ON b.bibkey = bdo.source_key \
+         WHERE b.id = ANY($1) \
+         ORDER BY bdo.source_key",
     )
     .bind(ids)
     .fetch_all(pool)
@@ -38,7 +46,11 @@ pub async fn fetch_bibitem_further_refs_batch(
     ids: &[i64],
 ) -> Result<Vec<BibitemFurtherRefsRow>, HexforgeError> {
     query_as::<_, BibitemFurtherRefsRow>(
-        "SELECT source_key, dep_key FROM bibitem_further_refs WHERE source_key = ANY($1) ORDER BY source_key"
+        "SELECT bfr.source_key, bfr.dep_key \
+         FROM bibitem_further_refs bfr \
+         JOIN bibitems b ON b.bibkey = bfr.source_key \
+         WHERE b.id = ANY($1) \
+         ORDER BY bfr.source_key",
     )
     .bind(ids)
     .fetch_all(pool)
@@ -51,7 +63,11 @@ pub async fn fetch_bibitem_keywords_batch(
     ids: &[i64],
 ) -> Result<Vec<BibitemKeywordsRow>, HexforgeError> {
     query_as::<_, BibitemKeywordsRow>(
-        "SELECT bibkey, keyword_key, keyword_level FROM bibitem_keywords WHERE bibkey = ANY($1) ORDER BY bibkey"
+        "SELECT bk.bibkey, bk.keyword_key, bk.keyword_level \
+         FROM bibitem_keywords bk \
+         JOIN bibitems b ON b.bibkey = bk.bibkey \
+         WHERE b.id = ANY($1) \
+         ORDER BY bk.bibkey",
     )
     .bind(ids)
     .fetch_all(pool)
@@ -64,7 +80,11 @@ pub async fn fetch_bibitem_refs_batch(
     ids: &[i64],
 ) -> Result<Vec<BibitemRefsRow>, HexforgeError> {
     query_as::<_, BibitemRefsRow>(
-        "SELECT source_key, target_key, ref_type::text as ref_type FROM bibitem_refs WHERE source_key = ANY($1) ORDER BY source_key, ref_type"
+        "SELECT br.source_key, br.target_key, br.ref_type::text as ref_type \
+         FROM bibitem_refs br \
+         JOIN bibitems b ON b.bibkey = br.source_key \
+         WHERE b.id = ANY($1) \
+         ORDER BY br.source_key, br.ref_type",
     )
     .bind(ids)
     .fetch_all(pool)

@@ -39,12 +39,16 @@ pub trait LatexColumnFetcher: Send + Sync {
 }
 
 /// Contract for writing converted unicode values back to a column.
+///
+/// `updates` — rows with a non-null unicode value.
+/// `null_ids` — row IDs whose unicode column should be set to NULL (tainted by citation).
 pub trait LatexColumnWriter: Send + Sync {
     fn write_unicode_column(
         &self,
         table: &'static str,
         column: &'static str,
-        rows: &[(i64, String)],
+        updates: &[(i64, String)],
+        null_ids: &[i64],
     ) -> impl Future<Output = Result<usize, HexforgeError>> + Send;
 }
 
@@ -111,16 +115,18 @@ pub async fn convert_all_columns(
     // Convert via subprocess
     let all_outcomes = convert_batches(converter, per_batch_for_conversion).await?;
 
+    type ColumnWrites = (Vec<(i64, String)>, Vec<i64>);
     // Process outcomes into per-column updates and errors (no I/O).
-    // Tainted rows are written as "" regardless of converter output.
-    let mut per_batch_updates: Vec<Vec<(i64, String)>> = Vec::with_capacity(batches.len());
+    // Tainted rows (text contained \cite) are NULLed, not written as "".
+    let mut per_batch_updates: Vec<ColumnWrites> = Vec::with_capacity(batches.len());
     let mut errors: Vec<LatexConvertError> = Vec::new();
 
     for ((batch, tainted), outcomes) in batches.iter().zip(taint_masks).zip(all_outcomes) {
         let mut ok_updates: Vec<(i64, String)> = Vec::new();
+        let mut null_ids: Vec<i64> = Vec::new();
         for (((id, _), is_tainted), outcome) in batch.rows.iter().zip(tainted).zip(outcomes) {
             if is_tainted {
-                ok_updates.push((*id, String::new()));
+                null_ids.push(*id);
             } else {
                 match outcome {
                     ConvertOutcome::Ok(unicode) => ok_updates.push((*id, unicode)),
@@ -133,13 +139,15 @@ pub async fn convert_all_columns(
                 }
             }
         }
-        per_batch_updates.push(ok_updates);
+        per_batch_updates.push((ok_updates, null_ids));
     }
 
     // Write all columns concurrently
     let write_counts =
         futures::future::try_join_all(batches.iter().zip(per_batch_updates.iter()).map(
-            |(batch, updates)| writer.write_unicode_column(batch.table, batch.column, updates),
+            |(batch, (updates, null_ids))| {
+                writer.write_unicode_column(batch.table, batch.column, updates, null_ids)
+            },
         ))
         .await?;
 

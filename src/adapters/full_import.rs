@@ -555,14 +555,13 @@ impl BulkJunctionInsert for PgFullImportStore<'_> {
             target_bibkeys.push(r.target_bibkey.clone());
             ref_types.push(r.ref_type.to_string());
         }
-        // Both source and target are resolved by bibkey; non-existent targets are skipped (inner join).
         query(
-            "INSERT INTO bibitem_refs (source_id, target_id, ref_type)
-             SELECT s.id, t.id, r.ref_type::ref_type
+            "INSERT INTO bibitem_refs (source_key, target_key, ref_type)
+             SELECT r.source_bibkey, r.target_bibkey, r.ref_type::ref_type
              FROM unnest($1::text[], $2::text[], $3::text[]) AS r(source_bibkey, target_bibkey, ref_type)
-             JOIN bibitems s ON s.bibkey = r.source_bibkey
-             JOIN bibitems t ON t.bibkey = r.target_bibkey
-             ON CONFLICT (source_id, target_id, ref_type) DO NOTHING",
+             WHERE EXISTS (SELECT 1 FROM bibitems WHERE bibkey = r.source_bibkey)
+               AND EXISTS (SELECT 1 FROM bibitems WHERE bibkey = r.target_bibkey)
+             ON CONFLICT (source_key, target_key, ref_type) DO NOTHING",
         )
         .bind(source_bibkeys)
         .bind(target_bibkeys)
@@ -709,12 +708,12 @@ async fn compute_and_insert_closure(
 
     #[derive(FromRow)]
     struct RefEdge {
-        source_id: i64,
-        target_id: i64,
+        source_key: String,
+        target_key: String,
     }
 
     let raw: Vec<RefEdge> =
-        query_as("SELECT source_id, target_id FROM bibitem_refs WHERE ref_type = $1::ref_type")
+        query_as("SELECT source_key, target_key FROM bibitem_refs WHERE ref_type = $1::ref_type")
             .bind(ref_type.to_string())
             .fetch_all(pool)
             .await
@@ -724,24 +723,24 @@ async fn compute_and_insert_closure(
         return Ok(0);
     }
 
-    let edges: Vec<(i64, i64)> = raw
+    let edges: Vec<(String, String)> = raw
         .into_iter()
-        .map(|e| (e.source_id, e.target_id))
+        .map(|e| (e.source_key, e.target_key))
         .collect();
     let closure = transitive_closure(&edges);
     if closure.is_empty() {
         return Ok(0);
     }
 
-    let source_ids: Vec<i64> = closure.iter().map(|&(s, _)| s).collect();
-    let dep_ids: Vec<i64> = closure.iter().map(|&(_, d)| d).collect();
+    let source_keys: Vec<String> = closure.iter().map(|(s, _)| s.clone()).collect();
+    let dep_keys: Vec<String> = closure.iter().map(|(_, d)| d.clone()).collect();
     let sql = format!(
-        "INSERT INTO {table} (source_id, dep_id) \
-         SELECT * FROM UNNEST($1::bigint[], $2::bigint[]) ON CONFLICT DO NOTHING"
+        "INSERT INTO {table} (source_key, dep_key) \
+         SELECT * FROM UNNEST($1::text[], $2::text[]) ON CONFLICT DO NOTHING"
     );
     let rows = query(&sql)
-        .bind(&source_ids[..])
-        .bind(&dep_ids[..])
+        .bind(&source_keys[..])
+        .bind(&dep_keys[..])
         .execute(pool)
         .await
         .map_err(HexforgeError::data_source)?

@@ -53,28 +53,36 @@ impl<'a> PgLatexColumnConverter<'a> {
             .map_err(HexforgeError::data_source)
     }
 
-    /// Write converted unicode values back to one column using a bulk unnest UPDATE.
+    /// Write converted unicode values and NULL out tainted rows.
     async fn update_column(
         &self,
         table: &'static str,
         unicode_col: &'static str,
         updates: &[(i64, String)],
+        null_ids: &[i64],
     ) -> Result<(), HexforgeError> {
-        if updates.is_empty() {
-            return Ok(());
+        if !updates.is_empty() {
+            let (ids, values): (Vec<i64>, Vec<String>) = updates.iter().cloned().unzip();
+            let sql = format!(
+                "UPDATE {table} SET {unicode_col} = u.value \
+                 FROM unnest($1::int8[], $2::text[]) AS u(id, value) \
+                 WHERE {table}.id = u.id"
+            );
+            query(&sql)
+                .bind(ids)
+                .bind(values)
+                .execute(self.pool)
+                .await
+                .map_err(HexforgeError::data_source)?;
         }
-        let (ids, values): (Vec<i64>, Vec<String>) = updates.iter().cloned().unzip();
-        let sql = format!(
-            "UPDATE {table} SET {unicode_col} = u.value \
-             FROM unnest($1::int8[], $2::text[]) AS u(id, value) \
-             WHERE {table}.id = u.id"
-        );
-        query(&sql)
-            .bind(ids)
-            .bind(values)
-            .execute(self.pool)
-            .await
-            .map_err(HexforgeError::data_source)?;
+        if !null_ids.is_empty() {
+            let sql = format!("UPDATE {table} SET {unicode_col} = NULL WHERE id = ANY($1)");
+            query(&sql)
+                .bind(null_ids)
+                .execute(self.pool)
+                .await
+                .map_err(HexforgeError::data_source)?;
+        }
         Ok(())
     }
 }
@@ -101,9 +109,10 @@ impl LatexColumnWriter for PgLatexColumnConverter<'_> {
         &self,
         table: &'static str,
         column: &'static str,
-        rows: &[(i64, String)],
+        updates: &[(i64, String)],
+        null_ids: &[i64],
     ) -> Result<usize, HexforgeError> {
-        self.update_column(table, column, rows).await?;
-        Ok(rows.len())
+        self.update_column(table, column, updates, null_ids).await?;
+        Ok(updates.len() + null_ids.len())
     }
 }

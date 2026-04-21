@@ -37,8 +37,8 @@ impl CitationResolver for PgCitationResolver<'_> {
                 ba.role::text AS role,
                 b.date_year
              FROM bibitems b
-             LEFT JOIN bibitem_authors ba ON ba.bibitem_id = b.id
-             LEFT JOIN authors a ON a.id = ba.author_id
+             LEFT JOIN bibitem_authors ba ON ba.bibkey = b.bibkey
+             LEFT JOIN authors a ON a.author_key = ba.author_key
              WHERE b.bibkey = ANY($1)
              ORDER BY b.bibkey, ba.role, ba.position",
         )

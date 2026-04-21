@@ -15,6 +15,7 @@ async fn test_create_keyword() {
     let suffix = unique_suffix();
 
     let payload = json!({
+        "keyword_key": format!("1:Ethics-{}", suffix),
         "name": format!("Ethics-{}", suffix),
         "level": 1
     });
@@ -38,9 +39,9 @@ async fn test_keyword_tree() {
     let suffix = unique_suffix();
 
     // Create keywords at all three levels
-    let kw1 = json!({ "name": format!("Philosophy-{}", suffix), "level": 1 });
-    let kw2 = json!({ "name": format!("Ethics-{}", suffix), "level": 2 });
-    let kw3 = json!({ "name": format!("Virtue Ethics-{}", suffix), "level": 3 });
+    let kw1 = json!({ "keyword_key": format!("1:Philosophy-{suffix}"), "name": format!("Philosophy-{}", suffix), "level": 1 });
+    let kw2 = json!({ "keyword_key": format!("2:Ethics-{suffix}"), "name": format!("Ethics-{}", suffix), "level": 2 });
+    let kw3 = json!({ "keyword_key": format!("3:Virtue Ethics-{suffix}"), "name": format!("Virtue Ethics-{}", suffix), "level": 3 });
 
     let r1 = app.post_json("/api/v1/keywords", &kw1).await;
     assert_eq!(r1.status(), 200);

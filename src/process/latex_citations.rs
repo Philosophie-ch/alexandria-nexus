@@ -136,13 +136,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn all_keys_resolved_no_missing() {
+    async fn all_keys_resolved_taints_text() {
+        // Any citation command → text is None regardless of whether it resolves
         let mut db = HashMap::new();
         db.insert(s("smith:2000"), cd("Smith", 2000));
         let resolver = MockResolver(db);
         let input = vec![s(r"\citet{smith:2000}")];
         let (texts, missing) = pre_compile_citations(&input, &resolver).await.unwrap();
-        assert_eq!(texts, vec![Some(s("Smith (2000)"))]);
+        assert_eq!(texts, vec![None]);
         assert!(missing.is_empty());
     }
 
@@ -169,14 +170,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn same_key_across_multiple_texts_resolved_consistently() {
+    async fn same_key_across_multiple_texts_both_tainted() {
+        // Citation present in both → both tainted (None)
         let mut db = HashMap::new();
         db.insert(s("a:1"), cd("A", 2001));
         let resolver = MockResolver(db);
         let input = vec![s(r"First \citet{a:1}."), s(r"Second \citet{a:1} again.")];
         let (texts, missing) = pre_compile_citations(&input, &resolver).await.unwrap();
-        assert_eq!(texts[0], Some(s("First A (2001).")));
-        assert_eq!(texts[1], Some(s("Second A (2001) again.")));
+        assert_eq!(texts[0], None);
+        assert_eq!(texts[1], None);
         assert!(missing.is_empty());
     }
 

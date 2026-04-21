@@ -442,7 +442,7 @@ impl ExportJunctionFetcher for PgExportJunctionFetcher<'_> {
         bibitem_ids: &[i64],
     ) -> Result<Vec<BibitemAuthorsRow>, HexforgeError> {
         query_as::<_, BibitemAuthorsRow>(
-            "SELECT bibitem_id, author_id, role::text as role, position, name_variant_latex, name_variant_unicode FROM bibitem_authors WHERE bibitem_id = ANY($1) ORDER BY bibitem_id, role, position"
+            "SELECT ba.bibkey, ba.author_key, ba.role::text as role, ba.position, ba.name_variant_latex, ba.name_variant_unicode FROM bibitem_authors ba JOIN bibitems b ON b.bibkey = ba.bibkey WHERE b.id = ANY($1) ORDER BY ba.bibkey, ba.role, ba.position"
         )
         .bind(bibitem_ids)
         .fetch_all(self.pool)
@@ -455,7 +455,7 @@ impl ExportJunctionFetcher for PgExportJunctionFetcher<'_> {
         bibitem_ids: &[i64],
     ) -> Result<Vec<BibitemKeywordsRow>, HexforgeError> {
         query_as::<_, BibitemKeywordsRow>(
-            "SELECT bibitem_id, keyword_id, keyword_level FROM bibitem_keywords WHERE bibitem_id = ANY($1) ORDER BY bibitem_id"
+            "SELECT bk.bibkey, bk.keyword_key, bk.keyword_level FROM bibitem_keywords bk JOIN bibitems b ON b.bibkey = bk.bibkey WHERE b.id = ANY($1) ORDER BY b.bibkey"
         )
         .bind(bibitem_ids)
         .fetch_all(self.pool)

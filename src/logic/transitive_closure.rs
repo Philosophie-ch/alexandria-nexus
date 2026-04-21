@@ -3,6 +3,7 @@
 //! Used to pre-compute `bibitem_further_refs` from the direct `bibitem_refs` edges.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::hash::Hash;
 
 /// Compute the transitive closure of a directed graph.
 ///
@@ -11,40 +12,43 @@ use std::collections::{HashMap, HashSet, VecDeque};
 ///
 /// Handles cycles correctly: BFS per source with a visited set ensures each
 /// `(source, dep)` pair is produced exactly once regardless of cycles.
-pub fn transitive_closure(edges: &[(i64, i64)]) -> Vec<(i64, i64)> {
+pub fn transitive_closure<T>(edges: &[(T, T)]) -> Vec<(T, T)>
+where
+    T: Hash + Eq + Clone,
+{
     if edges.is_empty() {
         return Vec::new();
     }
 
-    let mut adj: HashMap<i64, Vec<i64>> = HashMap::new();
-    for &(src, dep) in edges {
-        adj.entry(src).or_default().push(dep);
+    let mut adj: HashMap<T, Vec<T>> = HashMap::new();
+    for (src, dep) in edges {
+        adj.entry(src.clone()).or_default().push(dep.clone());
     }
 
     let mut result = Vec::new();
 
-    for &source in adj.keys() {
-        let mut reachable: HashSet<i64> = HashSet::new();
-        let mut queue: VecDeque<i64> = VecDeque::new();
+    for source in adj.keys().cloned().collect::<Vec<_>>() {
+        let mut reachable: HashSet<T> = HashSet::new();
+        let mut queue: VecDeque<T> = VecDeque::new();
 
-        for &dep in &adj[&source] {
-            if dep != source && reachable.insert(dep) {
-                queue.push_back(dep);
+        for dep in &adj[&source] {
+            if *dep != source && reachable.insert(dep.clone()) {
+                queue.push_back(dep.clone());
             }
         }
 
         while let Some(current) = queue.pop_front() {
             if let Some(next_deps) = adj.get(&current) {
-                for &dep in next_deps {
-                    if dep != source && reachable.insert(dep) {
-                        queue.push_back(dep);
+                for dep in next_deps {
+                    if *dep != source && reachable.insert(dep.clone()) {
+                        queue.push_back(dep.clone());
                     }
                 }
             }
         }
 
         for dep in reachable {
-            result.push((source, dep));
+            result.push((source.clone(), dep));
         }
     }
 
@@ -62,7 +66,7 @@ mod tests {
 
     #[test]
     fn empty_graph() {
-        assert_eq!(transitive_closure(&[]), vec![]);
+        assert_eq!(transitive_closure::<i64>(&[]), vec![]);
     }
 
     #[test]

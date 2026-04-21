@@ -73,9 +73,9 @@ async fn create_bibitem_with_details(
 }
 
 /// Helper: link an author to a bibitem via the junction table.
-async fn link_author(app: &TestApp, bibitem_id: i64, author_id: i64, role: &str, position: i16) {
+async fn link_author(app: &TestApp, bibitem_id: i64, author_key: &str, role: &str, position: i16) {
     let payload = json!({
-        "author_id": author_id,
+        "author_key": author_key,
         "role": role,
         "position": position
     });
@@ -84,7 +84,7 @@ async fn link_author(app: &TestApp, bibitem_id: i64, author_id: i64, role: &str,
         .await;
     assert!(
         resp.status().is_success(),
-        "Failed to link author {author_id} to bibitem {bibitem_id}: {}",
+        "Failed to link author {author_key} to bibitem {bibitem_id}: {}",
         resp.status()
     );
 }
@@ -99,13 +99,13 @@ async fn test_render_single_article() {
     let suffix = unique_suffix();
 
     // Create author and bibitem
-    let (author_id, _) = create_author(&app, &suffix, "render-author", "Jane", "Smith").await;
+    let (_, author_key) = create_author(&app, &suffix, "render-author", "Jane", "Smith").await;
     let bibitem_id =
         create_bibitem_with_details(&app, &suffix, "smith", "article", "Some Title", Some(2024))
             .await;
 
     // Link author
-    link_author(&app, bibitem_id, author_id, "author", 1).await;
+    link_author(&app, bibitem_id, &author_key, "author", 1).await;
 
     // Render by bibkey
     let bibkey = format!("smith-{suffix}");
@@ -163,15 +163,13 @@ async fn test_render_include_further_refs_populated() {
     let s = unique_suffix();
 
     // Create two bibitems: A will reference B.
-    let id_b =
-        create_bibitem_with_details(&app, &s, "fr-b", "book", "Further Ref Target", Some(2000))
-            .await;
-    let id_a =
-        create_bibitem_with_details(&app, &s, "fr-a", "book", "Further Ref Source", Some(2024))
-            .await;
+    create_bibitem_with_details(&app, &s, "fr-b", "book", "Further Ref Target", Some(2000)).await;
+    create_bibitem_with_details(&app, &s, "fr-a", "book", "Further Ref Source", Some(2024)).await;
 
     // Insert a further_ref row from A to B.
-    let refs_csv = format!("source_id,target_id,ref_type\n{id_a},{id_b},further_ref");
+    let key_a = format!("fr-a-{s}");
+    let key_b = format!("fr-b-{s}");
+    let refs_csv = format!("source_key,target_key,ref_type\n{key_a},{key_b},further_ref");
     let refs_resp = upload_csv(&app, "/api/v1/admin/import/bibitem-refs", &refs_csv).await;
     assert_eq!(refs_resp.status(), 200);
 
