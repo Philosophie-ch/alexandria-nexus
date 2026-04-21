@@ -17,6 +17,9 @@ RUN mkdir -p ~/.ssh && \
 # Copy dependency manifests first (cache layer)
 COPY Cargo.toml Cargo.lock ./
 
+# Strip local dev [patch] override so cargo fetches hexforge from git
+RUN sed -i '/^\[patch\./,/^$/d' Cargo.toml
+
 # Copy source
 COPY src ./src
 COPY migrations ./migrations
