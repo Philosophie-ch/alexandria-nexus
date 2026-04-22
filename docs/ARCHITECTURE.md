@@ -169,7 +169,7 @@ Pure functions. No `async`. No database. No `AppState`. No pool.
 
 Contains: validation rules, pure rendering, request/response types, parsed row types, pure transformation helpers.
 
-**CSV parsing does NOT live here.** Parsing an external format (CSV, JSON, XML) is a boundary concern — exactly like SQL. It belongs in the adapters layer. The logic layer only sees already-typed structs.
+**No external format concerns live here.** Parsing OR serializing an external format (CSV, JSON, XML, SQL array literals) is a boundary concern — exactly like SQL. It belongs in the adapters layer. The logic layer only sees already-typed structs and never produces format-specific output. Process functions return domain types; adapters convert them to wire/storage formats.
 
 **Test**: if a function in `logic/` has `async` or imports anything from `adapters/`, `process/`, or `composition/`, it's in the wrong layer.
 
@@ -181,17 +181,22 @@ Orchestration. Defines **what** needs to happen via traits. Receives I/O as inje
 - Uses `&impl DataSource<T>` for standard CRUD (find_by_id, insert, update)
 - Uses custom traits for specialized operations (search, junction inserts, batch lookups)
 - Zero concrete I/O: no `PgPool`, no `query()`, no `sqlx`, no SQL strings
+- **Returns domain types** — process functions return `Vec<Author>`, `BibitemExportData`, etc. Serialization to CSV or any other format happens in the adapter layer.
+- `latex_citations.rs` — `CitationResolver` trait + `pre_compile_citations`: resolves `\cite*{}` commands into plain text before pylatexenc
+- `latex_columns.rs` — `LatexBatchConverter`/`LatexColumnFetcher`/`LatexColumnWriter` + `convert_all_columns`: orchestrates 15-column LaTeX→Unicode pipeline; writes are sequential to avoid row-lock deadlocks across same-table columns
 
-**Test**: if a function in `process/` imports from `adapters/` or `composition/`, or uses `PgPool`/`sqlx`/`query()` directly, it's in the wrong layer.
+**Test**: if a function in `process/` imports from `adapters/` or `composition/`, uses `PgPool`/`sqlx`/`query()` directly, or returns `Vec<Vec<String>>` (CSV rows), it's in the wrong layer.
 
 ### Adapters (`src/adapters/`)
 
-Concrete I/O implementations. **All format-specific parsing (CSV, JSON, wire formats) lives here** — parsing external formats is a boundary concern, exactly like SQL queries. The process layer only sees typed structs; only adapters see raw bytes or format-specific APIs.
+Concrete I/O implementations. **All format-specific parsing AND serialization (CSV, JSON, wire formats, SQL array literals) lives here** — it's a boundary concern, exactly like SQL queries. The process layer only sees domain types; only adapters produce external formats.
 
 - `db/` — database enum mappings, query filters (all generated)
 - `field_parsing/` — CSV field parsers for the full-CSV import pipeline
-- Root files (`search.rs`, `render.rs`, `import.rs`, etc.) — implement process-layer traits with Postgres-specific code
-- `handlers/` — **thin** HTTP handlers only: extract request → construct adapter impls → call process → format response. No business logic.
+- `csv_rows.rs` — CSV row-builders for entity/bibitem export and snapshot: `build_author_rows`, `build_bibitem_*_rows`, header constants, `text_array()`. Everything that produces `Vec<Vec<String>>` lives here.
+- Root files (`search.rs`, `render.rs`, `import.rs`, `export.rs`, etc.) — implement process-layer traits with concrete I/O
+- `handlers/` — **thin** HTTP handlers only: extract request → construct adapter impls → call process → serialize result → format response. No business logic.
+- `handlers/bulk_import.rs` — `POST /api/v1/admin/bulk-import/{table}`: PostgreSQL COPY-based bulk loader for post-wipe corpus releases (~50× faster than upsert import)
 
 ### Composition (`src/composition/`)
 

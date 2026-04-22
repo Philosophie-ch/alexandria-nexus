@@ -5,12 +5,30 @@ All import and export endpoints require Admin authentication (`Authorization: Be
 ## Workflow
 
 1. Import reference entities (authors, journals, publishers, etc.)
-2. Import bibitems (referencing entity IDs from step 1)
+2. Import bibitems (referencing entity keys from step 1)
 3. Export as needed
+
+## Bulk Import (corpus release — post-wipe only)
+
+`POST /api/v1/admin/bulk-import/{table}` uses PostgreSQL `COPY FROM STDIN` rather than row-by-row upsert. **~50× faster** for large datasets (full corpus: ~36 seconds vs ~30 minutes).
+
+**Use this for:** post-wipe corpus releases via `scripts/release.sh` or the GitHub Actions workflow.  
+**Do NOT use for:** incremental updates — no `ON CONFLICT` support, tables must be empty.
+
+Supported tables: `authors`, `journals`, `publishers`, `institutions`, `schools`, `series`, `keywords`, `bibitems`, `bibitem_authors`, `bibitem_keywords`, `bibitem_refs`, `bibitem_notes`.
+
+The CSV must include all required columns for the table. Extra columns (e.g. `author_keys` embedded in the bibitem snapshot CSV) are silently dropped — no pre-filtering needed.
+
+```bash
+curl -X POST http://localhost:8080/api/v1/admin/bulk-import/bibitems \
+  -H "Authorization: Bearer <key>" \
+  -F "file=@bibitems.csv"
+# → {"table": "bibitems", "rows": 186497}
+```
 
 ## Import
 
-All imports accept a CSV file via multipart form upload.
+All imports accept a CSV file via multipart form upload. Uses upsert (`ON CONFLICT DO UPDATE`) — safe for incremental updates on live data.
 
 ### Reference entities
 
@@ -64,19 +82,22 @@ curl -X POST http://localhost:8080/api/v1/admin/import/bibitems \
 
 **Columns:**
 ```
-entry_type,bibkey,title_latex,title_unicode,date_year,date_month,date_day,pubstate,booktitle_latex,booktitle_unicode,volume,number,pages,eid,address,type_field,edition,doi,url,eprint,urn,options,shorthand,note_latex,note_unicode,issuetitle_latex,issuetitle_unicode,extra_note_latex,extra_note_unicode,langid,is_translation,epoch,journal_id,publisher_id,institution_id,school_id,series_id,crossref_id,author_ids,editor_ids,guesteditor_ids,keyword_ids
+id,entry_type,bibkey,options,shorthand,date_year,pubstate,title_latex,title_unicode,booktitle_latex,booktitle_unicode,crossref,journal_key,volume,number,pages,eid,series_key,address,institution_key,school_key,publisher_key,type_field,edition,note_latex,note_unicode,issuetitle_latex,issuetitle_unicode,extra_note_latex,extra_note_unicode,urn,eprint,doi,url,langid,is_translation,epoch,author_keys,editor_keys,guesteditor_keys,keyword_keys
 ```
 
 Required: `entry_type`, `bibkey`.
 
-**Relation columns:**
-- `author_ids`: comma-separated author IDs (e.g., `42,17,3`)
-- `editor_ids`: comma-separated author IDs (role = editor)
-- `guesteditor_ids`: comma-separated author IDs (role = guesteditor)
-- `keyword_ids`: comma-separated keyword IDs
-- `journal_id`, `publisher_id`, `institution_id`, `school_id`, `series_id`, `crossref_id`: single ID
+**Relation columns (all use business keys, not integer IDs):**
+- `author_keys`: semicolon-separated author keys (e.g., `kant_i;smith_j`)
+- `editor_keys`: semicolon-separated author keys (role = editor)
+- `guesteditor_keys`: semicolon-separated author keys (role = guesteditor)
+- `keyword_keys`: semicolon-separated `{level}:{name}` entries (e.g., `1:epistemology;2:knowledge`)
+- `journal_key`, `publisher_key`, `institution_key`, `school_key`, `series_key`: single key
+- `crossref`: bibkey of the parent entry
 
-All referenced IDs are validated before any insert. If any don't exist, a 422 is returned with the full list of missing IDs grouped by entity type. Nothing is inserted.
+All referenced keys are validated before any insert. If any don't exist, a 422 is returned with the full list of missing keys grouped by entity type. Nothing is inserted.
+
+**`title_unicode` nullability:** If `title_latex` contains `\cite*{...}` commands, `title_unicode` must be NULL (not a partially-rendered string). `POST /api/v1/admin/convert-latex-columns` enforces this invariant.
 
 ### Import response
 

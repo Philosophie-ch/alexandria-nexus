@@ -208,6 +208,26 @@ cargo test-all                      # Full suite including postgres
 cargo check --no-default-features   # Verify feature gate correctness (no axum, no postgres)
 ```
 
+## External Format Serialization
+
+Serializing to an external format (CSV rows, JSON, SQL array literals like `{v1,v2}`) is a boundary concern — **it belongs in the adapters layer**, not in logic or process.
+
+```rust
+// BAD: logic/export.rs producing CSV rows
+fn build_author_rows(authors: &[Author]) -> Vec<Vec<String>> { ... }
+
+// GOOD: adapters/csv_rows.rs producing CSV rows
+fn build_author_rows(authors: &[Author]) -> Vec<Vec<String>> { ... }
+
+// GOOD: process/export.rs returning domain types
+async fn export_authors(...) -> Result<Vec<Author>, ExportError> { ... }
+```
+
+**Rules:**
+- `src/logic/` — domain types and format-agnostic helpers only. No `Vec<Vec<String>>`. No "CSV", "SQL", "Postgres" in code or comments.
+- `src/process/` — returns domain types, never serialized output. No `Vec<Vec<String>>`. No format-specific terminology in code or comments.
+- `src/adapters/csv_rows.rs` — all CSV row builders, header constants, `text_array()` serializer.
+
 ## Summary
 
 1. **Don't bypass the type system.** No `as`, no `transmute`, no pointer tricks.

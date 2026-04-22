@@ -119,16 +119,18 @@ Applied by `POST /api/v1/admin/validate-full-csv`. Collects all issues in one re
 
 Enforced by PostgreSQL. These catch anything that slips past application validation.
 
+All FK columns use **business keys (TEXT)**, not surrogate integer IDs.
+
 - `bibkey TEXT NOT NULL UNIQUE` — no duplicates, no nulls
 - `entry_type entry_type NOT NULL DEFAULT 'UNKNOWN'` — valid enum value
-- `title_latex TEXT NOT NULL`, `title_unicode TEXT NOT NULL`, `title_simplified TEXT NOT NULL`
-- `journal_id BIGINT REFERENCES journals(id)` — FK integrity
-- `publisher_id BIGINT REFERENCES publishers(id)`
-- `institution_id BIGINT REFERENCES institutions(id)`
-- `school_id BIGINT REFERENCES schools(id)`
-- `series_id BIGINT REFERENCES series(id)`
-- `crossref_id BIGINT REFERENCES bibitems(id)` — self-referencing FK
-- `person_id BIGINT REFERENCES authors(id)`
-- `bibitem_authors`: `PRIMARY KEY (bibitem_id, author_id, role)` + `ON DELETE CASCADE` (bibitem) / `ON DELETE RESTRICT` (author)
-- `bibitem_keywords`: `PRIMARY KEY (bibitem_id, keyword_id)` + `ON DELETE CASCADE` (bibitem) / `ON DELETE RESTRICT` (keyword)
-- `bibitem_refs`: `PRIMARY KEY (source_id, target_id, ref_type)` + `ON DELETE CASCADE` (source) / `ON DELETE RESTRICT` (target)
+- `title_latex TEXT NOT NULL` — required; `title_unicode TEXT` nullable (NULL when contains `\cite*{}`)
+- `journal_key TEXT REFERENCES journals(journal_key)` — FK integrity
+- `publisher_key TEXT REFERENCES publishers(publisher_key)`
+- `institution_key TEXT REFERENCES institutions(institution_key)`
+- `school_key TEXT REFERENCES schools(school_key)`
+- `series_key TEXT REFERENCES series(series_key)`
+- `crossref TEXT REFERENCES bibitems(bibkey)` — self-referencing FK via bibkey
+- `person_key TEXT REFERENCES authors(author_key)`
+- `bibitem_authors`: `PRIMARY KEY (bibkey, author_key, role)` + `ON DELETE CASCADE` (bibitem) / `ON DELETE RESTRICT` (author)
+- `bibitem_keywords`: `PRIMARY KEY (bibkey, keyword_key)` + `ON DELETE CASCADE` (bibitem) / `ON DELETE RESTRICT` (keyword)
+- `bibitem_refs`: `PRIMARY KEY (source_key, target_key, ref_type)` + `ON DELETE CASCADE` (source) / `ON DELETE RESTRICT` (target)

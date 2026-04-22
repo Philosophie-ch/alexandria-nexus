@@ -16,17 +16,20 @@
 | schools | `name_latex` | No duplicate school names |
 | series | `series_key` | Business key |
 | series | `name_latex` | No duplicate series names |
+| keywords | `keyword_key` | Business key (`{level}:{name}`) |
 | keywords | `(name, level)` | Unique per name+level combination |
 | bibitems | `bibkey` | Bibliography key (e.g., `kant:1781a`) |
-| bibitem_notes | `bibitem_id` | One notes record per bibitem |
+| bibitem_notes | `bibkey` | One notes record per bibitem |
 
 ## Composite Primary Keys (junction tables)
 
 | Table | Primary Key | Notes |
 |-------|-------------|-------|
-| bibitem_authors | `(bibitem_id, author_id, role)` | Same author can be both author and editor |
-| bibitem_keywords | `(bibitem_id, keyword_id)` | |
-| bibitem_refs | `(source_id, target_id, ref_type)` | Same pair can have further_ref and depends_on |
+| bibitem_authors | `(bibkey, author_key, role)` | Same author can be both author and editor |
+| bibitem_keywords | `(bibkey, keyword_key)` | |
+| bibitem_refs | `(source_key, target_key, ref_type)` | Same pair can have further_ref and depends_on |
+| bibitem_further_refs | `(source_key, dep_key)` | |
+| bibitem_depends_on | `(source_key, dep_key)` | |
 
 ## CHECK Constraints
 
@@ -37,22 +40,28 @@
 
 ## Foreign Keys
 
+All FK columns use **business keys (TEXT)**, not surrogate integer IDs.
+
 | Table | Column | References | On Delete |
 |-------|--------|------------|-----------|
-| bibitems | `journal_id` | journals(id) | — |
-| bibitems | `publisher_id` | publishers(id) | — |
-| bibitems | `institution_id` | institutions(id) | — |
-| bibitems | `school_id` | schools(id) | — |
-| bibitems | `series_id` | series(id) | — |
-| bibitems | `crossref_id` | bibitems(id) | — |
-| bibitems | `person_id` | authors(id) | — |
-| bibitem_notes | `bibitem_id` | bibitems(id) | — |
-| bibitem_authors | `bibitem_id` | bibitems(id) | CASCADE |
-| bibitem_authors | `author_id` | authors(id) | RESTRICT |
-| bibitem_keywords | `bibitem_id` | bibitems(id) | CASCADE |
-| bibitem_keywords | `keyword_id` | keywords(id) | RESTRICT |
-| bibitem_refs | `source_id` | bibitems(id) | CASCADE |
-| bibitem_refs | `target_id` | bibitems(id) | RESTRICT |
+| bibitems | `journal_key` | journals(journal_key) | — |
+| bibitems | `publisher_key` | publishers(publisher_key) | — |
+| bibitems | `institution_key` | institutions(institution_key) | — |
+| bibitems | `school_key` | schools(school_key) | — |
+| bibitems | `series_key` | series(series_key) | — |
+| bibitems | `crossref` | bibitems(bibkey) | — |
+| bibitems | `person_key` | authors(author_key) | — |
+| bibitem_notes | `bibkey` | bibitems(bibkey) | CASCADE |
+| bibitem_authors | `bibkey` | bibitems(bibkey) | CASCADE |
+| bibitem_authors | `author_key` | authors(author_key) | RESTRICT |
+| bibitem_keywords | `bibkey` | bibitems(bibkey) | CASCADE |
+| bibitem_keywords | `keyword_key` | keywords(keyword_key) | RESTRICT |
+| bibitem_refs | `source_key` | bibitems(bibkey) | CASCADE |
+| bibitem_refs | `target_key` | bibitems(bibkey) | RESTRICT |
+| bibitem_further_refs | `source_key` | bibitems(bibkey) | CASCADE |
+| bibitem_further_refs | `dep_key` | bibitems(bibkey) | RESTRICT |
+| bibitem_depends_on | `source_key` | bibitems(bibkey) | CASCADE |
+| bibitem_depends_on | `dep_key` | bibitems(bibkey) | RESTRICT |
 
 ## Indexes
 
@@ -66,9 +75,9 @@
 | authors | `(family_name_simplified, given_name_simplified)` | Full name lookup |
 | bibitems | `entry_type` | Filter by type |
 | bibitems | `date_year` | Year range queries |
-| bibitems | `journal_id` | FK lookup |
-| bibitems | `publisher_id` | FK lookup |
-| bibitems | `crossref_id` | FK lookup |
+| bibitems | `journal_key` | FK lookup |
+| bibitems | `publisher_key` | FK lookup |
+| bibitems | `crossref` | FK lookup |
 | institutions | `name_simplified` | Name lookup |
 | journals | `name_simplified` | Name lookup |
 | keywords | `level` | Filter by level |
@@ -76,9 +85,11 @@
 | publishers | `name_simplified` | Name lookup |
 | schools | `name_simplified` | Name lookup |
 | series | `name_simplified` | Name lookup |
-| bibitem_authors | `author_id` | Reverse junction lookup |
-| bibitem_keywords | `keyword_id` | Reverse junction lookup |
-| bibitem_refs | `target_id` | Reverse ref lookup |
+| bibitem_authors | `author_key` | Reverse junction lookup |
+| bibitem_keywords | `keyword_key` | Reverse junction lookup |
+| bibitem_refs | `target_key` | Reverse ref lookup |
+| bibitem_further_refs | `dep_key` | Reverse ref lookup |
+| bibitem_depends_on | `dep_key` | Reverse ref lookup |
 
 ### GIN trigram (fuzzy text search)
 
@@ -87,6 +98,7 @@
 | authors | `family_name_simplified` | Fuzzy author search |
 | authors | `given_name_simplified` | Fuzzy author search |
 | bibitems | `title_simplified` | Fuzzy title search |
+| bibitems | `title_unicode` | Fuzzy title search (unicode variant) |
 | bibitems | `bibkey` | Fuzzy bibkey search |
 | institutions | `name_simplified` | Fuzzy name search |
 | journals | `name_simplified` | Fuzzy name search |
