@@ -34,11 +34,11 @@ use crate::domain::{
     Institution, Journal, Keyword, Publisher, School, Series, UpdateAuthor, UpdateBibItem,
     UpdateDataVersion, UpdateInstitution, UpdateJournal, UpdateKeyword, UpdatePublisher,
     UpdateSchool, UpdateSeries, create_author_transform, create_bib_item_transform,
-    create_institution_transform, create_journal_transform, create_keyword_transform,
-    create_publisher_transform, create_school_transform, create_series_transform,
-    update_author_transform, update_bib_item_transform, update_institution_transform,
-    update_journal_transform, update_keyword_transform, update_publisher_transform,
-    update_school_transform, update_series_transform,
+    create_data_version_transform, create_institution_transform, create_journal_transform,
+    create_keyword_transform, create_publisher_transform, create_school_transform,
+    create_series_transform, update_author_transform, update_bib_item_transform,
+    update_institution_transform, update_journal_transform, update_keyword_transform,
+    update_publisher_transform, update_school_transform, update_series_transform,
 };
 use crate::logic::validation::{
     validate_create_author, validate_create_bibitem, validate_create_institution,
@@ -328,6 +328,7 @@ pub fn build_app(
                 "/api/v1/data-version",
                 state.data_version_ds.clone(),
             )
+            .create_transform(create_data_version_transform)
             .tag("DataVersion")
             .description("Data version tracking")
             .list_permission(Permission::Public)
