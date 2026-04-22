@@ -140,7 +140,7 @@ jobs:
               -e HOST=0.0.0.0 \
               -e PORT=8080 \
               -e ALLOWED_ORIGINS="${ALLOWED_ORIGINS}" \
-              -e RUST_LOG=alexandria_nexus=info \
+              -e RUST_LOG=alexandria_nexus=info,tower_http=info \
               -e SEED_API_KEY="${ALEXANDRIA_SEED_API_KEY}" \
               -e SEED_API_KEY_NAME="Admin Key" \
               -e SEED_READ_KEY="${ALEXANDRIA_SEED_READ_KEY}" \
