@@ -1,7 +1,7 @@
 //! Postgres implementations of `LatexColumnFetcher` and `LatexColumnWriter`.
 
 use hexforge::HexforgeError;
-use hexforge::db_exports::{FromRow, PgPool, query, query_as};
+use hexforge::db_exports::{FromRow, PgPool, Postgres, Transaction, query, query_as};
 
 use crate::process::latex_columns::{ColumnBatch, LatexColumnFetcher, LatexColumnWriter};
 
@@ -54,6 +54,9 @@ impl<'a> PgLatexColumnConverter<'a> {
     }
 
     /// Write converted unicode values and NULL out tainted rows.
+    ///
+    /// Both writes run in one transaction so a deadlock rolls back the whole
+    /// column — preventing ok_updates from committing while null_ids are lost.
     async fn update_column(
         &self,
         table: &'static str,
@@ -61,6 +64,14 @@ impl<'a> PgLatexColumnConverter<'a> {
         updates: &[(i64, String)],
         null_ids: &[i64],
     ) -> Result<(), HexforgeError> {
+        if updates.is_empty() && null_ids.is_empty() {
+            return Ok(());
+        }
+        let mut tx: Transaction<Postgres> = self
+            .pool
+            .begin()
+            .await
+            .map_err(HexforgeError::data_source)?;
         if !updates.is_empty() {
             let (ids, values): (Vec<i64>, Vec<String>) = updates.iter().cloned().unzip();
             let sql = format!(
@@ -71,7 +82,7 @@ impl<'a> PgLatexColumnConverter<'a> {
             query(&sql)
                 .bind(ids)
                 .bind(values)
-                .execute(self.pool)
+                .execute(&mut *tx)
                 .await
                 .map_err(HexforgeError::data_source)?;
         }
@@ -79,11 +90,11 @@ impl<'a> PgLatexColumnConverter<'a> {
             let sql = format!("UPDATE {table} SET {unicode_col} = NULL WHERE id = ANY($1)");
             query(&sql)
                 .bind(null_ids)
-                .execute(self.pool)
+                .execute(&mut *tx)
                 .await
                 .map_err(HexforgeError::data_source)?;
         }
-        Ok(())
+        tx.commit().await.map_err(HexforgeError::data_source)
     }
 }
 
