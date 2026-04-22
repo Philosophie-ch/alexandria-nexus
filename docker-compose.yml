@@ -1,5 +1,6 @@
 services:
   alexandria-db:
+    container_name: alexandria-db
     image: postgres:18-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
@@ -23,6 +24,7 @@ services:
       - alexandria-db
 
   app:
+    container_name: alexandria-nexus
     build:
       context: .
       ssh:
