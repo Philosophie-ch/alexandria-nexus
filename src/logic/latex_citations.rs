@@ -19,23 +19,8 @@ pub struct CitationData {
 /// - `\citeyear{key}` → `Year`
 /// - Any unresolvable or incomplete cite → empty string (nothing rendered)
 pub fn substitute_citations(latex: &str, resolved: &HashMap<String, CitationData>) -> String {
-    do_substitute(latex, resolved).0
-}
-
-/// Like `substitute_citations` but also returns `true` if the text contained any
-/// `\cite*` command at all — resolved or not.  Any citation in a title means the
-/// unicode field depends on external data and should be stored as NULL.
-pub fn substitute_citations_checked(
-    latex: &str,
-    resolved: &HashMap<String, CitationData>,
-) -> (String, bool) {
-    do_substitute(latex, resolved)
-}
-
-fn do_substitute(latex: &str, resolved: &HashMap<String, CitationData>) -> (String, bool) {
     let mut result = String::with_capacity(latex.len());
     let mut rest = latex;
-    let mut had_unresolvable = false;
 
     loop {
         let Some(cmd_pos) = rest.find("\\cite") else {
@@ -93,7 +78,6 @@ fn do_substitute(latex: &str, resolved: &HashMap<String, CitationData>) -> (Stri
         if keys.is_empty() {
             result.push_str(&cmd_start[..cmd_len]);
         } else {
-            had_unresolvable = true;
             let substituted = format_cite(cmd_name, &keys, resolved);
             result.push_str(&substituted);
         }
@@ -101,7 +85,7 @@ fn do_substitute(latex: &str, resolved: &HashMap<String, CitationData>) -> (Stri
         rest = &rest[cmd_pos + cmd_len..];
     }
 
-    (result, had_unresolvable)
+    result
 }
 
 fn format_cite(cmd_name: &str, keys: &[&str], resolved: &HashMap<String, CitationData>) -> String {

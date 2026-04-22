@@ -53,47 +53,33 @@ impl<'a> PgLatexColumnConverter<'a> {
             .map_err(HexforgeError::data_source)
     }
 
-    /// Write converted unicode values and NULL out tainted rows.
-    ///
-    /// Both writes run in one transaction so a deadlock rolls back the whole
-    /// column — preventing ok_updates from committing while null_ids are lost.
+    /// Write converted unicode values for one column.
     async fn update_column(
         &self,
         table: &'static str,
         unicode_col: &'static str,
         updates: &[(i64, String)],
-        null_ids: &[i64],
     ) -> Result<(), HexforgeError> {
-        if updates.is_empty() && null_ids.is_empty() {
+        if updates.is_empty() {
             return Ok(());
         }
+        let (ids, values): (Vec<i64>, Vec<String>) = updates.iter().cloned().unzip();
+        let sql = format!(
+            "UPDATE {table} SET {unicode_col} = u.value \
+             FROM unnest($1::int8[], $2::text[]) AS u(id, value) \
+             WHERE {table}.id = u.id"
+        );
         let mut tx: Transaction<Postgres> = self
             .pool
             .begin()
             .await
             .map_err(HexforgeError::data_source)?;
-        if !updates.is_empty() {
-            let (ids, values): (Vec<i64>, Vec<String>) = updates.iter().cloned().unzip();
-            let sql = format!(
-                "UPDATE {table} SET {unicode_col} = u.value \
-                 FROM unnest($1::int8[], $2::text[]) AS u(id, value) \
-                 WHERE {table}.id = u.id"
-            );
-            query(&sql)
-                .bind(ids)
-                .bind(values)
-                .execute(&mut *tx)
-                .await
-                .map_err(HexforgeError::data_source)?;
-        }
-        if !null_ids.is_empty() {
-            let sql = format!("UPDATE {table} SET {unicode_col} = NULL WHERE id = ANY($1)");
-            query(&sql)
-                .bind(null_ids)
-                .execute(&mut *tx)
-                .await
-                .map_err(HexforgeError::data_source)?;
-        }
+        query(&sql)
+            .bind(ids)
+            .bind(values)
+            .execute(&mut *tx)
+            .await
+            .map_err(HexforgeError::data_source)?;
         tx.commit().await.map_err(HexforgeError::data_source)
     }
 }
@@ -121,9 +107,8 @@ impl LatexColumnWriter for PgLatexColumnConverter<'_> {
         table: &'static str,
         column: &'static str,
         updates: &[(i64, String)],
-        null_ids: &[i64],
     ) -> Result<usize, HexforgeError> {
-        self.update_column(table, column, updates, null_ids).await?;
-        Ok(updates.len() + null_ids.len())
+        self.update_column(table, column, updates).await?;
+        Ok(updates.len())
     }
 }

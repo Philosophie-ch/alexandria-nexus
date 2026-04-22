@@ -39,16 +39,12 @@ pub trait LatexColumnFetcher: Send + Sync {
 }
 
 /// Contract for writing converted unicode values back to a column.
-///
-/// `updates` — rows with a non-null unicode value.
-/// `null_ids` — row IDs whose unicode column should be set to NULL (tainted by citation).
 pub trait LatexColumnWriter: Send + Sync {
     fn write_unicode_column(
         &self,
         table: &'static str,
         column: &'static str,
         updates: &[(i64, String)],
-        null_ids: &[i64],
     ) -> impl Future<Output = Result<usize, HexforgeError>> + Send;
 }
 
@@ -89,65 +85,44 @@ pub async fn convert_all_columns(
     let (pre_compiled, missing_citation_keys) =
         pre_compile_citations(&all_texts, citation_resolver).await?;
 
-    // Split pre-compiled texts back into per-column slices (Option<String>: None = tainted)
+    // Split pre-compiled texts back into per-column slices
     let mut offset = 0;
-    let mut per_batch_opts: Vec<Vec<Option<String>>> = Vec::with_capacity(batches.len());
+    let mut per_batch_texts: Vec<Vec<String>> = Vec::with_capacity(batches.len());
     for batch in &batches {
         let n = batch.rows.len();
-        per_batch_opts.push(pre_compiled[offset..offset + n].to_vec());
+        per_batch_texts.push(pre_compiled[offset..offset + n].to_vec());
         offset += n;
     }
 
-    // Replace None with "" for the converter (empty strings are fast no-ops); track taint mask
-    let mut taint_masks: Vec<Vec<bool>> = Vec::with_capacity(batches.len());
-    let per_batch_for_conversion: Vec<Vec<String>> = per_batch_opts
-        .iter()
-        .map(|opts| {
-            opts.iter()
-                .map(|opt| opt.clone().unwrap_or_default())
-                .collect()
-        })
-        .collect();
-    for opts in &per_batch_opts {
-        taint_masks.push(opts.iter().map(|opt| opt.is_none()).collect());
-    }
-
     // Convert via subprocess
-    let all_outcomes = convert_batches(converter, per_batch_for_conversion).await?;
+    let all_outcomes = convert_batches(converter, per_batch_texts).await?;
 
-    type ColumnWrites = (Vec<(i64, String)>, Vec<i64>);
     // Process outcomes into per-column updates and errors (no I/O).
-    // Tainted rows (text contained \cite) are NULLed, not written as "".
-    let mut per_batch_updates: Vec<ColumnWrites> = Vec::with_capacity(batches.len());
+    let mut per_batch_updates: Vec<Vec<(i64, String)>> = Vec::with_capacity(batches.len());
     let mut errors: Vec<LatexConvertError> = Vec::new();
 
-    for ((batch, tainted), outcomes) in batches.iter().zip(taint_masks).zip(all_outcomes) {
+    for (batch, outcomes) in batches.iter().zip(all_outcomes) {
         let mut ok_updates: Vec<(i64, String)> = Vec::new();
-        let mut null_ids: Vec<i64> = Vec::new();
-        for (((id, _), is_tainted), outcome) in batch.rows.iter().zip(tainted).zip(outcomes) {
-            if is_tainted {
-                null_ids.push(*id);
-            } else {
-                match outcome {
-                    ConvertOutcome::Ok(unicode) => ok_updates.push((*id, unicode)),
-                    ConvertOutcome::Err { message, .. } => errors.push(LatexConvertError {
-                        table: batch.table,
-                        column: batch.column,
-                        id: *id,
-                        error: message,
-                    }),
-                }
+        for ((id, _), outcome) in batch.rows.iter().zip(outcomes) {
+            match outcome {
+                ConvertOutcome::Ok(unicode) => ok_updates.push((*id, unicode)),
+                ConvertOutcome::Err { message, .. } => errors.push(LatexConvertError {
+                    table: batch.table,
+                    column: batch.column,
+                    id: *id,
+                    error: message,
+                }),
             }
         }
-        per_batch_updates.push((ok_updates, null_ids));
+        per_batch_updates.push(ok_updates);
     }
 
     // Write columns sequentially to avoid row-lock deadlocks when multiple columns
     // belong to the same table (e.g. the 5 bibitems unicode columns).
     let mut write_counts: Vec<usize> = Vec::with_capacity(batches.len());
-    for (batch, (updates, null_ids)) in batches.iter().zip(per_batch_updates.iter()) {
+    for (batch, updates) in batches.iter().zip(per_batch_updates.iter()) {
         let n = writer
-            .write_unicode_column(batch.table, batch.column, updates, null_ids)
+            .write_unicode_column(batch.table, batch.column, updates)
             .await?;
         write_counts.push(n);
     }
@@ -188,7 +163,6 @@ mod tests {
 
     impl LatexColumnFetcher for MockFetcher {
         async fn fetch_all_latex_columns(&self) -> Result<Vec<ColumnBatch>, HexforgeError> {
-            // Rebuild from stored data (ColumnBatch is not Clone)
             Ok(self
                 .0
                 .iter()
@@ -234,10 +208,12 @@ mod tests {
         }
     }
 
+    type WriteCall = (String, String, Vec<(i64, String)>);
+
     /// Records every write call in order so tests can assert on the sequence.
     #[derive(Clone, Default)]
     struct RecordingWriter {
-        calls: Arc<Mutex<Vec<(String, String, Vec<(i64, String)>, Vec<i64>)>>>,
+        calls: Arc<Mutex<Vec<WriteCall>>>,
     }
 
     impl LatexColumnWriter for RecordingWriter {
@@ -246,16 +222,13 @@ mod tests {
             table: &'static str,
             column: &'static str,
             updates: &[(i64, String)],
-            null_ids: &[i64],
         ) -> Result<usize, HexforgeError> {
-            let n = updates.len() + null_ids.len();
             self.calls.lock().unwrap().push((
                 table.to_string(),
                 column.to_string(),
                 updates.to_vec(),
-                null_ids.to_vec(),
             ));
-            Ok(n)
+            Ok(updates.len())
         }
     }
 
@@ -288,13 +261,12 @@ mod tests {
 
         let calls = writer.calls.lock().unwrap();
         assert_eq!(calls.len(), 1);
-        let (_, _, updates, null_ids) = &calls[0];
+        let (_, _, updates) = &calls[0];
         assert_eq!(updates, &[(1i64, s("Journal of Philosophy"))]);
-        assert!(null_ids.is_empty());
     }
 
     #[tokio::test]
-    async fn cite_command_taints_row_to_null_ids() {
+    async fn cite_command_substituted_and_stored() {
         let mut db = HashMap::new();
         db.insert(s("smith:2000"), cd("Smith", 2000));
         let fetcher = MockFetcher(vec![ColumnBatch {
@@ -312,33 +284,29 @@ mod tests {
             .unwrap();
 
         let calls = writer.calls.lock().unwrap();
-        let (_, _, updates, null_ids) = &calls[0];
-        // row 10 has a \cite → must be in null_ids
-        assert_eq!(null_ids, &[10i64]);
-        // row 11 is clean → must be in ok_updates
-        assert_eq!(updates.len(), 1);
-        assert_eq!(updates[0].0, 11);
+        let (_, _, updates) = &calls[0];
+        assert_eq!(updates.len(), 2);
+        assert_eq!(updates[0], (10i64, s("Review of Smith (2000)")));
+        assert_eq!(updates[1], (11i64, s("Plain title")));
     }
 
     #[tokio::test]
-    async fn missing_cite_key_also_taints_row() {
-        // Key not in DB → still tainted (unknown citation must not be partially rendered)
+    async fn missing_cite_key_renders_partial_text_and_reported() {
         let fetcher = MockFetcher(vec![ColumnBatch {
             table: "bibitems",
             column: "title_unicode",
-            rows: vec![(5, s(r"See \citet{ghost:1999}"))],
+            rows: vec![(5, s(r"See \citet{ghost:1999}."))],
         }]);
         let writer = RecordingWriter::default();
-        let resolver = MockResolver(HashMap::new()); // key not present
+        let resolver = MockResolver(HashMap::new());
 
         let report = convert_all_columns(&fetcher, &IdentityConverter, &resolver, &writer)
             .await
             .unwrap();
 
         let calls = writer.calls.lock().unwrap();
-        let (_, _, updates, null_ids) = &calls[0];
-        assert_eq!(null_ids, &[5i64]);
-        assert!(updates.is_empty());
+        let (_, _, updates) = &calls[0];
+        assert_eq!(updates[0], (5i64, s("See .")));
         assert!(report.missing_citation_keys.contains(&s("ghost:1999")));
     }
 
@@ -377,9 +345,8 @@ mod tests {
         .unwrap();
 
         let calls = writer.calls.lock().unwrap();
-        let (_, _, updates, null_ids) = &calls[0];
+        let (_, _, updates) = &calls[0];
         assert!(updates.is_empty());
-        assert!(null_ids.is_empty());
         assert_eq!(report.errors.len(), 1);
         assert_eq!(report.errors[0].id, 99);
         assert_eq!(report.errors[0].error, "bad latex");
@@ -387,7 +354,6 @@ mod tests {
 
     #[tokio::test]
     async fn multi_column_rows_sliced_correctly() {
-        // Two columns with 2 rows each; verify each writer call gets only its own rows.
         let fetcher = MockFetcher(vec![
             ColumnBatch {
                 table: "authors",
@@ -414,22 +380,17 @@ mod tests {
         let calls = writer.calls.lock().unwrap();
         assert_eq!(calls.len(), 2);
 
-        let (_, col0, updates0, _) = &calls[0];
+        let (_, col0, updates0) = &calls[0];
         assert_eq!(col0, "family_name_unicode");
-        assert_eq!(updates0.len(), 2);
-        assert_eq!(updates0[0], (1i64, s("Müller")));
-        assert_eq!(updates0[1], (2i64, s("García")));
+        assert_eq!(updates0, &[(1i64, s("Müller")), (2i64, s("García"))]);
 
-        let (_, col1, updates1, _) = &calls[1];
+        let (_, col1, updates1) = &calls[1];
         assert_eq!(col1, "given_name_unicode");
-        assert_eq!(updates1.len(), 2);
-        assert_eq!(updates1[0], (1i64, s("Hans")));
-        assert_eq!(updates1[1], (2i64, s("Luis")));
+        assert_eq!(updates1, &[(1i64, s("Hans")), (2i64, s("Luis"))]);
     }
 
     #[tokio::test]
     async fn writes_are_sequential_in_batch_order() {
-        // Three columns: verify writer receives calls in the same order as the batches.
         let fetcher = MockFetcher(vec![
             ColumnBatch {
                 table: "t",
@@ -459,21 +420,18 @@ mod tests {
         .unwrap();
 
         let calls = writer.calls.lock().unwrap();
-        let columns: Vec<&str> = calls.iter().map(|(_, c, _, _)| c.as_str()).collect();
+        let columns: Vec<&str> = calls.iter().map(|(_, c, _)| c.as_str()).collect();
         assert_eq!(columns, ["col_a", "col_b", "col_c"]);
     }
 
     #[tokio::test]
-    async fn total_updated_counts_both_ok_and_null() {
+    async fn total_updated_counts_all_ok_rows() {
         let mut db = HashMap::new();
         db.insert(s("k:1"), cd("K", 2001));
         let fetcher = MockFetcher(vec![ColumnBatch {
             table: "bibitems",
             column: "title_unicode",
-            rows: vec![
-                (1, s(r"\citet{k:1}")), // tainted → null_ids
-                (2, s("Clean title")),  // ok → ok_updates
-            ],
+            rows: vec![(1, s(r"\citet{k:1}")), (2, s("Clean title"))],
         }]);
         let writer = RecordingWriter::default();
 
@@ -481,7 +439,6 @@ mod tests {
             .await
             .unwrap();
 
-        // total_updated = ok_updates.len() + null_ids.len() = 1 + 1 = 2
         assert_eq!(report.total_updated, 2);
         assert_eq!(report.columns[0].updated, 2);
     }
