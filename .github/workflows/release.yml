@@ -46,13 +46,12 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-          ssh: default=${{ env.SSH_AUTH_SOCK }}
+          ssh: default
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       # Note: To make the package private, go to:
       # github.com/orgs/Philosophie-ch/packages → alexandria-nexus → Settings → Visibility → Private
-      # Or use the GitHub API / org settings to default new packages to private.
 
   deploy:
     name: Deploy to production
@@ -60,6 +59,12 @@ jobs:
     needs: build-and-push
 
     steps:
+      - name: Resolve image tag
+        id: image
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          echo "tag=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${version}" >> "$GITHUB_OUTPUT"
+
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
         env:
@@ -68,16 +73,23 @@ jobs:
           ALEXANDRIA_DB_NAME: alexandria
           ALEXANDRIA_SEED_API_KEY: ${{ secrets.ALEXANDRIA_SEED_API_KEY }}
           ALEXANDRIA_SEED_READ_KEY: ${{ secrets.ALEXANDRIA_SEED_READ_KEY }}
-          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          ALLOWED_ORIGINS: ${{ vars.PROD_ALLOWED_ORIGINS }}
+          IMAGE: ${{ steps.image.outputs.tag }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
         with:
           host: ${{ secrets.PROD_HOST }}
           username: ${{ secrets.PROD_USER }}
           key: ${{ secrets.PROD_SSH_KEY }}
-          envs: ALEXANDRIA_DB_USER,ALEXANDRIA_DB_PASSWORD,ALEXANDRIA_DB_NAME,ALEXANDRIA_SEED_API_KEY,ALEXANDRIA_SEED_READ_KEY,IMAGE,GHCR_TOKEN,GHCR_USER
+          envs: ALEXANDRIA_DB_USER,ALEXANDRIA_DB_PASSWORD,ALEXANDRIA_DB_NAME,ALEXANDRIA_SEED_API_KEY,ALEXANDRIA_SEED_READ_KEY,ALLOWED_ORIGINS,IMAGE,GHCR_TOKEN,GHCR_USER
           script: |
             set -e
+
+            # Verify curl is available
+            if ! command -v curl >/dev/null 2>&1; then
+              echo "curl is not installed on this server — cannot run health check"
+              exit 1
+            fi
 
             # Log in to ghcr.io to pull private images
             echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
@@ -127,7 +139,7 @@ jobs:
               -e DATABASE_URL="postgres://${ALEXANDRIA_DB_USER}:${ALEXANDRIA_DB_PASSWORD}@alexandria-db:5432/${ALEXANDRIA_DB_NAME}" \
               -e HOST=0.0.0.0 \
               -e PORT=8080 \
-              -e ALLOWED_ORIGINS="" \
+              -e ALLOWED_ORIGINS="${ALLOWED_ORIGINS}" \
               -e RUST_LOG=alexandria_nexus=info \
               -e SEED_API_KEY="${ALEXANDRIA_SEED_API_KEY}" \
               -e SEED_API_KEY_NAME="Admin Key" \
