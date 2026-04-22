@@ -4,6 +4,7 @@ pub mod db;
 pub mod handlers;
 
 pub mod auth;
+pub mod csv_rows;
 pub mod export;
 pub mod field_parsing;
 pub mod full_import;

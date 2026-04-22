@@ -40,7 +40,7 @@ pub struct AuthorName {
 
 /// Pre-resolved data that the renderer needs but cannot fetch itself (no I/O).
 ///
-/// Built by the adapter layer from database lookups.
+/// Built by the adapter layer.
 #[derive(Debug, Clone, Default)]
 pub struct RenderContext {
     /// Authors linked to the bibitem, ordered by position.

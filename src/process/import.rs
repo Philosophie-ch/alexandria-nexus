@@ -47,7 +47,7 @@ pub trait EntityBatchLookup<T>: Send + Sync {
     ) -> impl Future<Output = Result<Vec<T>, HexforgeError>> + Send;
 }
 
-/// Contract for syncing a PostgreSQL sequence to the current max ID after bulk insert.
+/// Contract for syncing a sequence to the current max ID after bulk insert.
 pub trait SequenceSyncer: Send + Sync {
     /// Advance the sequence for `table` to at least MAX(id).
     fn sync_sequence(

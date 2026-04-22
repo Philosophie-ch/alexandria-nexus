@@ -1,7 +1,7 @@
 //! Keyword tree process — defines the contract and orchestrates keyword tree building.
 //!
 //! The trait `KeywordFetcher` declares WHAT data fetching needs to happen.
-//! Concrete implementations (Postgres, etc.) live in the adapters layer.
+//! Concrete implementations live in the adapters layer.
 
 use hexforge::HexforgeError;
 

@@ -1,6 +1,6 @@
 //! Full import — pure types and business logic for bulk bibitem import.
 //!
-//! This module contains ZERO async, ZERO database access, ZERO AppState.
+//! This module contains ZERO async, ZERO I/O, ZERO AppState.
 //! All I/O orchestration lives in `crate::process::full_import`.
 //! All format-specific parsing lives in `crate::adapters::field_parsing`.
 

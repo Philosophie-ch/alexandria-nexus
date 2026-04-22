@@ -28,7 +28,9 @@ pub use search::search_bibitems;
 pub use snapshot::snapshot_data;
 pub use wipe::wipe_data;
 
+pub use bulk_import::bulk_import_table;
 pub use latex_columns::convert_latex_columns;
 pub use latex_to_unicode::convert_latex_to_unicode;
+mod bulk_import;
 mod latex_columns;
 mod latex_to_unicode;

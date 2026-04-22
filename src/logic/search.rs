@@ -1,7 +1,7 @@
 //! Search types — request/response types for bibitem search.
 //!
 //! Pure data types only. The actual search execution lives in the handler
-//! (adapter layer) since it's Postgres-specific (pg_trgm, similarity functions).
+//! (adapter layer) since it requires DB-specific full-text search capabilities.
 
 use serde::{Deserialize, Serialize};
 

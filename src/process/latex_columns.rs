@@ -1,7 +1,7 @@
 //! LaTeX → Unicode batch conversion — process layer.
 //!
 //! Defines the `LatexBatchConverter` trait, column fetcher/writer traits, and the
-//! `convert_all_columns` orchestration function.  No SQL, no HTTP — only abstract contracts.
+//! `convert_all_columns` orchestration function.  No I/O — only abstract contracts.
 
 use std::future::Future;
 
@@ -64,7 +64,7 @@ pub async fn convert_batches(
 ///
 /// Pipeline per column:
 /// 1. Fetch (id, latex) rows
-/// 2. Pre-compile `\cite*{...}` commands into plain text (one batch DB call for all columns)
+/// 2. Pre-compile `\cite*{...}` commands into plain text (one batch resolver call for all columns)
 /// 3. Convert via `pylatexenc` subprocess
 /// 4. Write back unicode values
 /// 5. Accumulate stats + errors into `LatexConvertReport`

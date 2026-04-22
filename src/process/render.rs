@@ -2,7 +2,7 @@
 //!
 //! Defines traits for I/O operations and coordinates between data fetching
 //! (via traits) and pure logic functions (from `crate::logic::render`).
-//! No AppState, no PgPool, no sqlx, no SQL — only abstract contracts.
+//! Orchestration only — no I/O, no framework dependencies.
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;

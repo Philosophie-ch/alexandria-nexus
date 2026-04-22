@@ -11,14 +11,16 @@ use hexforge::db_exports::{PgPool, query_as};
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
+use crate::adapters::csv_rows::{
+    bibitems_to_rows, build_author_rows, build_institution_rows, build_journal_rows,
+    build_keyword_rows, build_publisher_rows, build_school_rows, build_series_rows,
+};
 use crate::domain::junctions::{BibitemAuthorsRow, BibitemKeywordsRow, BibitemRefsRow};
 use crate::domain::{
     Author, BibItem, BibitemNotes, Institution, Journal, Keyword, Publisher, School, Series,
 };
-use crate::logic::export::{
-    build_author_rows, build_bibitem_id_rows, build_institution_rows, build_journal_rows,
-    build_keyword_rows, build_publisher_rows, build_school_rows, build_series_rows, opt_str,
-};
+use crate::logic::export::opt_str;
+use crate::process::export::BibitemExportData;
 use crate::process::snapshot::{SnapshotData, SnapshotFetcher};
 
 // =============================================================================
@@ -421,7 +423,11 @@ pub fn build_snapshot_zip(data: SnapshotData) -> Result<Vec<u8>, HexforgeError> 
             author_rows.iter().map(|r| (*r).clone()).collect();
         let kw_owned: Vec<BibitemKeywordsRow> = kw_rows.iter().map(|r| (*r).clone()).collect();
 
-        let bib_bytes = rows_to_csv_bytes(build_bibitem_id_rows(&owned, &author_owned, &kw_owned))?;
+        let bib_bytes = rows_to_csv_bytes(bibitems_to_rows(BibitemExportData::Ids {
+            bibitems: owned,
+            author_rows: author_owned,
+            keyword_rows: kw_owned,
+        }))?;
         let bib_path = format!("bibitem/{prefix}.csv");
         zip.start_file(&bib_path, opts).map_err(internal_err)?;
         zip.write_all(&bib_bytes).map_err(internal_err)?;

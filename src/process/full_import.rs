@@ -2,7 +2,7 @@
 //!
 //! Defines traits for I/O operations and coordinates between data fetching
 //! (via traits) and pure logic functions (from `crate::logic::full_import`).
-//! No AppState, no PgPool, no sqlx, no SQL -- only abstract contracts.
+//! Orchestration only — no I/O, no framework dependencies.
 //!
 //! **Architecture:** This module defines WHAT operations are needed via traits.
 //! Concrete I/O implementations live in `crate::adapters::full_import`.
@@ -204,7 +204,7 @@ async fn build_lookup_maps(
 // Validate endpoint orchestration
 // =============================================================================
 
-/// Validate parsed rows against the database. Returns a validation report. Does NOT modify anything.
+/// Validate parsed rows. Returns a validation report. Does NOT modify anything.
 pub async fn validate_import(
     author_lookup: &impl AuthorLookup,
     entity_lookup: &impl EntityLookup,

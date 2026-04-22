@@ -1,10 +1,10 @@
-//! Snapshot process — defines traits for full-database fetching.
+//! Snapshot process — defines traits for full-data fetching.
 //!
 //! The snapshot endpoint generates a ZIP of all data tables. This module
 //! defines the I/O contracts. Serialization and ZIP packaging live in
 //! the adapter layer.
 //!
-//! No AppState, no PgPool, no sqlx, no SQL — only abstract contracts.
+//! Orchestration only — no I/O, no framework dependencies.
 
 use std::future::Future;
 
@@ -19,7 +19,7 @@ use crate::domain::{
 // Data container
 // =============================================================================
 
-/// All data needed for a full snapshot, pre-fetched from the database.
+/// All data needed for a full snapshot, pre-fetched by the adapter layer.
 pub struct SnapshotData {
     pub authors: Vec<Author>,
     pub journals: Vec<Journal>,

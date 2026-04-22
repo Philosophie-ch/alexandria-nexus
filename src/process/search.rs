@@ -1,7 +1,7 @@
 //! Search process — defines the search contract and orchestrates execution.
 //!
 //! The trait `BibitemSearcher` declares WHAT search needs to happen.
-//! Concrete implementations (Postgres pg_trgm, etc.) live in the adapters layer.
+//! Concrete implementations live in the adapters layer.
 
 use hexforge::HexforgeError;
 

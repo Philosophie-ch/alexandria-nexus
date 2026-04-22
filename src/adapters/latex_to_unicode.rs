@@ -24,11 +24,13 @@ const PYTHON_SCRIPT: &str = r#"
 import json, sys
 
 def preprocess_quotes(text):
+    import re
     # TeX quote ligatures: replace before pylatexenc so they survive conversion.
-    # Order matters: double first so individual backticks don't fire early.
+    # Order matters: double first so single doesn't fire on the first char.
     text = text.replace("``", "\u201c")   # `` → "
     text = text.replace("''", "\u201d")   # '' → "
-    text = text.replace("`", "\u2018")    # ` → '
+    # Only replace backtick when NOT preceded by \ (which is a grave accent command, e.g. \`e → è).
+    text = re.sub(r"(?<!\\)`", "\u2018", text)   # ` → ' (but not \`)
     return text
 
 def convert_one(converter, text):
@@ -139,5 +141,82 @@ impl LatexBatchConverter for PyLatexConverter {
             })
             .collect();
         Ok(outcomes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    /// Run preprocess_quotes in isolation (no pylatexenc needed) and return the result.
+    fn preprocess(input: &str) -> String {
+        let script = r#"
+import re, json, sys
+
+def preprocess_quotes(text):
+    text = text.replace("``", "\u201c")
+    text = text.replace("''", "\u201d")
+    text = re.sub(r"(?<!\\)`", "\u2018", text)
+    return text
+
+data = json.loads(sys.stdin.read())
+sys.stdout.write(json.dumps(preprocess_quotes(data)))
+"#;
+        let mut child = Command::new("python3")
+            .args(["-c", script])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("python3 not found");
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(serde_json::to_vec(input).unwrap().as_slice())
+            .unwrap();
+        let out = child.wait_with_output().unwrap();
+        serde_json::from_slice::<String>(&out.stdout).unwrap()
+    }
+
+    #[test]
+    fn grave_accent_command_not_replaced() {
+        // \`e is LaTeX grave accent → produces è. The backtick must survive preprocessing.
+        let input = r"gen{\`e}se";
+        let result = preprocess(input);
+        assert!(
+            result.contains("\\`"),
+            "grave accent backtick was incorrectly replaced: {result}"
+        );
+        assert_eq!(
+            result, input,
+            "grave accent input should be unchanged by preprocess"
+        );
+    }
+
+    #[test]
+    fn standalone_backtick_becomes_open_quote() {
+        // A bare ` not preceded by \ is a TeX open-quote ligature
+        let result = preprocess("`word");
+        assert_eq!(result, "\u{2018}word");
+    }
+
+    #[test]
+    fn double_backtick_becomes_open_double_quote() {
+        let result = preprocess("``word''");
+        assert_eq!(result, "\u{201c}word\u{201d}");
+    }
+
+    #[test]
+    fn grave_and_standalone_in_same_text() {
+        // "G.E.~Moore et la gen{\`e}se" — the \`e must stay, other backticks replaced
+        let input = r"G.E.~Moore et la gen{\`e}se de la philosophie analytique";
+        let result = preprocess(input);
+        assert!(
+            result.contains("\\`e"),
+            "\\`e was incorrectly replaced in: {result}"
+        );
+        // No standalone backtick in this input — string should be unchanged
+        assert_eq!(result, input);
     }
 }

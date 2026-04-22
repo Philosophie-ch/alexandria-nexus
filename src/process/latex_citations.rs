@@ -23,7 +23,7 @@ pub trait CitationResolver: Send + Sync {
 
 /// Pre-compile `\cite*{...}` commands in a slice of LaTeX strings.
 ///
-/// Collects all unique cite keys across all texts, resolves them in one DB call,
+/// Collects all unique cite keys across all texts, resolves them in one batch via the injected resolver,
 /// then substitutes in every text. Returns `(processed_texts, missing_bibkeys)`.
 ///
 /// Missing bibkeys are reported for diagnostics but do not affect the output —
