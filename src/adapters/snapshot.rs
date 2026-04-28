@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 use std::io::Write;
 
-use hexforge::HexforgeError;
 use hexforge::db_exports::{PgPool, query_as};
+use hexforge::{DataStore, HexforgeError, SortOrder};
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
@@ -43,8 +43,8 @@ impl SnapshotFetcher for PgSnapshotFetcher {
     ) -> impl std::future::Future<Output = Result<Vec<Author>, HexforgeError>> + Send {
         let pool = self.pool.clone();
         async move {
-            query_as::<_, Author>("SELECT * FROM authors ORDER BY id")
-                .fetch_all(&pool)
+            DataStore::<Author>::new(pool)
+                .fetch_all(&())
                 .await
                 .map_err(HexforgeError::data_source)
         }
@@ -55,8 +55,8 @@ impl SnapshotFetcher for PgSnapshotFetcher {
     ) -> impl std::future::Future<Output = Result<Vec<Journal>, HexforgeError>> + Send {
         let pool = self.pool.clone();
         async move {
-            query_as::<_, Journal>("SELECT * FROM journals ORDER BY id")
-                .fetch_all(&pool)
+            DataStore::<Journal>::new(pool)
+                .fetch_all(&())
                 .await
                 .map_err(HexforgeError::data_source)
         }
@@ -67,8 +67,8 @@ impl SnapshotFetcher for PgSnapshotFetcher {
     ) -> impl std::future::Future<Output = Result<Vec<Publisher>, HexforgeError>> + Send {
         let pool = self.pool.clone();
         async move {
-            query_as::<_, Publisher>("SELECT * FROM publishers ORDER BY id")
-                .fetch_all(&pool)
+            DataStore::<Publisher>::new(pool)
+                .fetch_all(&())
                 .await
                 .map_err(HexforgeError::data_source)
         }
@@ -79,8 +79,8 @@ impl SnapshotFetcher for PgSnapshotFetcher {
     ) -> impl std::future::Future<Output = Result<Vec<Institution>, HexforgeError>> + Send {
         let pool = self.pool.clone();
         async move {
-            query_as::<_, Institution>("SELECT * FROM institutions ORDER BY id")
-                .fetch_all(&pool)
+            DataStore::<Institution>::new(pool)
+                .fetch_all(&())
                 .await
                 .map_err(HexforgeError::data_source)
         }
@@ -91,8 +91,8 @@ impl SnapshotFetcher for PgSnapshotFetcher {
     ) -> impl std::future::Future<Output = Result<Vec<School>, HexforgeError>> + Send {
         let pool = self.pool.clone();
         async move {
-            query_as::<_, School>("SELECT * FROM schools ORDER BY id")
-                .fetch_all(&pool)
+            DataStore::<School>::new(pool)
+                .fetch_all(&())
                 .await
                 .map_err(HexforgeError::data_source)
         }
@@ -103,8 +103,8 @@ impl SnapshotFetcher for PgSnapshotFetcher {
     ) -> impl std::future::Future<Output = Result<Vec<Series>, HexforgeError>> + Send {
         let pool = self.pool.clone();
         async move {
-            query_as::<_, Series>("SELECT * FROM series ORDER BY id")
-                .fetch_all(&pool)
+            DataStore::<Series>::new(pool)
+                .fetch_all(&())
                 .await
                 .map_err(HexforgeError::data_source)
         }
@@ -115,8 +115,8 @@ impl SnapshotFetcher for PgSnapshotFetcher {
     ) -> impl std::future::Future<Output = Result<Vec<Keyword>, HexforgeError>> + Send {
         let pool = self.pool.clone();
         async move {
-            query_as::<_, Keyword>("SELECT * FROM keywords ORDER BY id")
-                .fetch_all(&pool)
+            DataStore::<Keyword>::new(pool)
+                .fetch_all(&())
                 .await
                 .map_err(HexforgeError::data_source)
         }
@@ -127,8 +127,20 @@ impl SnapshotFetcher for PgSnapshotFetcher {
     ) -> impl std::future::Future<Output = Result<Vec<BibItem>, HexforgeError>> + Send {
         let pool = self.pool.clone();
         async move {
-            query_as::<_, BibItem>("SELECT * FROM bibitems ORDER BY id")
-                .fetch_all(&pool)
+            DataStore::<BibItem>::new(pool)
+                .fetch_all(&())
+                .await
+                .map_err(HexforgeError::data_source)
+        }
+    }
+
+    fn fetch_bibitem_notes(
+        &self,
+    ) -> impl std::future::Future<Output = Result<Vec<BibitemNotes>, HexforgeError>> + Send {
+        let pool = self.pool.clone();
+        async move {
+            DataStore::<BibitemNotes>::new(pool)
+                .fetch_all_sorted(&(), &SortOrder::by("bibkey"))
                 .await
                 .map_err(HexforgeError::data_source)
         }
@@ -176,18 +188,6 @@ impl SnapshotFetcher for PgSnapshotFetcher {
             .fetch_all(&pool)
             .await
             .map_err(HexforgeError::data_source)
-        }
-    }
-
-    fn fetch_bibitem_notes(
-        &self,
-    ) -> impl std::future::Future<Output = Result<Vec<BibitemNotes>, HexforgeError>> + Send {
-        let pool = self.pool.clone();
-        async move {
-            query_as::<_, BibitemNotes>("SELECT * FROM bibitem_notes ORDER BY bibkey")
-                .fetch_all(&pool)
-                .await
-                .map_err(HexforgeError::data_source)
         }
     }
 }
