@@ -1,10 +1,9 @@
 //! Postgres implementation of keyword fetching by level.
 //!
-//! Implements `KeywordFetcher` from the process layer. All SQL, sqlx types,
-//! and Postgres-specific logic lives here.
+//! Implements `KeywordFetcher` from the process layer.
 
-use hexforge::HexforgeError;
-use hexforge::db_exports::{PgPool, query_as};
+use hexforge::db_exports::PgPool;
+use hexforge::{DataStore, HexforgeError, SortOrder};
 
 use crate::domain::Keyword;
 use crate::process::keyword_tree::KeywordFetcher;
@@ -22,8 +21,8 @@ impl<'a> PgKeywordFetcher<'a> {
 
 impl KeywordFetcher for PgKeywordFetcher<'_> {
     async fn fetch_all(&self) -> Result<Vec<Keyword>, HexforgeError> {
-        query_as("SELECT * FROM keywords ORDER BY level, name")
-            .fetch_all(self.pool)
+        DataStore::<Keyword>::new(self.pool.clone())
+            .fetch_all_sorted(&(), &SortOrder::by("level").then("name"))
             .await
             .map_err(HexforgeError::data_source)
     }
