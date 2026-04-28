@@ -2,13 +2,14 @@
 
 //! Junction table row types.
 
+use crate::domain::{AuthorRole, RefType};
 use hexforge::db_exports::FromRow;
 
 #[derive(Debug, Clone, FromRow)]
 pub struct BibitemAuthorsRow {
     pub bibkey: String,
     pub author_key: String,
-    pub role: String,
+    pub role: AuthorRole,
     pub position: i16,
     pub name_variant_latex: Option<String>,
     pub name_variant_unicode: Option<String>,
@@ -16,14 +17,14 @@ pub struct BibitemAuthorsRow {
 
 #[derive(Debug, Clone, FromRow)]
 pub struct BibitemDependsOnRow {
-    pub source_key: i64,
-    pub dep_key: i64,
+    pub source_key: String,
+    pub dep_key: String,
 }
 
 #[derive(Debug, Clone, FromRow)]
 pub struct BibitemFurtherRefsRow {
-    pub source_key: i64,
-    pub dep_key: i64,
+    pub source_key: String,
+    pub dep_key: String,
 }
 
 #[derive(Debug, Clone, FromRow)]
@@ -37,5 +38,5 @@ pub struct BibitemKeywordsRow {
 pub struct BibitemRefsRow {
     pub source_key: String,
     pub target_key: String,
-    pub ref_type: String,
+    pub ref_type: RefType,
 }

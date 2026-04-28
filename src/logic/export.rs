@@ -69,14 +69,10 @@ pub fn opt_display<T: std::fmt::Display>(v: &Option<T>) -> String {
 
 /// Format author keys for a given role, sorted by position.
 pub fn format_role_ids(bib_authors: Option<&Vec<&BibitemAuthorsRow>>, role: AuthorRole) -> String {
-    let role_str = role.to_string();
     bib_authors
         .map(|rows| {
-            let mut filtered: Vec<&BibitemAuthorsRow> = rows
-                .iter()
-                .filter(|r| r.role == role_str)
-                .copied()
-                .collect();
+            let mut filtered: Vec<&BibitemAuthorsRow> =
+                rows.iter().filter(|r| r.role == role).copied().collect();
             filtered.sort_by_key(|r| r.position);
             filtered
                 .iter()
@@ -96,14 +92,10 @@ pub fn format_role_names(
     role: AuthorRole,
     authors_map: &HashMap<String, Author>,
 ) -> String {
-    let role_str = role.to_string();
     bib_authors
         .map(|rows| {
-            let mut filtered: Vec<&BibitemAuthorsRow> = rows
-                .iter()
-                .filter(|r| r.role == role_str)
-                .copied()
-                .collect();
+            let mut filtered: Vec<&BibitemAuthorsRow> =
+                rows.iter().filter(|r| r.role == role).copied().collect();
             filtered.sort_by_key(|r| r.position);
 
             let names: Vec<String> = filtered
@@ -183,14 +175,14 @@ mod tests {
     fn make_row(
         bibkey: &str,
         author_key: &str,
-        role: &str,
+        role: AuthorRole,
         position: i16,
         name_variant_latex: Option<&str>,
     ) -> BibitemAuthorsRow {
         BibitemAuthorsRow {
             bibkey: bibkey.to_string(),
             author_key: author_key.to_string(),
-            role: role.to_string(),
+            role,
             position,
             name_variant_latex: name_variant_latex.map(str::to_string),
             name_variant_unicode: None,
@@ -200,7 +192,7 @@ mod tests {
     #[test]
     fn uses_name_variant_latex_when_present() {
         let author = make_author("key1", "Smith", "John");
-        let row = make_row("bib1", "key1", "author", 1, Some("Schmidt, Hans"));
+        let row = make_row("bib1", "key1", AuthorRole::Author, 1, Some("Schmidt, Hans"));
         let rows = vec![&row];
         let mut map = HashMap::new();
         map.insert("key1".to_string(), author);
@@ -213,7 +205,7 @@ mod tests {
     #[test]
     fn falls_back_to_canonical_when_no_variant() {
         let author = make_author("key1", "Smith", "John");
-        let row = make_row("bib1", "key1", "author", 1, None);
+        let row = make_row("bib1", "key1", AuthorRole::Author, 1, None);
         let rows = vec![&row];
         let mut map = HashMap::new();
         map.insert("key1".to_string(), author);
@@ -227,8 +219,14 @@ mod tests {
     fn mixed_variant_and_canonical() {
         let a1 = make_author("key1", "Smith", "John");
         let a2 = make_author("key2", "Müller", "Hans");
-        let row1 = make_row("bib1", "key1", "author", 1, Some("Schmidt, Johann"));
-        let row2 = make_row("bib1", "key2", "author", 2, None);
+        let row1 = make_row(
+            "bib1",
+            "key1",
+            AuthorRole::Author,
+            1,
+            Some("Schmidt, Johann"),
+        );
+        let row2 = make_row("bib1", "key2", AuthorRole::Author, 2, None);
         let rows = vec![&row1, &row2];
         let mut map = HashMap::new();
         map.insert("key1".to_string(), a1);
@@ -243,7 +241,7 @@ mod tests {
     fn mononym_used_when_no_variant() {
         let mut author = make_author("key1", "", "");
         author.mononym_unicode = Some("Aristotle".to_string());
-        let row = make_row("bib1", "key1", "author", 1, None);
+        let row = make_row("bib1", "key1", AuthorRole::Author, 1, None);
         let rows = vec![&row];
         let mut map = HashMap::new();
         map.insert("key1".to_string(), author);
@@ -256,7 +254,7 @@ mod tests {
     #[test]
     fn filters_by_role() {
         let author = make_author("key1", "Smith", "John");
-        let row = make_row("bib1", "key1", "editor", 1, Some("Smith, J."));
+        let row = make_row("bib1", "key1", AuthorRole::Editor, 1, Some("Smith, J."));
         let rows = vec![&row];
         let mut map = HashMap::new();
         map.insert("key1".to_string(), author);

@@ -155,14 +155,10 @@ pub fn extract_role_authors(
     role: AuthorRole,
     authors_map: &HashMap<String, Author>,
 ) -> Vec<AuthorName> {
-    let role_str = role.to_string();
     bib_authors
         .map(|rows| {
-            let mut filtered: Vec<&BibitemAuthorsRow> = rows
-                .iter()
-                .filter(|r| r.role == role_str)
-                .copied()
-                .collect();
+            let mut filtered: Vec<&BibitemAuthorsRow> =
+                rows.iter().filter(|r| r.role == role).copied().collect();
             filtered.sort_by_key(|r| r.position);
             filtered
                 .iter()

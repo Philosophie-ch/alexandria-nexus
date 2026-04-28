@@ -153,7 +153,7 @@ impl SnapshotFetcher for PgSnapshotFetcher {
         let pool = self.pool.clone();
         async move {
             query_as::<_, BibitemAuthorsRow>(
-                "SELECT bibkey, author_key, role::text as role, position, name_variant_latex, name_variant_unicode FROM bibitem_authors ORDER BY bibkey, position",
+                "SELECT * FROM bibitem_authors ORDER BY bibkey, position",
             )
             .fetch_all(&pool)
             .await
@@ -182,8 +182,7 @@ impl SnapshotFetcher for PgSnapshotFetcher {
         let pool = self.pool.clone();
         async move {
             query_as::<_, BibitemRefsRow>(
-                "SELECT source_key, target_key, ref_type::text AS ref_type \
-                 FROM bibitem_refs ORDER BY source_key, target_key",
+                "SELECT * FROM bibitem_refs ORDER BY source_key, target_key",
             )
             .fetch_all(&pool)
             .await
@@ -243,7 +242,7 @@ fn build_bibitem_authors_csv(rows: &[&BibitemAuthorsRow]) -> Result<Vec<u8>, Hex
         wtr.write_record([
             &r.bibkey,
             &r.author_key,
-            &r.role,
+            &r.role.to_string(),
             &r.position.to_string(),
             opt_str(&r.name_variant_latex),
             opt_str(&r.name_variant_unicode),
@@ -271,7 +270,7 @@ fn build_bibitem_refs_csv(rows: &[BibitemRefsRow]) -> Result<Vec<u8>, HexforgeEr
     wtr.write_record(["source_key", "target_key", "ref_type"])
         .map_err(internal_err)?;
     for r in rows {
-        wtr.write_record([&r.source_key, &r.target_key, &r.ref_type])
+        wtr.write_record([&r.source_key, &r.target_key, &r.ref_type.to_string()])
             .map_err(internal_err)?;
     }
     wtr.into_inner().map_err(internal_err)
@@ -714,7 +713,7 @@ mod tests {
         data.bibitem_authors = vec![BibitemAuthorsRow {
             bibkey: "kant:1781".to_string(),
             author_key: "kant".to_string(),
-            role: "author".to_string(),
+            role: crate::domain::AuthorRole::Author,
             position: 1,
             name_variant_latex: None,
             name_variant_unicode: None,

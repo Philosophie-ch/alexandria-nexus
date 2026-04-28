@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use hexforge::HexforgeError;
 use hexforge::db_exports::{FromRow, PgPool, query_as};
 
+use crate::domain::AuthorRole;
 use crate::logic::latex_citations::CitationData;
 use crate::process::latex_citations::CitationResolver;
 
@@ -22,7 +23,7 @@ impl<'a> PgCitationResolver<'a> {
 struct CitationAuthorRow {
     bibkey: String,
     display_name: Option<String>,
-    role: String,
+    role: Option<AuthorRole>,
     date_year: Option<i16>,
 }
 
@@ -34,7 +35,7 @@ impl CitationResolver for PgCitationResolver<'_> {
         let rows: Vec<CitationAuthorRow> = query_as(
             "SELECT b.bibkey,
                 COALESCE(a.family_name_unicode, a.mononym_unicode) AS display_name,
-                ba.role::text AS role,
+                ba.role,
                 b.date_year
              FROM bibitems b
              LEFT JOIN bibitem_authors ba ON ba.bibkey = b.bibkey
@@ -55,9 +56,9 @@ impl CitationResolver for PgCitationResolver<'_> {
                 .entry(r.bibkey)
                 .or_insert_with(|| (vec![], vec![], r.date_year));
             if let Some(name) = r.display_name {
-                if r.role == "author" {
+                if r.role == Some(AuthorRole::Author) {
                     entry.0.push(name);
-                } else if r.role == "editor" {
+                } else if r.role == Some(AuthorRole::Editor) {
                     entry.1.push(name);
                 }
             }

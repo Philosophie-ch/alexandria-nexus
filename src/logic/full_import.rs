@@ -872,12 +872,11 @@ pub struct ExportContext<'a> {
 /// and produces a `Vec<String>` of field values.
 pub fn build_export_record(bib: &crate::domain::BibItem, ctx: &ExportContext<'_>) -> Vec<String> {
     let authors_for_role = |role: AuthorRole| -> String {
-        let role_str = role.to_string();
         ctx.authors_by_bib
             .get(&bib.bibkey)
             .map(|rows| {
                 let mut filtered: Vec<&&crate::domain::junctions::BibitemAuthorsRow> =
-                    rows.iter().filter(|r| r.role == role_str).collect();
+                    rows.iter().filter(|r| r.role == role).collect();
                 filtered.sort_by_key(|r| r.position);
                 filtered
                     .iter()

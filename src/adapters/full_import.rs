@@ -754,7 +754,7 @@ impl JunctionFetcher for PgFullImportStore<'_> {
         ids: &[i64],
     ) -> Result<Vec<BibitemAuthorsRow>, HexforgeError> {
         query_as::<_, BibitemAuthorsRow>(
-            "SELECT ba.bibkey, ba.author_key, ba.role::text as role, ba.position, ba.name_variant_latex, ba.name_variant_unicode \
+            "SELECT ba.bibkey, ba.author_key, ba.role, ba.position, ba.name_variant_latex, ba.name_variant_unicode \
              FROM bibitem_authors ba JOIN bibitems b ON b.bibkey = ba.bibkey WHERE b.id = ANY($1) ORDER BY ba.bibkey, ba.role, ba.position",
         )
         .bind(ids)
