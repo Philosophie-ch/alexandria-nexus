@@ -12,9 +12,12 @@ dev-raw:
 dev-build:
 	DOCKER_BUILDKIT=1 docker compose build app
 
-# Start DB + Adminer + app (build image first with: make dev-build)
+# Build a fresh release binary, start the stack, and hot-swap the binary in.
 dev-start:
 	docker compose up -d
+	cargo build --release --bin alexandria-nexus
+	docker cp target/release/alexandria-nexus alexandria-nexus:/app/alexandria-nexus
+	docker compose restart app
 
 # Stop all containers
 dev-stop:
