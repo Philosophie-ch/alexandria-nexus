@@ -446,7 +446,7 @@ impl ResolutionCtx {
             .into_iter()
             .filter_map(|(k, keys)| {
                 if keys.len() == 1 {
-                    Some((k, keys.into_iter().next().unwrap()))
+                    keys.into_iter().next().map(|v| (k, v))
                 } else {
                     None
                 }
@@ -458,7 +458,7 @@ impl ResolutionCtx {
             .into_iter()
             .filter_map(|(k, keys)| {
                 if keys.len() == 1 {
-                    Some((k, keys.into_iter().next().unwrap()))
+                    keys.into_iter().next().map(|v| (k, v))
                 } else {
                     None
                 }
@@ -852,190 +852,18 @@ pub fn assemble_validation_report(
 // =============================================================================
 
 /// Pre-resolved lookup data for building export records.
-pub struct ExportContext<'a> {
-    pub author_names: &'a HashMap<String, String>,
-    pub journal_names: &'a HashMap<String, String>,
-    pub publisher_names: &'a HashMap<String, String>,
-    pub institution_names: &'a HashMap<String, String>,
-    pub school_names: &'a HashMap<String, String>,
-    pub series_names: &'a HashMap<String, String>,
-    pub keyword_names: &'a HashMap<String, (String, i16)>,
-    pub bibkey_by_id: &'a HashMap<i64, String>,
-    pub authors_by_bib: &'a HashMap<String, Vec<&'a crate::domain::junctions::BibitemAuthorsRow>>,
-    pub keywords_by_bib: &'a HashMap<String, Vec<&'a crate::domain::junctions::BibitemKeywordsRow>>,
-    pub notes_by_bib: &'a HashMap<String, crate::domain::BibitemNotes>,
-}
-
-/// Build the record for a single bibitem.
-///
-/// Takes pre-resolved data (name maps, junction data indexed by bibitem ID)
-/// and produces a `Vec<String>` of field values.
-pub fn build_export_record(bib: &crate::domain::BibItem, ctx: &ExportContext<'_>) -> Vec<String> {
-    let authors_for_role = |role: AuthorRole| -> String {
-        ctx.authors_by_bib
-            .get(&bib.bibkey)
-            .map(|rows| {
-                let mut filtered: Vec<&&crate::domain::junctions::BibitemAuthorsRow> =
-                    rows.iter().filter(|r| r.role == role).collect();
-                filtered.sort_by_key(|r| r.position);
-                filtered
-                    .iter()
-                    .filter_map(|r| ctx.author_names.get(&r.author_key))
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(" and ")
-            })
-            .unwrap_or_default()
-    };
-
-    let keywords_for_level = |level: i16| -> String {
-        ctx.keywords_by_bib
-            .get(&bib.bibkey)
-            .map(|rows| {
-                let names: Vec<&str> = rows
-                    .iter()
-                    .filter_map(|r| {
-                        ctx.keyword_names
-                            .get(&r.keyword_key)
-                            .and_then(|(name, lv)| {
-                                if *lv == level {
-                                    Some(name.as_str())
-                                } else {
-                                    None
-                                }
-                            })
-                    })
-                    .collect();
-                if names.is_empty() {
-                    String::new()
-                } else {
-                    format!("{};", names.join("; "))
-                }
-            })
-            .unwrap_or_default()
-    };
-
-    let date = format_date_for_export(bib);
-    let crossref = bib.crossref.clone().unwrap_or_default();
-    let person = bib
-        .person_key
-        .as_deref()
-        .and_then(|k| ctx.author_names.get(k))
-        .map(|n| format!("{n};"))
-        .unwrap_or_default();
-
-    vec![
-        bib.entry_type.to_string(),
-        bib.bibkey.clone(),
-        authors_for_role(AuthorRole::Author),
-        authors_for_role(AuthorRole::Editor),
-        authors_for_role(AuthorRole::Guesteditor),
-        date,
-        bib.pubstate.map(|p| p.to_string()).unwrap_or_default(),
-        bib.title_latex.clone(),
-        bib.booktitle_latex.clone().unwrap_or_default(),
-        bib.journal_key
-            .as_deref()
-            .and_then(|k| ctx.journal_names.get(k))
-            .cloned()
-            .unwrap_or_default(),
-        bib.publisher_key
-            .as_deref()
-            .and_then(|k| ctx.publisher_names.get(k))
-            .cloned()
-            .unwrap_or_default(),
-        bib.institution_key
-            .as_deref()
-            .and_then(|k| ctx.institution_names.get(k))
-            .cloned()
-            .unwrap_or_default(),
-        bib.school_key
-            .as_deref()
-            .and_then(|k| ctx.school_names.get(k))
-            .cloned()
-            .unwrap_or_default(),
-        bib.series_key
-            .as_deref()
-            .and_then(|k| ctx.series_names.get(k))
-            .cloned()
-            .unwrap_or_default(),
-        bib.volume.clone().unwrap_or_default(),
-        bib.number.clone().unwrap_or_default(),
-        bib.pages.clone().unwrap_or_default(),
-        bib.eid.clone().unwrap_or_default(),
-        bib.address.clone().unwrap_or_default(),
-        bib.type_field.clone().unwrap_or_default(),
-        bib.edition.clone().unwrap_or_default(),
-        bib.note_latex.clone().unwrap_or_default(),
-        bib.issuetitle_latex.clone().unwrap_or_default(),
-        bib.extra_note_latex.clone().unwrap_or_default(),
-        crossref,
-        keywords_for_level(1),
-        keywords_for_level(2),
-        keywords_for_level(3),
-        bib.epoch.map(|e| e.to_string()).unwrap_or_default(),
-        bib.langid.map(|l| l.to_string()).unwrap_or_default(),
-        if bib.is_translation {
-            "x".to_string()
-        } else {
-            String::new()
-        },
-        person,
-        if bib.has_fulltext {
-            "x".to_string()
-        } else {
-            String::new()
-        },
-        bib.shorthand.clone().unwrap_or_default(),
-        bib.options.clone().unwrap_or_default(),
-        bib.doi.clone().unwrap_or_default(),
-        bib.url.clone().unwrap_or_default(),
-        bib.eprint.clone().unwrap_or_default(),
-        bib.urn.clone().unwrap_or_default(),
-        ctx.notes_by_bib
-            .get(&bib.bibkey)
-            .and_then(|n| n.note_perso.clone())
-            .unwrap_or_default(),
-        ctx.notes_by_bib
-            .get(&bib.bibkey)
-            .and_then(|n| n.note_stock.clone())
-            .unwrap_or_default(),
-        ctx.notes_by_bib
-            .get(&bib.bibkey)
-            .and_then(|n| n.note_missing.clone())
-            .unwrap_or_default(),
-        ctx.notes_by_bib
-            .get(&bib.bibkey)
-            .and_then(|n| n.change_request.clone())
-            .unwrap_or_default(),
-        ctx.notes_by_bib
-            .get(&bib.bibkey)
-            .and_then(|n| n.dltc_copyediting_note.clone())
-            .unwrap_or_default(),
-        ctx.notes_by_bib
-            .get(&bib.bibkey)
-            .and_then(|n| n.todo_general.clone())
-            .unwrap_or_default(),
-    ]
-}
-
-pub fn format_date_for_export(bib: &crate::domain::BibItem) -> String {
-    if bib.date_is_no_date {
-        return "no date".to_string();
-    }
-    match (bib.date_year, bib.date_month, bib.date_day) {
-        (Some(y), Some(m), Some(d)) => format!("{y}-{m:02}-{d:02}"),
-        (Some(y), _, _) => {
-            if let Some(y2) = bib.date_year_2_hyphen {
-                format!("{y}-{y2}")
-            } else if let Some(y2) = bib.date_year_2_slash {
-                format!("{y}/{y2}")
-            } else {
-                y.to_string()
-            }
-        }
-        _ => String::new(),
-    }
+pub struct ExportContext {
+    pub author_names: HashMap<String, String>,
+    pub journal_names: HashMap<String, String>,
+    pub publisher_names: HashMap<String, String>,
+    pub institution_names: HashMap<String, String>,
+    pub school_names: HashMap<String, String>,
+    pub series_names: HashMap<String, String>,
+    pub keyword_names: HashMap<String, (String, i16)>,
+    pub bibkey_by_id: HashMap<i64, String>,
+    pub authors_by_bib: HashMap<String, Vec<crate::domain::junctions::BibitemAuthorsRow>>,
+    pub keywords_by_bib: HashMap<String, Vec<crate::domain::junctions::BibitemKeywordsRow>>,
+    pub notes_by_bib: HashMap<String, crate::domain::BibitemNotes>,
 }
 
 // =============================================================================

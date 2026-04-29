@@ -20,6 +20,19 @@ pub async fn fetch_bibitem_authors_batch(
     .map_err(HexforgeError::data_source)
 }
 
+pub async fn fetch_bibitem_authors_by_owner_ids(
+    pool: &PgPool,
+    owner_ids: &[i64],
+) -> Result<Vec<BibitemAuthorsRow>, HexforgeError> {
+    query_as::<_, BibitemAuthorsRow>(
+        "SELECT j.bibkey, j.author_key, j.role, j.position, j.name_variant_latex, j.name_variant_unicode FROM bibitem_authors j JOIN bibitems m ON m.bibkey = j.bibkey WHERE m.id = ANY($1) ORDER BY j.bibkey, j.role, j.position"
+    )
+    .bind(owner_ids)
+    .fetch_all(pool)
+    .await
+    .map_err(HexforgeError::data_source)
+}
+
 pub async fn fetch_bibitem_depends_on_batch(
     pool: &PgPool,
     ids: &[String],
@@ -28,6 +41,19 @@ pub async fn fetch_bibitem_depends_on_batch(
         "SELECT source_key, dep_key FROM bibitem_depends_on WHERE source_key = ANY($1) ORDER BY source_key"
     )
     .bind(ids)
+    .fetch_all(pool)
+    .await
+    .map_err(HexforgeError::data_source)
+}
+
+pub async fn fetch_bibitem_depends_on_by_owner_ids(
+    pool: &PgPool,
+    owner_ids: &[i64],
+) -> Result<Vec<BibitemDependsOnRow>, HexforgeError> {
+    query_as::<_, BibitemDependsOnRow>(
+        "SELECT j.source_key, j.dep_key FROM bibitem_depends_on j JOIN bibitems m ON m.bibkey = j.source_key WHERE m.id = ANY($1) ORDER BY j.source_key"
+    )
+    .bind(owner_ids)
     .fetch_all(pool)
     .await
     .map_err(HexforgeError::data_source)
@@ -46,6 +72,19 @@ pub async fn fetch_bibitem_further_refs_batch(
     .map_err(HexforgeError::data_source)
 }
 
+pub async fn fetch_bibitem_further_refs_by_owner_ids(
+    pool: &PgPool,
+    owner_ids: &[i64],
+) -> Result<Vec<BibitemFurtherRefsRow>, HexforgeError> {
+    query_as::<_, BibitemFurtherRefsRow>(
+        "SELECT j.source_key, j.dep_key FROM bibitem_further_refs j JOIN bibitems m ON m.bibkey = j.source_key WHERE m.id = ANY($1) ORDER BY j.source_key"
+    )
+    .bind(owner_ids)
+    .fetch_all(pool)
+    .await
+    .map_err(HexforgeError::data_source)
+}
+
 pub async fn fetch_bibitem_keywords_batch(
     pool: &PgPool,
     ids: &[String],
@@ -59,6 +98,19 @@ pub async fn fetch_bibitem_keywords_batch(
     .map_err(HexforgeError::data_source)
 }
 
+pub async fn fetch_bibitem_keywords_by_owner_ids(
+    pool: &PgPool,
+    owner_ids: &[i64],
+) -> Result<Vec<BibitemKeywordsRow>, HexforgeError> {
+    query_as::<_, BibitemKeywordsRow>(
+        "SELECT j.bibkey, j.keyword_key, j.keyword_level FROM bibitem_keywords j JOIN bibitems m ON m.bibkey = j.bibkey WHERE m.id = ANY($1) ORDER BY j.bibkey"
+    )
+    .bind(owner_ids)
+    .fetch_all(pool)
+    .await
+    .map_err(HexforgeError::data_source)
+}
+
 pub async fn fetch_bibitem_refs_batch(
     pool: &PgPool,
     ids: &[String],
@@ -67,6 +119,19 @@ pub async fn fetch_bibitem_refs_batch(
         "SELECT source_key, target_key, ref_type FROM bibitem_refs WHERE source_key = ANY($1) ORDER BY source_key, ref_type"
     )
     .bind(ids)
+    .fetch_all(pool)
+    .await
+    .map_err(HexforgeError::data_source)
+}
+
+pub async fn fetch_bibitem_refs_by_owner_ids(
+    pool: &PgPool,
+    owner_ids: &[i64],
+) -> Result<Vec<BibitemRefsRow>, HexforgeError> {
+    query_as::<_, BibitemRefsRow>(
+        "SELECT j.source_key, j.target_key, j.ref_type FROM bibitem_refs j JOIN bibitems m ON m.bibkey = j.source_key WHERE m.id = ANY($1) ORDER BY j.source_key, j.ref_type"
+    )
+    .bind(owner_ids)
     .fetch_all(pool)
     .await
     .map_err(HexforgeError::data_source)

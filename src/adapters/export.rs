@@ -8,6 +8,9 @@ use std::collections::{HashMap, HashSet};
 use hexforge::db_exports::{PgPool, query_as};
 use hexforge::{DataStore, HexforgeError, WhereClause};
 
+use crate::adapters::db::queries::junctions::{
+    fetch_bibitem_authors_by_owner_ids, fetch_bibitem_keywords_by_owner_ids,
+};
 use crate::domain::junctions::{BibitemAuthorsRow, BibitemKeywordsRow};
 use crate::domain::{Author, BibItem, Institution, Journal, Keyword, Publisher, School, Series};
 use crate::process::export::{
@@ -441,25 +444,13 @@ impl ExportJunctionFetcher for PgExportJunctionFetcher<'_> {
         &self,
         bibitem_ids: &[i64],
     ) -> Result<Vec<BibitemAuthorsRow>, HexforgeError> {
-        query_as::<_, BibitemAuthorsRow>(
-            "SELECT ba.bibkey, ba.author_key, ba.role, ba.position, ba.name_variant_latex, ba.name_variant_unicode FROM bibitem_authors ba JOIN bibitems b ON b.bibkey = ba.bibkey WHERE b.id = ANY($1) ORDER BY ba.bibkey, ba.role, ba.position"
-        )
-        .bind(bibitem_ids)
-        .fetch_all(self.pool)
-        .await
-        .map_err(HexforgeError::data_source)
+        fetch_bibitem_authors_by_owner_ids(self.pool, bibitem_ids).await
     }
 
     async fn fetch_bibitem_keywords_batch(
         &self,
         bibitem_ids: &[i64],
     ) -> Result<Vec<BibitemKeywordsRow>, HexforgeError> {
-        query_as::<_, BibitemKeywordsRow>(
-            "SELECT bk.bibkey, bk.keyword_key, bk.keyword_level FROM bibitem_keywords bk JOIN bibitems b ON b.bibkey = bk.bibkey WHERE b.id = ANY($1) ORDER BY b.bibkey"
-        )
-        .bind(bibitem_ids)
-        .fetch_all(self.pool)
-        .await
-        .map_err(HexforgeError::data_source)
+        fetch_bibitem_keywords_by_owner_ids(self.pool, bibitem_ids).await
     }
 }

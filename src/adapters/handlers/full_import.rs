@@ -8,17 +8,17 @@ use hexforge::axum_exports::{IntoResponse, Json, Multipart, Response, State, Sta
 use serde::Deserialize;
 
 use super::import::extract_csv_bytes;
+use crate::adapters::csv_rows::build_export_record;
+use crate::adapters::full_import::{PgFullImportStore, parse_all_rows};
+use crate::logic::full_import::{EntityImportReport, FullImportResult, ValidationReport};
+use crate::process::full_import;
+use crate::state::AppState;
 
 #[derive(Deserialize)]
 pub struct ImportFullCsvParams {
     #[serde(default)]
     pub delete_stale: bool,
 }
-
-use crate::adapters::full_import::{PgFullImportStore, parse_all_rows};
-use crate::logic::full_import::{EntityImportReport, FullImportResult, ValidationReport};
-use crate::process::full_import;
-use crate::state::AppState;
 
 const FULL_CSV_HEADERS: &str = "entry_type,bibkey,author,editor,_guesteditor,date,pubstate,title,\
 booktitle,journal,publisher,institution,school,series,volume,number,pages,eid,address,type,edition,\
@@ -120,13 +120,14 @@ pub async fn recompute_deps(
 /// `POST /api/v1/admin/export-full-csv`
 pub async fn export_full_csv(State(state): State<AppState>) -> Result<Response, HexforgeError> {
     let store = PgFullImportStore::new(state.pool.pool());
-    let rows =
-        full_import::fetch_export_rows(&store, &store, &store, &store, &store, &store).await?;
+    let data =
+        full_import::fetch_export_data(&store, &store, &store, &store, &store, &store).await?;
 
     let mut wtr = csv::Writer::from_writer(Vec::new());
     wtr.write_record(FULL_CSV_HEADERS.split(','))
         .map_err(|e| HexforgeError::internal(format!("CSV header error: {e}")))?;
-    for row in rows {
+    for bib in &data.bibitems {
+        let row = build_export_record(bib, &data.context);
         wtr.write_record(&row)
             .map_err(|e| HexforgeError::internal(format!("CSV write error: {e}")))?;
     }

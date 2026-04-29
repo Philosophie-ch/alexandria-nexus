@@ -81,7 +81,7 @@ pub fn build_app(
             .update_validator(validate_update_author)
             .create_transform(create_author_transform)
             .update_transform(update_author_transform)
-            .by_key("author_key"),
+            .lookup_by("author_key"),
         )
         // Journals CRUD
         .crud_auto(
@@ -96,7 +96,7 @@ pub fn build_app(
             .update_validator(validate_update_journal)
             .create_transform(create_journal_transform)
             .update_transform(update_journal_transform)
-            .by_key("journal_key"),
+            .lookup_by("journal_key"),
         )
         // Publishers CRUD
         .crud_auto(
@@ -111,7 +111,7 @@ pub fn build_app(
             .update_validator(validate_update_publisher)
             .create_transform(create_publisher_transform)
             .update_transform(update_publisher_transform)
-            .by_key("publisher_key"),
+            .lookup_by("publisher_key"),
         )
         // Institutions CRUD
         .crud_auto(
@@ -126,7 +126,7 @@ pub fn build_app(
             .update_validator(validate_update_institution)
             .create_transform(create_institution_transform)
             .update_transform(update_institution_transform)
-            .by_key("institution_key"),
+            .lookup_by("institution_key"),
         )
         // Schools CRUD
         .crud_auto(
@@ -141,7 +141,7 @@ pub fn build_app(
             .update_validator(validate_update_school)
             .create_transform(create_school_transform)
             .update_transform(update_school_transform)
-            .by_key("school_key"),
+            .lookup_by("school_key"),
         )
         // Series CRUD
         .crud_auto(
@@ -156,7 +156,7 @@ pub fn build_app(
             .update_validator(validate_update_series)
             .create_transform(create_series_transform)
             .update_transform(update_series_transform)
-            .by_key("series_key"),
+            .lookup_by("series_key"),
         )
         // Keywords CRUD
         .crud_auto(
@@ -171,7 +171,7 @@ pub fn build_app(
             .update_validator(validate_update_keyword)
             .create_transform(create_keyword_transform)
             .update_transform(update_keyword_transform)
-            .by_key("keyword_key"),
+            .lookup_by("keyword_key"),
         )
         // BibItems CRUD
         .crud_auto(
@@ -186,7 +186,7 @@ pub fn build_app(
             .update_validator(validate_update_bibitem)
             .create_transform(create_bib_item_transform)
             .update_transform(update_bib_item_transform)
-            .by_key("bibkey")
+            .lookup_by("bibkey")
             // Projection view for list endpoint: ?view=summary
             .view("summary", hexforge::build_projection_view::<_, _, BibItemSummary>(state.bibitem_ds.clone()))
             // Junction tables (many-to-many)

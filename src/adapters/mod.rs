@@ -9,6 +9,7 @@ pub mod export;
 pub mod field_parsing;
 pub mod full_import;
 pub mod import;
+pub mod junction_queries;
 pub mod keyword_tree;
 pub mod latex_citations;
 pub mod latex_columns;

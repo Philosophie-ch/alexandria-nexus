@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use hexforge::db_exports::{FromRow, PgPool, query_as};
 use hexforge::{DataStore, HexforgeError, WhereClause};
 
-use crate::adapters::db::queries::junctions::fetch_bibitem_authors_batch;
+use crate::adapters::db::queries::junctions::fetch_bibitem_authors_by_owner_ids;
 use crate::adapters::db::queries::{AuthorQuery, BibItemQuery};
 use crate::domain::junctions::BibitemAuthorsRow;
 use crate::domain::{Author, BibItem};
@@ -180,7 +180,7 @@ impl RenderAuthorFetcher for PgRenderAuthorFetcher<'_> {
         &self,
         bibitem_ids: &[i64],
     ) -> Result<Vec<BibitemAuthorsRow>, HexforgeError> {
-        fetch_bibitem_authors_batch(self.pool, bibitem_ids).await
+        fetch_bibitem_authors_by_owner_ids(self.pool, bibitem_ids).await
     }
 
     async fn fetch_authors_by_keys(
