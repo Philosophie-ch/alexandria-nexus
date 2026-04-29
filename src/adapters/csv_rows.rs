@@ -8,11 +8,13 @@ use std::collections::HashMap;
 
 use crate::domain::junctions::{BibitemAuthorsRow, BibitemKeywordsRow};
 use crate::domain::{
-    Author, AuthorRole, BibItem, Institution, Journal, Keyword, Publisher, School, Series,
+    Author, AuthorRole, BibItem, BibitemNotes, Institution, Journal, Keyword, Publisher, School,
+    Series,
 };
 use crate::logic::export::{
     format_keywords_at_level, format_role_ids, format_role_names, opt_display, opt_i16, opt_str,
 };
+use crate::logic::full_import::ExportContext;
 use crate::process::export::{BibitemExpandedData, BibitemExportData};
 
 // ── Header constants ──────────────────────────────────────────────────────────
@@ -536,5 +538,167 @@ pub fn text_array(v: &Option<Vec<String>>) -> String {
                 .collect();
             format!("{{{}}}", escaped.join(","))
         }
+    }
+}
+
+// ── Full-CSV export ───────────────────────────────────────────────────────────
+
+/// Serialise a single `BibItem` into one CSV row using pre-resolved name maps.
+///
+/// Column order matches `FULL_CSV_HEADERS` in `adapters/handlers/full_import.rs`.
+pub fn build_export_record(bib: &BibItem, ctx: &ExportContext) -> Vec<String> {
+    let authors_for_role = |role: AuthorRole| -> String {
+        ctx.authors_by_bib
+            .get(&bib.bibkey)
+            .map(|rows| {
+                let mut filtered: Vec<&BibitemAuthorsRow> =
+                    rows.iter().filter(|r| r.role == role).collect();
+                filtered.sort_by_key(|r| r.position);
+                filtered
+                    .iter()
+                    .filter_map(|r| ctx.author_names.get(&r.author_key))
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(" and ")
+            })
+            .unwrap_or_default()
+    };
+
+    let keywords_for_level = |level: i16| -> String {
+        ctx.keywords_by_bib
+            .get(&bib.bibkey)
+            .map(|rows| {
+                let names: Vec<&str> = rows
+                    .iter()
+                    .filter_map(|r| {
+                        ctx.keyword_names
+                            .get(&r.keyword_key)
+                            .and_then(|(name, lv)| {
+                                if *lv == level {
+                                    Some(name.as_str())
+                                } else {
+                                    None
+                                }
+                            })
+                    })
+                    .collect();
+                if names.is_empty() {
+                    String::new()
+                } else {
+                    format!("{};", names.join("; "))
+                }
+            })
+            .unwrap_or_default()
+    };
+
+    let note = |f: fn(&BibitemNotes) -> Option<String>| -> String {
+        ctx.notes_by_bib
+            .get(&bib.bibkey)
+            .and_then(&f)
+            .unwrap_or_default()
+    };
+
+    let date = format_date_for_export(bib);
+    let crossref = bib.crossref.clone().unwrap_or_default();
+    let person = bib
+        .person_key
+        .as_deref()
+        .and_then(|k| ctx.author_names.get(k))
+        .map(|n| format!("{n};"))
+        .unwrap_or_default();
+
+    vec![
+        bib.entry_type.to_string(),
+        bib.bibkey.clone(),
+        authors_for_role(AuthorRole::Author),
+        authors_for_role(AuthorRole::Editor),
+        authors_for_role(AuthorRole::Guesteditor),
+        date,
+        bib.pubstate.map(|p| p.to_string()).unwrap_or_default(),
+        bib.title_latex.clone(),
+        bib.booktitle_latex.clone().unwrap_or_default(),
+        bib.journal_key
+            .as_deref()
+            .and_then(|k| ctx.journal_names.get(k))
+            .cloned()
+            .unwrap_or_default(),
+        bib.publisher_key
+            .as_deref()
+            .and_then(|k| ctx.publisher_names.get(k))
+            .cloned()
+            .unwrap_or_default(),
+        bib.institution_key
+            .as_deref()
+            .and_then(|k| ctx.institution_names.get(k))
+            .cloned()
+            .unwrap_or_default(),
+        bib.school_key
+            .as_deref()
+            .and_then(|k| ctx.school_names.get(k))
+            .cloned()
+            .unwrap_or_default(),
+        bib.series_key
+            .as_deref()
+            .and_then(|k| ctx.series_names.get(k))
+            .cloned()
+            .unwrap_or_default(),
+        bib.volume.clone().unwrap_or_default(),
+        bib.number.clone().unwrap_or_default(),
+        bib.pages.clone().unwrap_or_default(),
+        bib.eid.clone().unwrap_or_default(),
+        bib.address.clone().unwrap_or_default(),
+        bib.type_field.clone().unwrap_or_default(),
+        bib.edition.clone().unwrap_or_default(),
+        bib.note_latex.clone().unwrap_or_default(),
+        bib.issuetitle_latex.clone().unwrap_or_default(),
+        bib.extra_note_latex.clone().unwrap_or_default(),
+        crossref,
+        keywords_for_level(1),
+        keywords_for_level(2),
+        keywords_for_level(3),
+        bib.epoch.map(|e| e.to_string()).unwrap_or_default(),
+        bib.langid.map(|l| l.to_string()).unwrap_or_default(),
+        if bib.is_translation {
+            "x".to_string()
+        } else {
+            String::new()
+        },
+        person,
+        if bib.has_fulltext {
+            "x".to_string()
+        } else {
+            String::new()
+        },
+        bib.shorthand.clone().unwrap_or_default(),
+        bib.options.clone().unwrap_or_default(),
+        bib.doi.clone().unwrap_or_default(),
+        bib.url.clone().unwrap_or_default(),
+        bib.eprint.clone().unwrap_or_default(),
+        bib.urn.clone().unwrap_or_default(),
+        note(|n| n.note_perso.clone()),
+        note(|n| n.note_stock.clone()),
+        note(|n| n.note_missing.clone()),
+        note(|n| n.change_request.clone()),
+        note(|n| n.dltc_copyediting_note.clone()),
+        note(|n| n.todo_general.clone()),
+    ]
+}
+
+fn format_date_for_export(bib: &BibItem) -> String {
+    if bib.date_is_no_date {
+        return "no date".to_string();
+    }
+    match (bib.date_year, bib.date_month, bib.date_day) {
+        (Some(y), Some(m), Some(d)) => format!("{y}-{m:02}-{d:02}"),
+        (Some(y), _, _) => {
+            if let Some(y2) = bib.date_year_2_hyphen {
+                format!("{y}-{y2}")
+            } else if let Some(y2) = bib.date_year_2_slash {
+                format!("{y}/{y2}")
+            } else {
+                y.to_string()
+            }
+        }
+        _ => String::new(),
     }
 }

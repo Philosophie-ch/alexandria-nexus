@@ -22,9 +22,8 @@ use crate::logic::full_import::{
     AuthorJunctionRow, AuthorLookupResult, BibitemRefInsertRow, CollectedNames, EntityImportError,
     EntityImportReport, ExportContext, FieldError, FullImportReport, FullImportResult,
     KeywordJunctionRow, LookupMaps, NamedEntityKind, ParsedBibRow, ResolutionCtx, RowError,
-    ValidationReport, assemble_validation_report, build_bibitem_dto, build_export_record,
-    collect_author_junction_rows, collect_keyword_junction_rows, collect_ref_rows,
-    filter_importable_rows, generate_key,
+    ValidationReport, assemble_validation_report, build_bibitem_dto, collect_author_junction_rows,
+    collect_keyword_junction_rows, collect_ref_rows, filter_importable_rows, generate_key,
 };
 use crate::process::import::{BibitemNotesData, BibitemNotesStore};
 use crate::validation::{
@@ -616,23 +615,27 @@ fn build_all_bibitem_entities(
 // Export orchestration
 // =============================================================================
 
-/// Export all bibitems as raw rows in the full import format.
+/// Pre-resolved export data: all bibitems plus the lookup context needed to
+/// serialise each one. Returned by [`fetch_export_data`]; serialisation to any
+/// external format (CSV, JSON, etc.) happens in the adapter layer.
+pub struct FullExportData {
+    pub bibitems: Vec<BibItem>,
+    pub context: ExportContext,
+}
+
+/// Fetch all bibitems and build the pre-resolved export context.
 ///
-/// Returns one `Vec<String>` per bibitem (fields in column order). The caller
-/// is responsible for serialising to whatever output format is needed (tabular,
-/// JSON, etc.).
-pub async fn fetch_export_rows(
+/// Returns domain types only — no serialisation happens here.
+pub async fn fetch_export_data(
     bibitem_fetcher: &impl BibitemFetcher,
     author_name_fetcher: &impl AuthorNameFetcher,
     reverse_name_fetcher: &impl ReverseNameMapFetcher,
     keyword_name_fetcher: &impl KeywordNameFetcher,
     junction_fetcher: &impl JunctionFetcher,
     notes_fetcher: &impl BibitemNotesFetcher,
-) -> Result<Vec<Vec<String>>, HexforgeError> {
-    // Fetch all bibitems
+) -> Result<FullExportData, HexforgeError> {
     let bibitems = bibitem_fetcher.fetch_all_bibitems().await?;
 
-    // Build reverse lookup maps (ID -> name)
     let author_names = author_name_fetcher.fetch_author_names().await?;
     let journal_names = reverse_name_fetcher
         .fetch_entity_name_map(NamedEntity::Journals)
@@ -649,15 +652,10 @@ pub async fn fetch_export_rows(
     let series_names = reverse_name_fetcher
         .fetch_entity_name_map(NamedEntity::Series)
         .await?;
-
-    // Keywords by ID
     let keyword_names = keyword_name_fetcher.fetch_keyword_names().await?;
-
-    // Bibkey by ID (for crossref/refs resolution)
     let bibkey_by_id: HashMap<i64, String> =
         bibitems.iter().map(|b| (b.id, b.bibkey.clone())).collect();
 
-    // Junction data
     let bib_ids: Vec<i64> = bibitems.iter().map(|b| b.id).collect();
     let bib_authors = junction_fetcher
         .fetch_bibitem_authors_batch(&bib_ids)
@@ -666,16 +664,15 @@ pub async fn fetch_export_rows(
         .fetch_bibitem_keywords_batch(&bib_ids)
         .await?;
 
-    // Index junction data by bibkey
-    let mut authors_by_bib: HashMap<String, Vec<&BibitemAuthorsRow>> = HashMap::new();
-    for row in &bib_authors {
+    let mut authors_by_bib: HashMap<String, Vec<BibitemAuthorsRow>> = HashMap::new();
+    for row in bib_authors {
         authors_by_bib
             .entry(row.bibkey.clone())
             .or_default()
             .push(row);
     }
-    let mut keywords_by_bib: HashMap<String, Vec<&BibitemKeywordsRow>> = HashMap::new();
-    for row in &bib_keywords {
+    let mut keywords_by_bib: HashMap<String, Vec<BibitemKeywordsRow>> = HashMap::new();
+    for row in bib_keywords {
         keywords_by_bib
             .entry(row.bibkey.clone())
             .or_default()
@@ -684,23 +681,20 @@ pub async fn fetch_export_rows(
 
     let notes_by_bib = notes_fetcher.fetch_all_bibitem_notes().await?;
 
-    let export_ctx = ExportContext {
-        author_names: &author_names,
-        journal_names: &journal_names,
-        publisher_names: &publisher_names,
-        institution_names: &institution_names,
-        school_names: &school_names,
-        series_names: &series_names,
-        keyword_names: &keyword_names,
-        bibkey_by_id: &bibkey_by_id,
-        authors_by_bib: &authors_by_bib,
-        keywords_by_bib: &keywords_by_bib,
-        notes_by_bib: &notes_by_bib,
-    };
-
-    let rows = bibitems
-        .iter()
-        .map(|bib| build_export_record(bib, &export_ctx))
-        .collect();
-    Ok(rows)
+    Ok(FullExportData {
+        bibitems,
+        context: ExportContext {
+            author_names,
+            journal_names,
+            publisher_names,
+            institution_names,
+            school_names,
+            series_names,
+            keyword_names,
+            bibkey_by_id,
+            authors_by_bib,
+            keywords_by_bib,
+            notes_by_bib,
+        },
+    })
 }

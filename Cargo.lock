@@ -1172,8 +1172,8 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hexforge"
-version = "0.3.6"
-source = "git+ssh://git@gitlab.com/alebg/hexforge.git?tag=v0.3.6#7842a1cfd245ff5d1be8e6c82d2b27425a4058b2"
+version = "0.3.8"
+source = "git+ssh://git@gitlab.com/alebg/hexforge.git?tag=v0.3.8#544c3effd6318f3ddbce79d1dadfadadbb0bc18c"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -1196,8 +1196,8 @@ dependencies = [
 
 [[package]]
 name = "hexforge-cli"
-version = "0.3.6"
-source = "git+ssh://git@gitlab.com/alebg/hexforge.git?tag=v0.3.6#7842a1cfd245ff5d1be8e6c82d2b27425a4058b2"
+version = "0.3.8"
+source = "git+ssh://git@gitlab.com/alebg/hexforge.git?tag=v0.3.8#544c3effd6318f3ddbce79d1dadfadadbb0bc18c"
 dependencies = [
  "clap",
  "heck",
@@ -1207,8 +1207,8 @@ dependencies = [
 
 [[package]]
 name = "hexforge-macros"
-version = "0.3.6"
-source = "git+ssh://git@gitlab.com/alebg/hexforge.git?tag=v0.3.6#7842a1cfd245ff5d1be8e6c82d2b27425a4058b2"
+version = "0.3.8"
+source = "git+ssh://git@gitlab.com/alebg/hexforge.git?tag=v0.3.8#544c3effd6318f3ddbce79d1dadfadadbb0bc18c"
 dependencies = [
  "proc-macro2",
  "quote",

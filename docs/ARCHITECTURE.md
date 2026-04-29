@@ -150,6 +150,63 @@ impl BibitemSearcher for PgBibitemSearcher { /* pg_trgm SQL */ }
 5. **Handlers are thin HTTP adapters only.** Extract request → call wired process → format response. Zero business logic. Zero wiring decisions.
 6. **hexforge's `DataSource<T>` trait** is already an abstract contract. Process can use `&impl DataSource<T>` for standard CRUD operations without depending on adapters.
 
+## hexforge Integration
+
+Alexandria Nexus is built on the hexforge SDK. hexforge provides the scaffolding that would otherwise be boilerplate for every CRUD resource; Alexandria code only adds what is domain-specific.
+
+### What hexforge provides out of the box
+
+| hexforge abstraction | What it does | Where Alexandria uses it |
+|---|---|---|
+| `DataSource<T>` trait | Abstract CRUD contract (find, insert, update, delete, stream, count) | Process traits can use `&impl DataSource<T>` instead of defining their own |
+| `DataStore<T, Q>` | Concrete PostgreSQL implementation of `DataSource<T>` | Adapters — one per entity, pre-wired in `AppState` |
+| `DataStore::fetch_all(query)` | Fetch all matching rows with no pagination limit | `snapshot.rs` entity/notes fetches; `keyword_tree.rs` |
+| `DataStore::fetch_all_sorted(query, order)` | `fetch_all` with custom `ORDER BY` via `SortOrder` | `keyword_tree.rs` (level, name ordering) |
+| `DataStore::find_by_similarity(search, filters, pagination, fallback)` | pg_trgm fuzzy search + `COUNT(*) OVER()` in one query; returns `(Vec<T>, i64)` | `adapters/search.rs` |
+| `TextSearch::on(fields, query).with_threshold(f)` | Abstract fuzzy text search spec; pg_trgm internally | `adapters/search.rs` |
+| `SortOrder::by(field).then(field).then_desc(field)` | Sort spec without exposing SQL syntax | `keyword_tree.rs`, `snapshot.rs`, export helpers |
+| `#[derive(Entity, Crud)]` | Generates SQL mapping for entity types | All 8 domain entities |
+| `#[derive(Filter)]` | Generates query filter types | All entity query structs in `db/queries/` |
+| `#[derive(Projection)]` | Generates column subsets for `find_all_projected` | `BibItemSummary` and expansion projections |
+| `impl_db_enum!` | Adds sqlx encode/decode to domain enums without polluting domain | `adapters/db/db_mappings.rs` |
+| `WhereClause` | SQL WHERE builder without exposing sqlx types | Adapter impls that need ad-hoc conditions |
+| `crud_auto()` | Registers all CRUD routes + OpenAPI schema from type params | `composition/mod.rs` — 8 entities |
+| `.lookup_by(column)` | Auto `GET /by-key/{key}` route with full `?expand` and `?expand=all` support | All 8 entities in `composition/mod.rs` |
+| `.junction(JunctionConfig)` | Auto junction CRUD routes | `bibitem_authors`, `bibitem_keywords` |
+| `.expand_fk_projected` | Declarative FK expansion with `?expand=` | Author, journal, publisher, etc. expansions |
+| `.expand_junction_projected_by_key` | String-key junction expansion with optional enum-safe role filter | `bibitem_authors` (role), `bibitem_keywords` |
+| `.view("summary", ...)` | Projection dispatch via `?view=` | BibItemSummary view |
+| `HexforgeError` | Unified error type for process and adapter layers | All process functions return this |
+
+### When to define a custom process trait vs. use DataSource directly
+
+Use `&impl DataSource<T>` (hexforge's built-in abstract trait) when the operation is standard CRUD: find by ID, list with filters, insert, update, delete. No custom trait needed.
+
+Define a custom process trait when the operation is outside what `DataSource` provides:
+- Full-text / fuzzy search (pg_trgm — `BibitemSearcher`)
+- Junction table inserts with conflict handling (`BibitemJunctionStore`)
+- Bulk transactional import / delete (`NameVariantStore`, `ReferenceStore`)
+- LaTeX batch conversion with unnest updates (`LatexColumnFetcher`, `LatexColumnWriter`)
+- Multi-table LEFT JOINs (e.g., citation resolution — `CitationResolver`)
+
+### Raw SQL policy in adapters
+
+Adapters use raw SQL only where hexforge abstractions genuinely cannot express the operation.
+
+**Justified raw SQL** (no hexforge equivalent):
+- `unnest($1::int8[], $2::text[])` batch updates — `adapters/latex_columns.rs`
+- Complex LEFT JOINs with grouping — `adapters/latex_citations.rs`
+- Bulk transactional import: batch deletes, dependency traversal — `adapters/full_import.rs`
+- PostgreSQL `array_append`, sequence resets, junction inserts with conflict handling — `adapters/import.rs`
+- Junction snapshot fetches with PostgreSQL enum casts in SELECT — `adapters/snapshot.rs`
+- API key lookup (intentionally narrow, runs on every request) — `adapters/auth.rs`
+
+**Replaced by hexforge abstractions**:
+- pg_trgm similarity + `COUNT(*) OVER()` → `DataStore::find_by_similarity` + `TextSearch`
+- `SELECT * FROM keywords ORDER BY level, name` → `DataStore::fetch_all_sorted(&SortOrder::by("level").then("name"))`
+- `SELECT * FROM {entity} ORDER BY id` (snapshot) → `DataStore::fetch_all`
+- JOIN-by-integer-ID junction fetches → generated `fetch_{junction}_by_owner_ids` functions in `adapters/db/queries/junctions.rs`
+
 ## Layer Details
 
 ### Domain (`src/domain/`)
