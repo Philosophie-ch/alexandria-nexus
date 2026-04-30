@@ -2,8 +2,8 @@ use hexforge::axum_exports::{Json, Query, State};
 use hexforge::{HexforgeError, ValidationError};
 use serde::{Deserialize, Serialize};
 
+use crate::AppState;
 use crate::adapters::wipe::wipe_tables;
-use crate::composition::AppState;
 
 #[derive(Deserialize)]
 pub struct WipeParams {

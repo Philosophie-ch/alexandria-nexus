@@ -8,6 +8,7 @@ use hexforge::HexforgeError;
 use hexforge::axum_exports::{IntoResponse, Json, Response, State, StatusCode, header};
 use serde::Serialize;
 
+use crate::AppState;
 use crate::adapters::csv_rows::{
     bibitems_to_rows, build_author_rows, build_institution_rows, build_journal_rows,
     build_keyword_rows, build_publisher_rows, build_school_rows, build_series_rows,
@@ -19,7 +20,6 @@ use crate::adapters::export::{
 use crate::logic::export::{BibitemExportRequest, EntityExportRequest};
 use crate::process::export;
 use crate::process::export::ExportError;
-use crate::state::AppState;
 
 // =============================================================================
 // HTTP error response types

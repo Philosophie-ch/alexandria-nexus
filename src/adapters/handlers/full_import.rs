@@ -8,24 +8,17 @@ use hexforge::axum_exports::{IntoResponse, Json, Multipart, Response, State, Sta
 use serde::Deserialize;
 
 use super::import::extract_csv_bytes;
-use crate::adapters::csv_rows::build_export_record;
+use crate::AppState;
+use crate::adapters::csv_rows::full_csv_to_bytes;
 use crate::adapters::full_import::{PgFullImportStore, parse_all_rows};
 use crate::logic::full_import::{EntityImportReport, FullImportResult, ValidationReport};
 use crate::process::full_import;
-use crate::state::AppState;
 
 #[derive(Deserialize)]
 pub struct ImportFullCsvParams {
     #[serde(default)]
     pub delete_stale: bool,
 }
-
-const FULL_CSV_HEADERS: &str = "entry_type,bibkey,author,editor,_guesteditor,date,pubstate,title,\
-booktitle,journal,publisher,institution,school,series,volume,number,pages,eid,address,type,edition,\
-note,_issuetitle,_extra_note,crossref,\
-_kw_level1,_kw_level2,_kw_level3,_epoch,_langid,_lang_der,_person,\
-_has_link_to_full_text,shorthand,options,doi,url,eprint,urn,\
-_note-perso,_note-stock,_note-missing,_change-request,_dltc_copyediting_note,_to-do-general";
 
 /// Validate a human-readable CSV without importing.
 /// `POST /api/v1/admin/validate-full-csv`
@@ -122,18 +115,7 @@ pub async fn export_full_csv(State(state): State<AppState>) -> Result<Response, 
     let store = PgFullImportStore::new(state.pool.pool());
     let data =
         full_import::fetch_export_data(&store, &store, &store, &store, &store, &store).await?;
-
-    let mut wtr = csv::Writer::from_writer(Vec::new());
-    wtr.write_record(FULL_CSV_HEADERS.split(','))
-        .map_err(|e| HexforgeError::internal(format!("CSV header error: {e}")))?;
-    for bib in &data.bibitems {
-        let row = build_export_record(bib, &data.context);
-        wtr.write_record(&row)
-            .map_err(|e| HexforgeError::internal(format!("CSV write error: {e}")))?;
-    }
-    let bytes = wtr
-        .into_inner()
-        .map_err(|e| HexforgeError::internal(format!("CSV flush error: {e}")))?;
+    let bytes = full_csv_to_bytes(&data)?;
     let csv = String::from_utf8(bytes)
         .map_err(|e| HexforgeError::internal(format!("CSV UTF-8 error: {e}")))?;
 

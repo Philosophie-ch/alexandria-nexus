@@ -6,6 +6,8 @@
 
 use std::collections::HashMap;
 
+use hexforge::HexforgeError;
+
 use crate::domain::junctions::{BibitemAuthorsRow, BibitemKeywordsRow};
 use crate::domain::{
     Author, AuthorRole, BibItem, BibitemNotes, Institution, Journal, Keyword, Publisher, School,
@@ -16,6 +18,7 @@ use crate::logic::export::{
 };
 use crate::logic::full_import::ExportContext;
 use crate::process::export::{BibitemExpandedData, BibitemExportData};
+use crate::process::full_import::FullExportData;
 
 // ── Header constants ──────────────────────────────────────────────────────────
 
@@ -543,9 +546,32 @@ pub fn text_array(v: &Option<Vec<String>>) -> String {
 
 // ── Full-CSV export ───────────────────────────────────────────────────────────
 
+pub const FULL_CSV_HEADERS: &str = "entry_type,bibkey,author,editor,_guesteditor,date,pubstate,title,\
+booktitle,journal,publisher,institution,school,series,volume,number,pages,eid,address,type,edition,\
+note,_issuetitle,_extra_note,crossref,\
+_kw_level1,_kw_level2,_kw_level3,_epoch,_langid,_lang_der,_person,\
+_has_link_to_full_text,shorthand,options,doi,url,eprint,urn,\
+_note-perso,_note-stock,_note-missing,_change-request,_dltc_copyediting_note,_to-do-general";
+
+/// Serialise all bibitems from `data` into a UTF-8 CSV byte vector.
+///
+/// The column order is defined by [`FULL_CSV_HEADERS`].
+pub fn full_csv_to_bytes(data: &FullExportData) -> Result<Vec<u8>, HexforgeError> {
+    let mut wtr = csv::Writer::from_writer(Vec::new());
+    wtr.write_record(FULL_CSV_HEADERS.split(','))
+        .map_err(|e| HexforgeError::internal(format!("CSV header error: {e}")))?;
+    for bib in &data.bibitems {
+        let row = build_export_record(bib, &data.context);
+        wtr.write_record(&row)
+            .map_err(|e| HexforgeError::internal(format!("CSV write error: {e}")))?;
+    }
+    wtr.into_inner()
+        .map_err(|e| HexforgeError::internal(format!("CSV flush error: {e}")))
+}
+
 /// Serialise a single `BibItem` into one CSV row using pre-resolved name maps.
 ///
-/// Column order matches `FULL_CSV_HEADERS` in `adapters/handlers/full_import.rs`.
+/// Column order matches [`FULL_CSV_HEADERS`].
 pub fn build_export_record(bib: &BibItem, ctx: &ExportContext) -> Vec<String> {
     let authors_for_role = |role: AuthorRole| -> String {
         ctx.authors_by_bib
@@ -700,5 +726,160 @@ fn format_date_for_export(bib: &BibItem) -> String {
             }
         }
         _ => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    use crate::domain::{BibItem, EntryType};
+    use crate::process::full_import::FullExportData;
+
+    fn empty_context() -> ExportContext {
+        ExportContext {
+            author_names: HashMap::new(),
+            journal_names: HashMap::new(),
+            publisher_names: HashMap::new(),
+            institution_names: HashMap::new(),
+            school_names: HashMap::new(),
+            series_names: HashMap::new(),
+            keyword_names: HashMap::new(),
+            bibkey_by_id: HashMap::new(),
+            authors_by_bib: HashMap::new(),
+            keywords_by_bib: HashMap::new(),
+            notes_by_bib: HashMap::new(),
+        }
+    }
+
+    fn minimal_bib(bibkey: &str) -> BibItem {
+        BibItem {
+            id: 1,
+            bibkey: bibkey.to_string(),
+            entry_type: EntryType::Article,
+            title_latex: "Test Title".to_string(),
+            date_is_no_date: false,
+            has_fulltext: false,
+            is_translation: false,
+            address: None,
+            booktitle_latex: None,
+            booktitle_unicode: None,
+            crossref: None,
+            date_day: None,
+            date_month: None,
+            date_year: None,
+            date_year_2_hyphen: None,
+            date_year_2_slash: None,
+            doi: None,
+            edition: None,
+            eid: None,
+            epoch: None,
+            eprint: None,
+            extra_note_latex: None,
+            extra_note_unicode: None,
+            fulltext_path: None,
+            institution_key: None,
+            issuetitle_latex: None,
+            issuetitle_unicode: None,
+            journal_key: None,
+            langid: None,
+            note_latex: None,
+            note_unicode: None,
+            number: None,
+            options: None,
+            pages: None,
+            person_key: None,
+            publisher_key: None,
+            pubstate: None,
+            school_key: None,
+            series_key: None,
+            shorthand: None,
+            title_unicode: None,
+            type_field: None,
+            url: None,
+            urn: None,
+            volume: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn full_csv_headers_column_count() {
+        let cols: Vec<&str> = FULL_CSV_HEADERS.split(',').collect();
+        assert_eq!(cols.len(), 45);
+        assert_eq!(cols[0], "entry_type");
+        assert_eq!(cols[1], "bibkey");
+        assert_eq!(cols[44], "_to-do-general");
+    }
+
+    #[test]
+    fn full_csv_to_bytes_empty_data_produces_header_only() {
+        let data = FullExportData {
+            bibitems: vec![],
+            context: empty_context(),
+        };
+        let bytes = full_csv_to_bytes(&data).expect("should not fail on empty data");
+        let csv = String::from_utf8(bytes).unwrap();
+        let mut lines = csv.lines();
+        let header = lines.next().expect("header line");
+        assert!(header.starts_with("entry_type,bibkey"));
+        assert!(lines.next().is_none(), "no data rows expected");
+    }
+
+    #[test]
+    fn full_csv_to_bytes_single_row() {
+        let data = FullExportData {
+            bibitems: vec![minimal_bib("test2024")],
+            context: empty_context(),
+        };
+        let bytes = full_csv_to_bytes(&data).expect("should not fail");
+        let csv = String::from_utf8(bytes).unwrap();
+        let lines: Vec<&str> = csv.lines().collect();
+        assert_eq!(lines.len(), 2, "header + one data row");
+        assert!(lines[1].contains("test2024"));
+        assert!(lines[1].contains("article"));
+    }
+
+    #[test]
+    fn build_export_record_column_count_matches_headers() {
+        let bib = minimal_bib("test-bib");
+        let ctx = empty_context();
+        let row = build_export_record(&bib, &ctx);
+        let col_count = FULL_CSV_HEADERS.split(',').count();
+        assert_eq!(
+            row.len(),
+            col_count,
+            "row column count must match header count"
+        );
+    }
+
+    #[test]
+    fn build_export_record_basic_fields() {
+        let bib = minimal_bib("smith2023");
+        let ctx = empty_context();
+        let row = build_export_record(&bib, &ctx);
+        assert_eq!(row[0], "article", "entry_type");
+        assert_eq!(row[1], "smith2023", "bibkey");
+        assert_eq!(row[7], "Test Title", "title");
+    }
+
+    #[test]
+    fn build_export_record_fulltext_flag() {
+        let mut bib = minimal_bib("link-bib");
+        bib.has_fulltext = true;
+        let row = build_export_record(&bib, &empty_context());
+        // _has_link_to_full_text is at index 32 (0-based)
+        assert_eq!(row[32], "x");
+    }
+
+    #[test]
+    fn build_export_record_translation_flag() {
+        let mut bib = minimal_bib("trans-bib");
+        bib.is_translation = true;
+        let row = build_export_record(&bib, &empty_context());
+        // _lang_der is at index 30 (0-based)
+        assert_eq!(row[30], "x");
     }
 }
