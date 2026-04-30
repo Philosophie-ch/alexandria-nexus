@@ -244,7 +244,11 @@ where
         }
         let found = self
             .ds
-            .find_many(WhereClause::new("name = ANY($1)").bind(keys.to_vec()))
+            .find_many(
+                WhereClause::new("name = ANY($1)")
+                    .bind(keys.to_vec())
+                    .map_err(HexforgeError::data_source)?,
+            )
             .await
             .map_err(HexforgeError::data_source)?;
         let found_names: HashSet<&str> = found.iter().map(|k| k.name.as_str()).collect();
@@ -408,7 +412,11 @@ where
         }
         let found = self
             .ds
-            .find_many(WhereClause::new("bibkey = ANY($1)").bind(bibkeys.to_vec()))
+            .find_many(
+                WhereClause::new("bibkey = ANY($1)")
+                    .bind(bibkeys.to_vec())
+                    .map_err(HexforgeError::data_source)?,
+            )
             .await
             .map_err(HexforgeError::data_source)?;
         let found_keys: HashSet<&str> = found.iter().map(|b| b.bibkey.as_str()).collect();

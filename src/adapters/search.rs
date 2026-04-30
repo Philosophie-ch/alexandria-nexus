@@ -5,7 +5,9 @@
 //! by hexforge internally.
 
 use hexforge::db_exports::PgPool;
-use hexforge::{HexforgeError, Pagination, ParamBinder, PgQuery, SortOrder, TextSearch};
+use hexforge::{
+    DataSourceError, HexforgeError, Pagination, ParamBinder, PgQuery, SortOrder, TextSearch,
+};
 
 use crate::domain::BibItem;
 use crate::domain::{EntryType, Epoch};
@@ -56,25 +58,26 @@ impl PgQuery for BibitemSearchFilters {
         (conditions, idx)
     }
 
-    fn bind(&self, binder: &mut ParamBinder) {
+    fn bind(&self, binder: &mut ParamBinder) -> Result<(), DataSourceError> {
         if let Some(entry_type) = self.entry_type {
-            binder.add(entry_type);
+            binder.add(entry_type)?;
         }
         if let Some(year_from) = self.year_from {
-            binder.add(year_from);
+            binder.add(year_from)?;
         }
         if let Some(year_to) = self.year_to {
-            binder.add(year_to);
+            binder.add(year_to)?;
         }
         if let Some(author_id) = self.author_id {
-            binder.add(author_id);
+            binder.add(author_id)?;
         }
         if let Some(journal_id) = self.journal_id {
-            binder.add(journal_id);
+            binder.add(journal_id)?;
         }
         if let Some(epoch) = self.epoch {
-            binder.add(epoch);
+            binder.add(epoch)?;
         }
+        Ok(())
     }
 }
 
