@@ -1,5 +1,10 @@
 SHELL := /bin/bash
-.PHONY: dev stop db lint test test-unit test-integration
+.PHONY: setup dev stop db lint test test-unit test-integration
+
+# Install required development tools (run once after cloning)
+setup:
+	cargo install cargo-audit
+	cargo install cargo-geiger
 
 # Build DATABASE_URL from the compose env vars
 DB_URL = postgres://$${POSTGRES_USER}:$${POSTGRES_PASSWORD}@localhost:$${DB_PORT:-5433}/$${POSTGRES_DB}
