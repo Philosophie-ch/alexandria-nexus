@@ -23,11 +23,11 @@ pub trait LatexBatchConverter: Send + Sync {
     ) -> impl Future<Output = Result<Vec<ConvertOutcome>, HexforgeError>> + Send;
 }
 
-/// One column's worth of (id, latex_text) rows, identified by table + unicode column name.
+/// One column's worth of (id, latex_text) rows, identified by entity + field name.
 pub struct ColumnBatch {
-    pub table: &'static str,
-    /// The unicode target column (used for reporting and writing).
-    pub column: &'static str,
+    pub entity: &'static str,
+    /// The unicode target field (used for reporting and writing).
+    pub field: &'static str,
     pub rows: Vec<(i64, String)>,
 }
 
@@ -38,12 +38,12 @@ pub trait LatexColumnFetcher: Send + Sync {
     ) -> impl Future<Output = Result<Vec<ColumnBatch>, HexforgeError>> + Send;
 }
 
-/// Contract for writing converted unicode values back to a column.
+/// Contract for writing converted unicode values back to a field.
 pub trait LatexColumnWriter: Send + Sync {
-    fn write_unicode_column(
+    fn write_unicode_field(
         &self,
-        table: &'static str,
-        column: &'static str,
+        entity: &'static str,
+        field: &'static str,
         updates: &[(i64, String)],
     ) -> impl Future<Output = Result<usize, HexforgeError>> + Send;
 }
@@ -107,8 +107,8 @@ pub async fn convert_all_columns(
             match outcome {
                 ConvertOutcome::Ok(unicode) => ok_updates.push((*id, unicode)),
                 ConvertOutcome::Err { message, .. } => errors.push(LatexConvertError {
-                    table: batch.table,
-                    column: batch.column,
+                    entity: batch.entity,
+                    field: batch.field,
                     id: *id,
                     error: message,
                 }),
@@ -122,7 +122,7 @@ pub async fn convert_all_columns(
     let mut write_counts: Vec<usize> = Vec::with_capacity(batches.len());
     for (batch, updates) in batches.iter().zip(per_batch_updates.iter()) {
         let n = writer
-            .write_unicode_column(batch.table, batch.column, updates)
+            .write_unicode_field(batch.entity, batch.field, updates)
             .await?;
         write_counts.push(n);
     }
@@ -132,8 +132,8 @@ pub async fn convert_all_columns(
         .iter()
         .zip(write_counts)
         .map(|(batch, updated)| ColumnConvertResult {
-            table: batch.table,
-            column: batch.column,
+            entity: batch.entity,
+            field: batch.field,
             updated,
         })
         .collect();
@@ -167,8 +167,8 @@ mod tests {
                 .0
                 .iter()
                 .map(|b| ColumnBatch {
-                    table: b.table,
-                    column: b.column,
+                    entity: b.entity,
+                    field: b.field,
                     rows: b.rows.clone(),
                 })
                 .collect())
@@ -217,15 +217,15 @@ mod tests {
     }
 
     impl LatexColumnWriter for RecordingWriter {
-        async fn write_unicode_column(
+        async fn write_unicode_field(
             &self,
-            table: &'static str,
-            column: &'static str,
+            entity: &'static str,
+            field: &'static str,
             updates: &[(i64, String)],
         ) -> Result<usize, HexforgeError> {
             self.calls.lock().unwrap().push((
-                table.to_string(),
-                column.to_string(),
+                entity.to_string(),
+                field.to_string(),
                 updates.to_vec(),
             ));
             Ok(updates.len())
@@ -248,8 +248,8 @@ mod tests {
     #[tokio::test]
     async fn clean_text_goes_to_ok_updates() {
         let fetcher = MockFetcher(vec![ColumnBatch {
-            table: "journals",
-            column: "name_unicode",
+            entity: "journals",
+            field: "name_unicode",
             rows: vec![(1, s("Journal of Philosophy"))],
         }]);
         let writer = RecordingWriter::default();
@@ -270,8 +270,8 @@ mod tests {
         let mut db = HashMap::new();
         db.insert(s("smith:2000"), cd("Smith", 2000));
         let fetcher = MockFetcher(vec![ColumnBatch {
-            table: "bibitems",
-            column: "title_unicode",
+            entity: "bibitems",
+            field: "title_unicode",
             rows: vec![
                 (10, s(r"Review of \citet{smith:2000}")),
                 (11, s("Plain title")),
@@ -293,8 +293,8 @@ mod tests {
     #[tokio::test]
     async fn missing_cite_key_renders_partial_text_and_reported() {
         let fetcher = MockFetcher(vec![ColumnBatch {
-            table: "bibitems",
-            column: "title_unicode",
+            entity: "bibitems",
+            field: "title_unicode",
             rows: vec![(5, s(r"See \citet{ghost:1999}."))],
         }]);
         let writer = RecordingWriter::default();
@@ -329,8 +329,8 @@ mod tests {
         }
 
         let fetcher = MockFetcher(vec![ColumnBatch {
-            table: "journals",
-            column: "name_unicode",
+            entity: "journals",
+            field: "name_unicode",
             rows: vec![(99, s("broken{latex"))],
         }]);
         let writer = RecordingWriter::default();
@@ -356,13 +356,13 @@ mod tests {
     async fn multi_column_rows_sliced_correctly() {
         let fetcher = MockFetcher(vec![
             ColumnBatch {
-                table: "authors",
-                column: "family_name_unicode",
+                entity: "authors",
+                field: "family_name_unicode",
                 rows: vec![(1, s("Müller")), (2, s("García"))],
             },
             ColumnBatch {
-                table: "authors",
-                column: "given_name_unicode",
+                entity: "authors",
+                field: "given_name_unicode",
                 rows: vec![(1, s("Hans")), (2, s("Luis"))],
             },
         ]);
@@ -393,18 +393,18 @@ mod tests {
     async fn writes_are_sequential_in_batch_order() {
         let fetcher = MockFetcher(vec![
             ColumnBatch {
-                table: "t",
-                column: "col_a",
+                entity: "t",
+                field: "col_a",
                 rows: vec![(1, s("a"))],
             },
             ColumnBatch {
-                table: "t",
-                column: "col_b",
+                entity: "t",
+                field: "col_b",
                 rows: vec![(2, s("b"))],
             },
             ColumnBatch {
-                table: "t",
-                column: "col_c",
+                entity: "t",
+                field: "col_c",
                 rows: vec![(3, s("c"))],
             },
         ]);
@@ -429,8 +429,8 @@ mod tests {
         let mut db = HashMap::new();
         db.insert(s("k:1"), cd("K", 2001));
         let fetcher = MockFetcher(vec![ColumnBatch {
-            table: "bibitems",
-            column: "title_unicode",
+            entity: "bibitems",
+            field: "title_unicode",
             rows: vec![(1, s(r"\citet{k:1}")), (2, s("Clean title"))],
         }]);
         let writer = RecordingWriter::default();

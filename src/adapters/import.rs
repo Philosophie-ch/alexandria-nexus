@@ -78,8 +78,8 @@ impl<'a> PgSequenceSyncer<'a> {
 }
 
 impl SequenceSyncer for PgSequenceSyncer<'_> {
-    async fn sync_sequence(&self, table: &'static str) -> Result<(), HexforgeError> {
-        let sql = match table {
+    async fn sync_sequence(&self, entity: &'static str) -> Result<(), HexforgeError> {
+        let sql = match entity {
             "authors" => {
                 "SELECT setval(pg_get_serial_sequence('authors', 'id'), COALESCE(MAX(id), 1)) FROM authors"
             }
@@ -106,7 +106,7 @@ impl SequenceSyncer for PgSequenceSyncer<'_> {
             }
             _ => {
                 return Err(HexforgeError::internal(format!(
-                    "Unknown table for sequence sync: {table}"
+                    "Unknown entity for sequence sync: {entity}"
                 )));
             }
         };
