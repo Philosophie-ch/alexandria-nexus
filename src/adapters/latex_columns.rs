@@ -91,8 +91,8 @@ impl LatexColumnFetcher for PgLatexColumnConverter<'_> {
             |&(table, latex_col, unicode_col)| async move {
                 let rows = fetcher.fetch_column(table, latex_col).await?;
                 Ok::<ColumnBatch, HexforgeError>(ColumnBatch {
-                    table,
-                    column: unicode_col,
+                    entity: table,
+                    field: unicode_col,
                     rows: rows.into_iter().map(|r| (r.id, r.latex)).collect(),
                 })
             },
@@ -102,13 +102,13 @@ impl LatexColumnFetcher for PgLatexColumnConverter<'_> {
 }
 
 impl LatexColumnWriter for PgLatexColumnConverter<'_> {
-    async fn write_unicode_column(
+    async fn write_unicode_field(
         &self,
-        table: &'static str,
-        column: &'static str,
+        entity: &'static str,
+        field: &'static str,
         updates: &[(i64, String)],
     ) -> Result<usize, HexforgeError> {
-        self.update_column(table, column, updates).await?;
+        self.update_column(entity, field, updates).await?;
         Ok(updates.len())
     }
 }

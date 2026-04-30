@@ -280,16 +280,16 @@ pub struct LatexConvertReport {
 /// Stats for one converted column.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ColumnConvertResult {
-    pub table: &'static str,
-    pub column: &'static str,
+    pub entity: &'static str,
+    pub field: &'static str,
     pub updated: usize,
 }
 
 /// A row whose LaTeX value could not be converted — mirrors `EntityImportError`.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct LatexConvertError {
-    pub table: &'static str,
-    pub column: &'static str,
+    pub entity: &'static str,
+    pub field: &'static str,
     pub id: i64,
     pub error: String,
 }

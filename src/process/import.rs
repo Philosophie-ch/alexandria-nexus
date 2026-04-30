@@ -49,10 +49,10 @@ pub trait EntityBatchLookup<T>: Send + Sync {
 
 /// Contract for syncing a sequence to the current max ID after bulk insert.
 pub trait SequenceSyncer: Send + Sync {
-    /// Advance the sequence for `table` to at least MAX(id).
+    /// Advance the sequence for `entity` to at least MAX(id).
     fn sync_sequence(
         &self,
-        table: &'static str,
+        entity: &'static str,
     ) -> impl Future<Output = Result<(), HexforgeError>> + Send;
 }
 
