@@ -1,6 +1,6 @@
 # Architecture
 
-Alexandria Nexus follows hexagonal architecture with five layers. Dependencies flow **inward only**: outer layers depend on inner layers, never the reverse.
+Alexandria Nexus follows hexagonal architecture with five layers. Dependencies flow **inward only**: outer layers depend on inner layers, never the reverse. This document is the **authoritative source** for layer architecture, dependency rules, and structural decisions. For type safety and coding style, [CODING_STANDARDS.md](CODING_STANDARDS.md) is authoritative.
 
 ## Layer Diagram
 
@@ -13,7 +13,7 @@ Alexandria Nexus follows hexagonal architecture with five layers. Dependencies f
 │  Layer 2: LOGIC  (src/logic/)                                       │
 │  Pure functions. No I/O. No async.                                  │
 │  Takes data in, returns data out. Deterministic and testable.       │
-│  Validation, CSV parsing, rendering, type conversions               │
+│  Validation, rendering, type conversions                            │
 ├─────────────────────────────────────────────────────────────────────┤
 │  Layer 3: PROCESS  (src/process/)                                   │
 │  Orchestration. Defines WHAT needs to happen.                       │
@@ -48,6 +48,8 @@ These rules are **non-negotiable**. Every import must respect them.
 **Adapter trait impls and process:** Adapter trait impl files (e.g., `adapters/search.rs`, `adapters/render.rs`) import from process **only to implement traits** that process defines. They CANNOT import process functions or orchestration logic — only trait definitions. This keeps the dependency one-directional: process defines contracts, adapters fulfill them.
 
 **Handlers and process:** Handlers import process **types** (e.g., `ResolveResult`) and process **functions** (e.g., `render_bibitems_to_html`) to call process orchestration. Handlers are **thin HTTP adapters only**: extract request → forward to process → format response. They do not contain business logic and do not decide which adapter implementation to use — that is composition's job.
+
+**Adapter isolation:** Adapter sub-modules (`db/`, `handlers/`, `field_parsing/`, root-level trait impls) must **not** import from each other. Each sub-module interacts only with the inner layers (domain, logic, process). If two adapter sub-modules need to cooperate — e.g., a handler needs a trait impl struct — composition wires them together by injecting the adapter (via `AppState` or function parameters). No adapter reaches across to import from a sibling adapter sub-module.
 
 ## The Process / Adapter Contract
 
@@ -99,26 +101,27 @@ impl DataWriter for PgWriter {
     }
 }
 
-// COMPOSITION — the only layer that knows all others; wires concrete impls to process
-// This is in build_app() or the router setup, NOT in the handler
-process_fn(
-    reader = PgReader::new(pool),
-    writer = PgWriter::new(pool),
-)
+// COMPOSITION — the only layer that knows all others; wires concrete impls to process.
+// The strategic decision (which backend, which concrete adapters) belongs here — in
+// build_app(). Composition constructs the concrete adapters and injects them into
+// handlers via AppState.
+let reader = PgReader::new(pool.clone());
+let writer = PgWriter::new(pool.clone());
+let state = AppState { reader, writer, /* shared data sources, etc. */ };
 
-// HANDLER — thin HTTP adapter only: extract request → forward → format response
-pub async fn my_handler(State(state): State<AppState>) {
-    let report = process_fn(
-        &PgReader::new(state.pool.pool()),
-        &PgWriter::new(state.pool.pool()),
-    ).await?;
-    Ok(Json(report))
+// ADAPTER layer — HTTP handler: extract request → call process with pre-wired
+// dependencies from AppState → format response.
+// The handler does NOT instantiate adapters or choose backends — composition already
+// made those decisions. The handler only extracts and forwards.
+pub async fn my_endpoint(State(state): State<AppState>) -> impl IntoResponse {
+    let report = process_fn(&state.reader, &state.writer).await?;
+    Json(report)
 }
 ```
 
 **Why separate read and write traits:** If you switch from Postgres to MongoDB, you only write `MongoReader` and `MongoWriter`. Process, logic, and domain are untouched. You could equally mix: `CsvReader` with `PgWriter`, or `ApiReader` with `ElasticSearchWriter`. They are fully swappable without touching any other layer.
 
-**Why composition wires (not handlers):** Composition is the only layer that knows all others. Wiring decisions — which concrete adapter to use — belong there. Handlers know nothing about storage technologies; they receive the already-wired application state from composition and remain thin HTTP glue.
+**Why composition makes the strategic decisions:** Composition is the only layer that knows all others. It constructs concrete adapter instances and delivers them to handlers via `AppState`. Handlers receive pre-wired dependencies — they never instantiate adapters, choose backends, or create pools.
 
 ### Example: search (single combined trait)
 
@@ -146,66 +149,19 @@ impl BibitemSearcher for PgBibitemSearcher { /* pg_trgm SQL */ }
 1. **Process NEVER has concrete I/O.** No `PgPool`, no `query()`, no `sqlx`, no filesystem. If it needs I/O, it receives a trait.
 2. **Process defines traits for its I/O needs.** Read and write traits are defined **separately**. No table, column, or schema names anywhere in process.
 3. **Adapters implement read and write independently.** `PgReader` and `PgWriter` are separate structs that can be swapped without touching each other.
-4. **COMPOSITION wires concrete implementations.** `process_fn(reader=PgReader::new(pool), writer=PgWriter::new(pool))` — this decision belongs in `build_app()`, not in handlers.
-5. **Handlers are thin HTTP adapters only.** Extract request → call wired process → format response. Zero business logic. Zero wiring decisions.
-6. **hexforge's `DataSource<T>` trait** is already an abstract contract. Process can use `&impl DataSource<T>` for standard CRUD operations without depending on adapters.
+4. **Composition constructs and wires concrete implementations.** Adapter instantiation (`PgReader::new(pool)`) belongs in `build_app()`, never in handlers.
+5. **Handlers are thin HTTP adapters only.** Extract request → call process with injected dependencies → format response. Zero business logic. Zero wiring decisions. Zero adapter instantiation.
+6. **hexforge's `DataSource<T>` trait** is already an abstract contract. For standard CRUD operations, process uses `&impl DataSource<T>` without depending on any adapter.
 
 ## hexforge Integration
 
-Alexandria Nexus is built on the hexforge SDK. hexforge provides the scaffolding that would otherwise be boilerplate for every CRUD resource; Alexandria code only adds what is domain-specific.
+Alexandria Nexus is built on the hexforge SDK. **Leverage hexforge maximally.** Always use hexforge's built-in abstractions before writing custom consumer code. Custom code is only justified when hexforge genuinely cannot express the operation — if it should but doesn't, ask for a fix upstream in hexforge rather than working around it in Alexandria.
 
-### What hexforge provides out of the box
+hexforge provides derive macros, CRUD routing, pagination, expansion, filtering, OpenAPI generation, abstract data access (`DataSource<T>`), and concrete PostgreSQL adapters (`DataStore<T, Q>`). Alexandria code only adds what is domain-specific: search orchestration, bibliography rendering, import/export pipelines, LaTeX conversion.
 
-| hexforge abstraction | What it does | Where Alexandria uses it |
-|---|---|---|
-| `DataSource<T>` trait | Abstract CRUD contract (find, insert, update, delete, stream, count) | Process traits can use `&impl DataSource<T>` instead of defining their own |
-| `DataStore<T, Q>` | Concrete PostgreSQL implementation of `DataSource<T>` | Adapters — one per entity, pre-wired in `AppState` |
-| `DataStore::fetch_all(query)` | Fetch all matching rows with no pagination limit | `snapshot.rs` entity/notes fetches; `keyword_tree.rs` |
-| `DataStore::fetch_all_sorted(query, order)` | `fetch_all` with custom `ORDER BY` via `SortOrder` | `keyword_tree.rs` (level, name ordering) |
-| `DataStore::find_by_similarity(search, filters, pagination, fallback)` | pg_trgm fuzzy search + `COUNT(*) OVER()` in one query; returns `(Vec<T>, i64)` | `adapters/search.rs` |
-| `TextSearch::on(fields, query).with_threshold(f)` | Abstract fuzzy text search spec; pg_trgm internally | `adapters/search.rs` |
-| `SortOrder::by(field).then(field).then_desc(field)` | Sort spec without exposing SQL syntax | `keyword_tree.rs`, `snapshot.rs`, export helpers |
-| `#[derive(Entity, Crud)]` | Generates SQL mapping for entity types | All 8 domain entities |
-| `#[derive(Filter)]` | Generates query filter types | All entity query structs in `db/queries/` |
-| `#[derive(Projection)]` | Generates column subsets for `find_all_projected` | `BibItemSummary` and expansion projections |
-| `impl_db_enum!` | Adds sqlx encode/decode to domain enums without polluting domain | `adapters/db/db_mappings.rs` |
-| `WhereClause` | SQL WHERE builder without exposing sqlx types | Adapter impls that need ad-hoc conditions |
-| `crud_auto()` | Registers all CRUD routes + OpenAPI schema from type params | `composition/mod.rs` — 8 entities |
-| `.lookup_by(column)` | Auto `GET /by-key/{key}` route with full `?expand` and `?expand=all` support | All 8 entities in `composition/mod.rs` |
-| `.junction(JunctionConfig)` | Auto junction CRUD routes | `bibitem_authors`, `bibitem_keywords` |
-| `.expand_fk_projected` | Declarative FK expansion with `?expand=` | Author, journal, publisher, etc. expansions |
-| `.expand_junction_projected_by_key` | String-key junction expansion with optional enum-safe role filter | `bibitem_authors` (role), `bibitem_keywords` |
-| `.view("summary", ...)` | Projection dispatch via `?view=` | BibItemSummary view |
-| `HexforgeError` | Unified error type for process and adapter layers | All process functions return this |
+The key architectural contract: `DataSource<T>` is hexforge's abstract CRUD trait. Process can use `&impl DataSource<T>` for standard operations without depending on any adapter. For operations beyond standard CRUD, process defines its own traits (see [The Process / Adapter Contract](#the-process--adapter-contract)).
 
-### When to define a custom process trait vs. use DataSource directly
-
-Use `&impl DataSource<T>` (hexforge's built-in abstract trait) when the operation is standard CRUD: find by ID, list with filters, insert, update, delete. No custom trait needed.
-
-Define a custom process trait when the operation is outside what `DataSource` provides:
-- Full-text / fuzzy search (pg_trgm — `BibitemSearcher`)
-- Junction table inserts with conflict handling (`BibitemJunctionStore`)
-- Bulk transactional import / delete (`NameVariantStore`, `ReferenceStore`)
-- LaTeX batch conversion with unnest updates (`LatexColumnFetcher`, `LatexColumnWriter`)
-- Multi-table LEFT JOINs (e.g., citation resolution — `CitationResolver`)
-
-### Raw SQL policy in adapters
-
-Adapters use raw SQL only where hexforge abstractions genuinely cannot express the operation.
-
-**Justified raw SQL** (no hexforge equivalent):
-- `unnest($1::int8[], $2::text[])` batch updates — `adapters/latex_columns.rs`
-- Complex LEFT JOINs with grouping — `adapters/latex_citations.rs`
-- Bulk transactional import: batch deletes, dependency traversal — `adapters/full_import.rs`
-- PostgreSQL `array_append`, sequence resets, junction inserts with conflict handling — `adapters/import.rs`
-- Junction snapshot fetches with PostgreSQL enum casts in SELECT — `adapters/snapshot.rs`
-- API key lookup (intentionally narrow, runs on every request) — `adapters/auth.rs`
-
-**Replaced by hexforge abstractions**:
-- pg_trgm similarity + `COUNT(*) OVER()` → `DataStore::find_by_similarity` + `TextSearch`
-- `SELECT * FROM keywords ORDER BY level, name` → `DataStore::fetch_all_sorted(&SortOrder::by("level").then("name"))`
-- `SELECT * FROM {entity} ORDER BY id` (snapshot) → `DataStore::fetch_all`
-- JOIN-by-integer-ID junction fetches → generated `fetch_{junction}_by_owner_ids` functions in `adapters/db/queries/junctions.rs`
+For the full SDK reference — which hexforge abstractions Alexandria uses, when to define custom traits vs. use `DataSource`, raw SQL policy, escape-hatch re-exports — see [HEXFORGE_USAGE.md](HEXFORGE_USAGE.md).
 
 ## Layer Details
 
@@ -227,6 +183,8 @@ Pure functions. No `async`. No database. No `AppState`. No pool.
 Contains: validation rules, pure rendering, request/response types, parsed row types, pure transformation helpers.
 
 **No external format concerns live here.** Parsing OR serializing an external format (CSV, JSON, XML, SQL array literals) is a boundary concern — exactly like SQL. It belongs in the adapters layer. The logic layer only sees already-typed structs and never produces format-specific output. Process functions return domain types; adapters convert them to wire/storage formats.
+
+Although the dependency rules allow logic to import from domain, logic should only import **data types and constants** — never async trait definitions like `DataSource<T>`. Accepting a trait-bounded parameter would make the function an orchestration point (Layer 3), not a pure computation. `async` implies awaiting an external effect — I/O, timers, coordination — which breaks the deterministic, side-effect-free guarantee that makes logic functions trivially testable.
 
 **Test**: if a function in `logic/` has `async` or imports anything from `adapters/`, `process/`, or `composition/`, it's in the wrong layer.
 
@@ -252,7 +210,7 @@ Concrete I/O implementations. **All format-specific parsing AND serialization (C
 - `field_parsing/` — CSV field parsers for the full-CSV import pipeline
 - `csv_rows.rs` — CSV row-builders for entity/bibitem export and snapshot: `build_author_rows`, `build_bibitem_*_rows`, header constants, `text_array()`. Everything that produces `Vec<Vec<String>>` lives here.
 - Root files (`search.rs`, `render.rs`, `import.rs`, `export.rs`, etc.) — implement process-layer traits with concrete I/O
-- `handlers/` — **thin** HTTP handlers only: extract request → construct adapter impls → call process → serialize result → format response. No business logic.
+- `handlers/` — **thin** HTTP handlers only: extract request → call process with injected dependencies → format response. No business logic. No adapter instantiation — composition provides all dependencies via `AppState`.
 - `handlers/bulk_import.rs` — `POST /api/v1/admin/bulk-import/{table}`: PostgreSQL COPY-based bulk loader for post-wipe corpus releases (~50× faster than upsert import)
 
 ### Composition (`src/composition/`)
@@ -261,6 +219,20 @@ Wires everything together. The only layer that knows about all others.
 
 - `mod.rs` — `build_app()`: registers CRUD resources, junctions, expansions, custom handlers
 - `state.rs` — `AppState` with `DataStore<Entity, Query>` per entity and `DatabasePool`
+
+## Error Flow
+
+Errors flow through the layers with increasing specificity:
+
+| Layer | Error responsibility |
+|-------|---------------------|
+| **Domain** | Pure types — no error creation, no error handling |
+| **Logic** | Pure functions return `Result` or `Option` — no error creation, just propagation |
+| **Process** | Propagates errors with `?` — never inspects adapter-specific details, never creates `DataSourceError` directly |
+| **Adapters** | Create `HexforgeError` from concrete failures (e.g., map PostgreSQL error codes to semantic variants). HTTP handlers map `HexforgeError` to HTTP status codes. |
+| **Composition** | No error handling — wiring only |
+
+Error messages are sanitized at the adapter boundary — no table names, column names, or values are exposed to clients.
 
 ## Code Generation
 
