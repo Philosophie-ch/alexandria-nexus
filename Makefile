@@ -34,6 +34,17 @@ dev-db:
 # checks
 check:
 	cargo fmt --all && cargo lint && cargo audit && cargo build
+	@echo "=== unsafe dependency audit ===" && \
+	UNSAFE_CRATES=$$(cargo geiger --all-features 2>/dev/null | grep -E "^\S.*!  " | sed 's/.*!  //' | sed 's/[│├└─]//g' | sed 's/^ *//' | grep -oP '^[a-zA-Z][a-zA-Z0-9_-]+' | sort -u) && \
+	ALLOWED=$$(grep -v '^\s*#' .geiger-allow | grep -v '^\s*$$' | sort -u) && \
+	NEW=$$(comm -23 <(echo "$$UNSAFE_CRATES") <(echo "$$ALLOWED")) && \
+	if [ -n "$$NEW" ]; then \
+		echo "FAIL: unapproved unsafe dependencies detected — add to .geiger-allow with justification:"; \
+		echo "$$NEW"; \
+		exit 1; \
+	else \
+		echo "OK: all unsafe dependencies are explicitly approved"; \
+	fi
 
 # Unit tests only (fast, no Docker)
 test-unit:

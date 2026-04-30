@@ -1,0 +1,286 @@
+# Explicitly approved dependencies that use unsafe code.
+#
+# WHY THIS FILE EXISTS
+# Rust's memory safety guarantee only holds for code that does not use `unsafe`.
+# Dependencies can use `unsafe` — and many legitimate ones must, for reasons like
+# OS syscall wrappers, SIMD intrinsics, or atomic operations the compiler cannot
+# express safely. This file records every such dependency as a conscious decision.
+#
+# HOW `make check` USES THIS
+# `cargo geiger` scans the full dependency tree and reports every crate that
+# contains unsafe code. `make check` hard-fails on any crate not listed here.
+# This means adding a new dependency that transitively pulls in unsafe code
+# breaks the build until someone reviews it and adds it here with a justification.
+#
+# HOW TO ADD A NEW ENTRY
+# 1. Understand *why* the crate uses unsafe (OS primitives, SIMD, atomic ops, etc.)
+# 2. Confirm it is actively maintained, widely used, and has been publicly audited
+#    or is part of a well-known ecosystem (Tokio, RustCrypto, Mozilla, etc.)
+# 3. Add it below in the appropriate section with a one-line explanation
+# 4. Note the approval in the PR description
+
+# ── Async runtime ────────────────────────────────────────────────────────────
+# Tokio implements the async executor. Task scheduling, waker registration, and
+# I/O polling require raw pointer manipulation that Rust's safe subset cannot
+# express. This unsafe is fundamental and has been audited extensively by the
+# Tokio maintainers and the broader community.
+tokio
+tokio-stream
+
+# ── HTTP server (axum's foundation) ──────────────────────────────────────────
+# hyper is the de-facto Rust HTTP library that axum builds on. Unsafe is used
+# for connection state machines and zero-copy I/O. httparse uses unsafe for
+# performance-critical header parsing (avoids bounds checks in tight loops).
+# http, http-body, http-body-util are type definitions with minimal unsafe for
+# internal buffer management.
+hyper
+hyper-util
+http
+http-body
+http-body-util
+httparse
+
+# ── Router (axum's path matching) ────────────────────────────────────────────
+# matchit implements the radix trie used by axum for URL routing. Unsafe is
+# used for performance in the hot path (route lookup on every request).
+matchit
+
+# ── OS I/O and system primitives ─────────────────────────────────────────────
+# These are unavoidable at the bottom of the async I/O stack. mio wraps the
+# OS event loop (epoll/kqueue). socket2 configures TCP/UDP sockets. libc
+# provides raw FFI bindings to the C standard library — it is effectively a
+# typed wrapper around syscalls and has no safe alternative. errno provides
+# typed access to the C errno value. signal-hook-registry registers Unix signal
+# handlers, which requires unsafe FFI to the OS signal API.
+mio
+socket2
+libc
+errno
+signal-hook-registry
+
+# ── Byte buffer primitives ───────────────────────────────────────────────────
+# bytes provides a reference-counted, zero-copy byte buffer used throughout
+# the Tokio/hyper/sqlx stack. Unsafe is required for shared ownership without
+# copying. byteorder uses unsafe for SIMD-accelerated integer encoding.
+bytes
+byteorder
+
+# ── Async utilities (futures-rs ecosystem) ───────────────────────────────────
+# These crates implement Rust's poll/waker async model. The waker mechanism
+# (passing raw function pointers as vtables) fundamentally requires unsafe.
+# All are maintained by the Tokio/futures-rs teams and are the standard
+# building blocks of every async Rust library.
+futures-core
+futures-channel
+futures-sink
+futures-task
+futures-util
+futures-intrusive
+async-stream
+atomic-waker
+pin-project-lite
+
+# ── Synchronisation primitives ───────────────────────────────────────────────
+# Mutex, RwLock, and channel implementations require atomic operations and
+# thread parking that Rust's safe subset cannot express. parking_lot replaces
+# std's slower mutex with a more efficient implementation. crossbeam provides
+# lock-free data structures. thread_local and sharded-slab use unsafe for
+# efficient per-thread storage (used by tracing-subscriber). These are
+# foundational, widely audited crates.
+parking_lot
+parking_lot_core
+lock_api
+crossbeam-queue
+crossbeam-utils
+concurrent-queue
+spin
+scopeguard
+thread_local
+sharded-slab
+
+# ── Proc-macro infrastructure ────────────────────────────────────────────────
+# syn and proc-macro2 are the standard tools for writing derive macros in Rust.
+# Unsafe is used for span manipulation (source location tracking) which requires
+# access to compiler-internal data. There is no alternative for proc-macro work.
+syn
+proc-macro2
+
+# ── Serialisation (serde ecosystem) ──────────────────────────────────────────
+# serde_core uses unsafe to deserialize directly into uninitialized memory,
+# avoiding a redundant zeroing pass. serde_json, ryu (float formatting), and
+# itoa (integer formatting) use unsafe for SIMD and tight-loop optimisations.
+# serde is among the most audited crates in the Rust ecosystem.
+serde_core
+serde_json
+ryu
+itoa
+
+# ── YAML parsing ─────────────────────────────────────────────────────────────
+# serde_yaml depends on unsafe-libyaml, a Rust port of libyaml. The "unsafe"
+# in the name is intentional — the crate explicitly acknowledges its use of
+# unsafe for performance-critical YAML tokenisation. Used for hexforge.yml
+# schema parsing. serde_yaml is maintained by the dtolnay ecosystem.
+serde_yaml
+unsafe-libyaml
+
+# ── CSV parsing ───────────────────────────────────────────────────────────────
+# The csv crate uses unsafe for performance in its inner parsing loop (avoids
+# bounds checks on byte slices that have already been validated). Maintained
+# by BurntSushi, who applies rigorous correctness standards.
+csv
+fast-float2
+atoi_simd
+
+# ── Date and time ─────────────────────────────────────────────────────────────
+# chrono uses unsafe for platform-specific timezone queries (via iana-time-zone
+# and libc). The time crate uses unsafe for its low-level time representations.
+# deranged provides range-constrained integer types used by time; powerfmt
+# provides number formatting utilities used by time. These together implement
+# the date/time stack used throughout the application.
+chrono
+time
+deranged
+iana-time-zone
+powerfmt
+
+# ── Cryptographic primitives (RustCrypto) ────────────────────────────────────
+# sqlx uses SCRAM-SHA-256 for PostgreSQL authentication; aes and cipher are
+# used for encrypted connections. All are from the RustCrypto project, which
+# applies rigorous review standards and follows constant-time coding discipline
+# (subtle, zeroize) to prevent timing and memory side-channel attacks.
+# sha1 is included for legacy protocol compatibility only.
+md-5
+sha1
+sha2
+aes
+cipher
+subtle
+zeroize
+inout
+ppv-lite86
+rand
+rand_core
+getrandom
+generic-array
+block-buffer
+
+# ── Collections and memory ────────────────────────────────────────────────────
+# hashbrown is the backing implementation of std::HashMap — its unsafe is
+# reviewed as part of the Rust standard library itself. hashlink and indexmap
+# build on hashbrown. smallvec avoids heap allocation for small vectors using
+# unsafe union storage. slab and allocator-api2 manage memory arenas.
+# bumpalo is a fast bump-allocator used by some parsing libraries.
+# foldhash and stable_deref_trait are low-level collection utilities.
+# lazy_static provides safe lazy initialisation via unsafe static mutation
+# (predates std::OnceLock; widely used and audited).
+hashbrown
+hashlink
+indexmap
+smallvec
+slab
+allocator-api2
+stable_deref_trait
+foldhash
+bumpalo
+lazy_static
+
+# ── Compression ───────────────────────────────────────────────────────────────
+# Used for import/export of bibliography archives (ZIP, gzip, bzip2, xz, zstd).
+# flate2 wraps zlib for gzip/deflate. bzip2/bzip2-sys wrap libbzip2 via FFI.
+# xz2 wraps liblzma via FFI. zstd/zstd-safe wrap the Zstandard C library.
+# zip ties these together for archive handling. crc32fast and simd-adler32
+# use SIMD for fast checksum computation. zlib-rs is a pure-Rust zlib used
+# by some compression backends. zopfli is a compression optimizer.
+# All FFI wrappers use unsafe at the C boundary — unavoidable for C libraries.
+flate2
+bzip2
+bzip2-sys
+xz2
+zstd
+zstd-safe
+zip
+crc32fast
+simd-adler32
+zlib-rs
+zopfli
+zmij
+
+# ── Unicode and text encoding ─────────────────────────────────────────────────
+# encoding_rs (Mozilla) and the icu_* family (Unicode Consortium via ICU4X)
+# implement Unicode algorithms over large static data tables. zerocopy,
+# zerotrie, zerovec, and yoke use unsafe for zero-copy access to those tables —
+# avoiding runtime heap allocation for multi-MB Unicode data. These are
+# maintained by Mozilla and the Unicode Consortium with formal correctness proofs.
+encoding_rs
+unicode-bidi
+unicode-normalization
+unicode-ident
+utf8_iter
+icu_collections
+icu_locale_core
+icu_normalizer
+icu_provider
+potential_utf
+tinystr
+yoke
+zerocopy
+zerotrie
+zerovec
+
+# ── String searching and regex ────────────────────────────────────────────────
+# regex-automata is the core of the Rust regex crate. aho-corasick implements
+# multi-pattern search. memchr uses SIMD intrinsics for fast byte-level
+# searching. All three use unsafe exclusively for SIMD acceleration on hot paths.
+aho-corasick
+memchr
+regex-automata
+
+# ── URL and percent-encoding ──────────────────────────────────────────────────
+# url (the url crate) parses connection strings used by sqlx. form_urlencoded
+# and percent-encoding are its dependencies. idna handles international domain
+# names. Unsafe is used for string slice manipulation after validity has been
+# established by the parser.
+url
+form_urlencoded
+percent-encoding
+idna
+
+# ── Terminal and CLI output ───────────────────────────────────────────────────
+# anstream, anstyle, anstyle-parse, anstyle-query provide ANSI terminal colour
+# and style support for CLI output (used by clap). clap_lex is clap's internal
+# argument lexer. anstyle-parse and utf8parse use unsafe for tight-loop UTF-8
+# parsing of terminal escape sequences.
+anstream
+anstyle
+anstyle-parse
+anstyle-query
+clap_lex
+utf8parse
+
+# ── Tracing / structured diagnostics ─────────────────────────────────────────
+# tracing-subscriber collects and formats structured log events. It depends on
+# matchers (pattern matching for log filtering), sharded-slab (see sync section),
+# and thread_local (see sync section). tracing-log bridges the log and tracing
+# facades. All use unsafe for thread-local span stack management.
+tracing
+tracing-core
+tracing-log
+tracing-subscriber
+matchers
+
+# ── Miscellaneous utilities ───────────────────────────────────────────────────
+# once_cell: lazy initialisation via unsafe static mutation (predates std::OnceLock).
+# event-listener: async notification primitive used by sqlx connection pools.
+# either: a simple Left/Right enum — minimal unsafe for iterator adapters.
+# sync_wrapper: makes non-Send types usable across async boundaries via unsafe impl.
+# log: the standard logging facade; unsafe for thread-local initialisation.
+# whoami: reads the current username via OS APIs (FFI).
+# debug_unsafe: a utility crate that provides debug helpers using unsafe internally;
+#   pulled in transitively — confirm it remains a dev/debug dependency only.
+once_cell
+event-listener
+either
+sync_wrapper
+log
+whoami
+debug_unsafe

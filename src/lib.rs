@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Alexandria Nexus — Bibliography and knowledge engine for Philosophie.ch
 
 pub mod adapters;
