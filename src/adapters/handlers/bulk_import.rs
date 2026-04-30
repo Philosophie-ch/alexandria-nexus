@@ -15,8 +15,8 @@ use hexforge::db_exports::PgPoolCopyExt;
 use hexforge::{HexforgeError, ValidationError};
 use serde::Serialize;
 
+use crate::AppState;
 use crate::adapters::handlers::import::extract_csv_bytes;
-use crate::composition::AppState;
 
 // ── Allowed columns per table ─────────────────────────────────────────────────
 //
@@ -210,8 +210,14 @@ fn filter_csv_columns(input: &[u8], keep: &[&str]) -> Result<Vec<u8>, String> {
         .filter_map(|(i, h)| if keep_set.contains(h) { Some(i) } else { None })
         .collect();
 
-    let present: std::collections::HashSet<&str> =
-        indices.iter().map(|&i| headers.get(i).unwrap()).collect();
+    let present: std::collections::HashSet<&str> = indices
+        .iter()
+        .map(|&i| {
+            headers
+                .get(i)
+                .expect("index derived from headers.iter().enumerate(), always in bounds")
+        })
+        .collect();
     let missing: Vec<&str> = keep
         .iter()
         .copied()

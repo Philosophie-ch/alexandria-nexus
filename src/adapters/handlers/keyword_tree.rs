@@ -4,10 +4,10 @@ use hexforge::HexforgeError;
 use hexforge::axum_exports::{Json, State};
 use serde::Serialize;
 
+use crate::AppState;
 use crate::adapters::keyword_tree::PgKeywordFetcher;
 use crate::domain::Keyword;
 use crate::process::keyword_tree::build_keyword_tree;
-use crate::state::AppState;
 
 /// JSON-serializable keyword tree response.
 #[derive(Debug, Serialize)]

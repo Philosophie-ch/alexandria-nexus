@@ -5,10 +5,10 @@
 use hexforge::HexforgeError;
 use hexforge::axum_exports::{Json, State};
 
+use crate::AppState;
 use crate::adapters::search::PgBibitemSearcher;
 use crate::logic::search::{SearchRequest, SearchResponse};
 use crate::process::search::perform_search;
-use crate::state::AppState;
 
 /// Search bibitems with full-text search and filters.
 ///

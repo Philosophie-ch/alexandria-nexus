@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 #[derive(Entity, Crud, Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[entity(table = "keywords")]
+#[entity(table = "keywords", no_query)]
 pub struct Keyword {
     #[entity(id)]
     pub id: i64,

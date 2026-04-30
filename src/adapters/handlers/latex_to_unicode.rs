@@ -13,8 +13,8 @@ use hexforge::axum_exports::{Json, State};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use crate::AppState;
 use crate::adapters::latex_to_unicode::{PyConvertItem, PyLatexConverter};
-use crate::state::AppState;
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct LatexConvertRequest {

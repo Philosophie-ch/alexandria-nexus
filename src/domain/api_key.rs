@@ -10,7 +10,7 @@ use utoipa::ToSchema;
 use crate::domain::PermissionLevel;
 
 #[derive(Entity, Crud, Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[entity(table = "api_keys")]
+#[entity(table = "api_keys", no_query)]
 pub struct ApiKey {
     #[entity(id)]
     pub id: i64,
