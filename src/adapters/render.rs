@@ -77,7 +77,11 @@ impl BibitemResolver for PgBibitemResolver<'_> {
             return Ok(Vec::new());
         }
         self.bibitem_ds
-            .find_many(WhereClause::new("bibkey = ANY($1)").bind(bibkeys.to_vec()))
+            .find_many(
+                WhereClause::new("bibkey = ANY($1)")
+                    .bind(bibkeys.to_vec())
+                    .map_err(HexforgeError::data_source)?,
+            )
             .await
             .map_err(HexforgeError::data_source)
     }
