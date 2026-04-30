@@ -1,6 +1,6 @@
 # Coding Standards
 
-This document outlines the coding standards and type safety philosophy for hexforge.
+This document outlines the coding standards and type safety philosophy for alexandria-nexus.
 
 ## Philosophy
 
@@ -170,6 +170,21 @@ drop(might_fail());  // Still bad, but at least obvious
 // BEST: Handle or propagate
 might_fail()?;
 ```
+
+### Dependency `unsafe` Hygiene
+
+Memory safety is a first-class goal. Two complementary mechanisms enforce it:
+
+**First-party code:** both crate roots (`src/lib.rs`, `src/main.rs`) carry `#![forbid(unsafe_code)]`. Any `unsafe` block in alexandria-nexus is a compile error — no tooling required.
+
+**Dependencies:** `make check` runs `cargo geiger` across the full dependency tree and hard-fails on any crate that uses `unsafe` and is not listed in `.geiger-allow`. This file records every approved dependency with an explanation of *why* its unsafe is necessary and why it is trusted (OS primitives, SIMD, FFI to C libraries, atomic operations, formal proofs, etc.).
+
+When adding a dependency that introduces new `unsafe` transitives, the build will fail. To resolve it:
+1. Read the geiger output to identify the new crate(s)
+2. Understand why they use `unsafe` — if it is load-bearing and the crate is well-maintained, add it to `.geiger-allow` with a justification comment
+3. Note the approval in the PR description
+
+Avoid adding dependencies whose `unsafe` you cannot explain or justify. When in doubt, look for a `#![forbid(unsafe_code)]` crate that provides the same functionality.
 
 ## Linting
 
