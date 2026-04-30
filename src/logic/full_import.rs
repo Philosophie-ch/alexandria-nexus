@@ -267,13 +267,13 @@ pub enum ConvertOutcome {
     Err { original: String, message: String },
 }
 
-/// Aggregate report returned by `POST /api/v1/admin/convert-latex-columns`.
+/// Aggregate report for a batch LaTeX-to-Unicode conversion operation.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct LatexConvertReport {
     pub columns: Vec<ColumnConvertResult>,
     pub total_updated: usize,
     pub errors: Vec<LatexConvertError>,
-    /// Bibkeys referenced by `\cite*{...}` commands in LaTeX fields but not found in the DB.
+    /// Bibkeys referenced by `\cite*{...}` commands in LaTeX fields but not found among existing entries.
     pub missing_citation_keys: Vec<String>,
 }
 

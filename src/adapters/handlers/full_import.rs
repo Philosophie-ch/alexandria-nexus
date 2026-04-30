@@ -3,7 +3,7 @@
 //! Constructs Postgres adapters and calls process-layer functions.
 
 use hexforge::HexforgeError;
-use hexforge::axum_exports::{IntoResponse, Json, Multipart, Response, State, StatusCode};
+use hexforge::axum_exports::{IntoResponse, Json, Multipart, Query, Response, State, StatusCode};
 
 use serde::Deserialize;
 
@@ -65,7 +65,7 @@ pub async fn import_entities_from_full_csv(
 /// (in DB but not in CSV) are left untouched unless `?delete_stale=true`.
 pub async fn import_full_csv(
     State(state): State<AppState>,
-    axum::extract::Query(params): axum::extract::Query<ImportFullCsvParams>,
+    Query(params): Query<ImportFullCsvParams>,
     multipart: Multipart,
 ) -> Result<Response, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
