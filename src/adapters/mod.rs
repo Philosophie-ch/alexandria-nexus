@@ -17,4 +17,5 @@ pub mod latex_to_unicode;
 pub mod render;
 pub mod search;
 pub mod snapshot;
+pub mod snapshot_zip;
 pub mod wipe;

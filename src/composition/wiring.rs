@@ -12,6 +12,7 @@ use crate::adapters::export::{
     PgBibitemFetcher, PgEntityBatchFetcher, PgExportJunctionFetcher, PgKeyedEntityFetcher,
     PgKeywordFetcher as PgKeywordExportFetcher,
 };
+use crate::adapters::field_parsing::parse_variant_to_keys;
 use crate::adapters::full_import::PgFullImportStore;
 use crate::adapters::import::{
     PgBibitemJunctionStore, PgBibitemNotesStore, PgBibitemRefsStore, PgEntityBatchLookup,
@@ -69,7 +70,7 @@ impl AppState {
 // =============================================================================
 
 impl AppState {
-    pub fn bibitem_resolver(&self) -> PgBibitemResolver<'_> {
+    pub fn bibitem_resolver(&self) -> PgBibitemResolver<'_, BibItemQuery> {
         PgBibitemResolver::new(&self.bibitem_ds)
     }
 
@@ -78,7 +79,7 @@ impl AppState {
     }
 
     pub fn render_author_fetcher(&self) -> PgRenderAuthorFetcher<'_> {
-        PgRenderAuthorFetcher::new(self.pool.pool(), &self.author_ds)
+        PgRenderAuthorFetcher::new(self.pool.pool())
     }
 
     pub fn transitive_deps_resolver(&self) -> PgTransitiveDepsResolver<'_> {
@@ -297,7 +298,7 @@ impl AppState {
 
 impl AppState {
     pub fn full_import_store(&self) -> PgFullImportStore<'_> {
-        PgFullImportStore::new(self.pool.pool())
+        PgFullImportStore::new(self.pool.pool(), parse_variant_to_keys)
     }
 }
 

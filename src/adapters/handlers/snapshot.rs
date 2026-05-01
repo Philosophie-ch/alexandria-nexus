@@ -4,7 +4,7 @@ use hexforge::HexforgeError;
 use hexforge::axum_exports::{IntoResponse, Response, State, header};
 
 use crate::AppState;
-use crate::adapters::snapshot::build_snapshot_zip;
+use crate::adapters::snapshot_zip::build_snapshot_zip;
 use crate::process::snapshot::fetch_snapshot;
 
 /// Generate and download a ZIP snapshot of all data tables.
