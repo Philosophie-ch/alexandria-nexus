@@ -3,7 +3,6 @@ use hexforge::{HexforgeError, ValidationError};
 use serde::{Deserialize, Serialize};
 
 use crate::AppState;
-use crate::adapters::wipe::wipe_tables;
 
 #[derive(Deserialize)]
 pub struct WipeParams {
@@ -24,6 +23,6 @@ pub async fn wipe_data(
             "This operation truncates all data tables. Pass ?confirm=true to proceed.",
         )));
     }
-    wipe_tables(state.pool.pool()).await?;
+    state.wipe().await?;
     Ok(Json(WipeResponse { wiped: true }))
 }

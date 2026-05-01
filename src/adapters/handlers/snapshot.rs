@@ -4,14 +4,14 @@ use hexforge::HexforgeError;
 use hexforge::axum_exports::{IntoResponse, Response, State, header};
 
 use crate::AppState;
-use crate::adapters::snapshot::{PgSnapshotFetcher, build_snapshot_zip};
+use crate::adapters::snapshot::build_snapshot_zip;
 use crate::process::snapshot::fetch_snapshot;
 
 /// Generate and download a ZIP snapshot of all data tables.
 ///
 /// `POST /api/v1/admin/snapshot`
 pub async fn snapshot_data(State(state): State<AppState>) -> Result<Response, HexforgeError> {
-    let fetcher = PgSnapshotFetcher::new(state.pool.pool().clone());
+    let fetcher = state.snapshot_fetcher();
     let data = fetch_snapshot(&fetcher).await?;
     let zip_bytes = build_snapshot_zip(data)?;
 

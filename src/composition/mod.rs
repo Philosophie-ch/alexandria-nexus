@@ -1,6 +1,7 @@
 //! Composition layer — wires adapters, domain, and logic into the application.
 
 pub mod state;
+mod wiring;
 
 use hexforge::{
     Api, CorsConfig, CrudPermissions, CrudResourceConfig, JunctionConfig, OpenApiConfig,

@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::AppState;
-use crate::adapters::latex_to_unicode::{PyConvertItem, PyLatexConverter};
+use crate::adapters::latex_to_unicode::PyConvertItem;
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct LatexConvertRequest {
@@ -43,10 +43,10 @@ pub struct LatexConvertResponse {
 ///
 /// `POST /api/v1/admin/latex-to-unicode`
 pub async fn convert_latex_to_unicode(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Json(req): Json<LatexConvertRequest>,
 ) -> Result<Json<LatexConvertResponse>, HexforgeError> {
-    let py_items = PyLatexConverter.convert_batch(&req.texts).await?;
+    let py_items = state.latex_converter().convert_batch(&req.texts).await?;
 
     let results = py_items
         .into_iter()
