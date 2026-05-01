@@ -18,13 +18,13 @@ use serde::Deserialize;
 #[derive(Filter, Debug, Default, Deserialize)]
 pub struct BibItemQuery {
     #[query(raw = "bibkey IN (SELECT bibkey FROM bibitem_authors WHERE author_key = $)")]
-    pub author_key: Option<i64>,
+    pub author_key: Option<String>,
     #[query(eq_cast = "entry_type::entry_type")]
     pub entry_type: Option<String>,
     #[query(eq_cast = "epoch::epoch")]
     pub epoch: Option<String>,
     #[query(eq = "journal_key")]
-    pub journal_key: Option<i64>,
+    pub journal_key: Option<String>,
     #[query(like = "title_unicode")]
     pub search_term: Option<String>,
     #[query(gte = "date_year")]

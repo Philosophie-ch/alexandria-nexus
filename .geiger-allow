@@ -95,6 +95,7 @@ crossbeam-utils
 concurrent-queue
 spin
 scopeguard
+try-lock
 thread_local
 sharded-slab
 

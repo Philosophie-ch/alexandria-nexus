@@ -13,7 +13,7 @@ use serde::Deserialize;
 #[derive(Filter, Debug, Default, Deserialize)]
 pub struct KeywordQuery {
     #[query(eq = "level")]
-    pub level: Option<i64>,
+    pub level: Option<i16>,
     #[query(like = "name")]
     pub name: Option<String>,
 }
