@@ -68,6 +68,7 @@ impl_to_schema! {
         issuetitle_unicode: Option<String>,
         journal_key: Option<String>,
         langid: Option<crate::domain::LangId>,
+        license: Option<String>,
         note_latex: Option<String>,
         note_unicode: Option<String>,
         number: Option<String>,

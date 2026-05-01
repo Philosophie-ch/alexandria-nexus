@@ -363,6 +363,7 @@ mod tests {
             person_key: None,
             has_fulltext: false,
             fulltext_path: None,
+            license: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }

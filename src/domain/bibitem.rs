@@ -43,6 +43,7 @@ pub struct BibItem {
     pub issuetitle_unicode: Option<String>,
     pub journal_key: Option<String>,
     pub langid: Option<LangId>,
+    pub license: Option<String>,
     pub note_latex: Option<String>,
     pub note_unicode: Option<String>,
     pub number: Option<String>,

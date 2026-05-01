@@ -110,6 +110,7 @@ const BIBITEM_COLS: &[&str] = &[
     "langid",
     "is_translation",
     "epoch",
+    "license",
 ];
 
 const BIBITEM_AUTHORS_COLS: &[&str] = &[

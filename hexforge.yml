@@ -341,6 +341,9 @@ models:
       options: { type: "string?" }
       shorthand: { type: "string?" }
 
+      # Rights
+      license: { type: "string?" }
+
       # Internal tracking
       person_key: { type: "string?" }
       has_fulltext: { type: bool }

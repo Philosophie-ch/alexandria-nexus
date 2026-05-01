@@ -152,6 +152,7 @@ pub fn build_bibitem_update_dto(create: &CreateBibItem) -> UpdateBibItem {
         person_key: create.person_key.clone(),
         has_fulltext: Some(create.has_fulltext),
         fulltext_path: create.fulltext_path.clone(),
+        license: create.license.clone(),
     }
 }
 

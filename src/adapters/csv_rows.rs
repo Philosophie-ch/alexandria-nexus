@@ -60,6 +60,7 @@ pub const IDS_FORMAT_HEADER: &[&str] = &[
     "langid",
     "is_translation",
     "epoch",
+    "license",
     "author_keys",
     "editor_keys",
     "guesteditor_keys",
@@ -109,6 +110,7 @@ pub const EXPANDED_FORMAT_HEADER: &[&str] = &[
     "epoch",
     "langid",
     "is_translation",
+    "license",
 ];
 
 // ── Entity row builders ───────────────────────────────────────────────────────
@@ -396,6 +398,7 @@ fn build_bibitem_id_rows(
             opt_display(&bib.langid),
             bib.is_translation.to_string(),
             opt_display(&bib.epoch),
+            opt_str(&bib.license).to_string(),
             author_ids,
             editor_ids,
             guesteditor_ids,
@@ -523,6 +526,7 @@ fn build_bibitem_expanded_rows(
             opt_display(&bib.epoch),
             opt_display(&bib.langid),
             bib.is_translation.to_string(),
+            opt_str(&bib.license).to_string(),
         ]);
     }
     rows
@@ -550,7 +554,7 @@ pub const FULL_CSV_HEADERS: &str = "entry_type,bibkey,author,editor,_guesteditor
 booktitle,journal,publisher,institution,school,series,volume,number,pages,eid,address,type,edition,\
 note,_issuetitle,_extra_note,crossref,\
 _kw_level1,_kw_level2,_kw_level3,_epoch,_langid,_lang_der,_person,\
-_has_link_to_full_text,shorthand,options,doi,url,eprint,urn,\
+_has_link_to_full_text,shorthand,options,doi,url,eprint,urn,_license,\
 _note-perso,_note-stock,_note-missing,_change-request,_dltc_copyediting_note,_to-do-general";
 
 /// Serialise all bibitems from `data` into a UTF-8 CSV byte vector.
@@ -701,6 +705,7 @@ pub fn build_export_record(bib: &BibItem, ctx: &ExportContext) -> Vec<String> {
         bib.url.clone().unwrap_or_default(),
         bib.eprint.clone().unwrap_or_default(),
         bib.urn.clone().unwrap_or_default(),
+        bib.license.clone().unwrap_or_default(),
         note(|n| n.note_perso.clone()),
         note(|n| n.note_stock.clone()),
         note(|n| n.note_missing.clone()),
@@ -784,6 +789,7 @@ mod tests {
             issuetitle_unicode: None,
             journal_key: None,
             langid: None,
+            license: None,
             note_latex: None,
             note_unicode: None,
             number: None,
@@ -808,10 +814,10 @@ mod tests {
     #[test]
     fn full_csv_headers_column_count() {
         let cols: Vec<&str> = FULL_CSV_HEADERS.split(',').collect();
-        assert_eq!(cols.len(), 45);
+        assert_eq!(cols.len(), 46);
         assert_eq!(cols[0], "entry_type");
         assert_eq!(cols[1], "bibkey");
-        assert_eq!(cols[44], "_to-do-general");
+        assert_eq!(cols[45], "_to-do-general");
     }
 
     #[test]
