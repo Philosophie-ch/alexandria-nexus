@@ -6,10 +6,8 @@
 use std::collections::HashMap;
 
 use hexforge::db_exports::{FromRow, PgPool, query_as};
-use hexforge::{DataStore, HexforgeError, WhereClause};
+use hexforge::{DataStore, HexforgeError, PgQuery, WhereClause};
 
-use crate::adapters::db::queries::junctions::fetch_bibitem_authors_by_owner_ids;
-use crate::adapters::db::queries::{AuthorQuery, BibItemQuery};
 use crate::domain::junctions::BibitemAuthorsRow;
 use crate::domain::{Author, BibItem};
 use crate::process::render::{
@@ -54,17 +52,17 @@ async fn batch_fetch_names_by_key(
 // =============================================================================
 
 /// Concrete resolver that uses DataStore to find bibitems.
-pub struct PgBibitemResolver<'a> {
-    bibitem_ds: &'a DataStore<BibItem, BibItemQuery>,
+pub struct PgBibitemResolver<'a, Q> {
+    bibitem_ds: &'a DataStore<BibItem, Q>,
 }
 
-impl<'a> PgBibitemResolver<'a> {
-    pub fn new(bibitem_ds: &'a DataStore<BibItem, BibItemQuery>) -> Self {
+impl<'a, Q> PgBibitemResolver<'a, Q> {
+    pub fn new(bibitem_ds: &'a DataStore<BibItem, Q>) -> Self {
         Self { bibitem_ds }
     }
 }
 
-impl BibitemResolver for PgBibitemResolver<'_> {
+impl<Q: PgQuery + 'static> BibitemResolver for PgBibitemResolver<'_, Q> {
     async fn find_by_ids(&self, ids: &[i64]) -> Result<Vec<BibItem>, HexforgeError> {
         self.bibitem_ds
             .find_by_ids(ids)
@@ -167,15 +165,11 @@ impl RenderEntityFetcher for PgRenderEntityFetcher<'_> {
 /// Concrete fetcher for author junction data and author entities.
 pub struct PgRenderAuthorFetcher<'a> {
     pool: &'a PgPool,
-    _author_ds: &'a DataStore<Author, AuthorQuery>,
 }
 
 impl<'a> PgRenderAuthorFetcher<'a> {
-    pub fn new(pool: &'a PgPool, author_ds: &'a DataStore<Author, AuthorQuery>) -> Self {
-        Self {
-            pool,
-            _author_ds: author_ds,
-        }
+    pub fn new(pool: &'a PgPool) -> Self {
+        Self { pool }
     }
 }
 
@@ -184,7 +178,18 @@ impl RenderAuthorFetcher for PgRenderAuthorFetcher<'_> {
         &self,
         bibitem_ids: &[i64],
     ) -> Result<Vec<BibitemAuthorsRow>, HexforgeError> {
-        fetch_bibitem_authors_by_owner_ids(self.pool, bibitem_ids).await
+        if bibitem_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        query_as::<_, BibitemAuthorsRow>(
+            "SELECT j.bibkey, j.author_key, j.role, j.position, j.name_variant_latex, j.name_variant_unicode \
+             FROM bibitem_authors j JOIN bibitems m ON m.bibkey = j.bibkey \
+             WHERE m.id = ANY($1) ORDER BY j.bibkey, j.role, j.position"
+        )
+        .bind(bibitem_ids)
+        .fetch_all(self.pool)
+        .await
+        .map_err(HexforgeError::data_source)
     }
 
     async fn fetch_authors_by_keys(

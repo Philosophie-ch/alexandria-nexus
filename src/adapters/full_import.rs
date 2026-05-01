@@ -5,19 +5,14 @@
 
 use std::collections::{HashMap, HashSet};
 
+use hexforge::HexforgeError;
 use hexforge::db_exports::{FromRow, PgPool, query, query_as};
-use hexforge::{HexforgeError, ValidationError};
 
-use crate::adapters::db::queries::junctions::{
-    fetch_bibitem_authors_by_owner_ids, fetch_bibitem_keywords_by_owner_ids,
-};
-use crate::adapters::field_parsing::{CsvHeaders, parse_row};
-use crate::adapters::junction_queries::fetch_bibitem_refs_by_type;
-use crate::domain::junctions::{BibitemAuthorsRow, BibitemKeywordsRow};
+use crate::domain::junctions::{BibitemAuthorsRow, BibitemKeywordsRow, BibitemRefsRow};
 use crate::domain::{BibItem, BibitemNotes, Epoch, LangId, PubState, RefType};
 use crate::logic::full_import::{
-    AuthorJunctionRow, AuthorLookupResult, AuthorNameKey, BibitemRefInsertRow, FieldError,
-    KeywordJunctionRow, ParsedBibRow, RowError, RowParseResult, VariantInfo,
+    AuthorJunctionRow, AuthorLookupResult, AuthorNameKey, BibitemRefInsertRow, KeywordJunctionRow,
+    VariantInfo,
 };
 use crate::logic::transitive_closure::transitive_closure;
 use crate::process::full_import::{
@@ -57,11 +52,15 @@ struct BibkeyRow {
 /// Uses raw SQL to perform batch lookups, junction inserts, and entity deletions.
 pub struct PgFullImportStore<'a> {
     pool: &'a PgPool,
+    variant_parser: fn(&str) -> Vec<AuthorNameKey>,
 }
 
 impl<'a> PgFullImportStore<'a> {
-    pub fn new(pool: &'a PgPool) -> Self {
-        Self { pool }
+    pub fn new(pool: &'a PgPool, variant_parser: fn(&str) -> Vec<AuthorNameKey>) -> Self {
+        Self {
+            pool,
+            variant_parser,
+        }
     }
 }
 
@@ -126,7 +125,7 @@ impl AuthorLookup for PgFullImportStore<'_> {
             // LaTeX name variants
             if let Some(variants) = &row.name_variants_latex {
                 for variant in variants {
-                    let keys = parse_variant_to_keys(variant);
+                    let keys = (self.variant_parser)(variant);
                     for variant_key in keys {
                         id_map.entry(variant_key.clone()).or_default().push(row.id);
                         key_map
@@ -146,7 +145,7 @@ impl AuthorLookup for PgFullImportStore<'_> {
             // Unicode name variants
             if let Some(variants) = &row.name_variants_unicode {
                 for variant in variants {
-                    let keys = parse_variant_to_keys(variant);
+                    let keys = (self.variant_parser)(variant);
                     for variant_key in keys {
                         id_map.entry(variant_key.clone()).or_default().push(row.id);
                         key_map
@@ -710,7 +709,15 @@ async fn compute_and_insert_closure(
         RefType::DependsOn => "bibitem_depends_on",
     };
 
-    let raw = fetch_bibitem_refs_by_type(pool, ref_type).await?;
+    let raw: Vec<BibitemRefsRow> = query_as(
+        "SELECT source_key, target_key, ref_type \
+         FROM bibitem_refs WHERE ref_type = $1 \
+         ORDER BY source_key, target_key",
+    )
+    .bind(ref_type)
+    .fetch_all(pool)
+    .await
+    .map_err(HexforgeError::data_source)?;
 
     if raw.is_empty() {
         return Ok(0);
@@ -746,14 +753,36 @@ impl JunctionFetcher for PgFullImportStore<'_> {
         &self,
         ids: &[i64],
     ) -> Result<Vec<BibitemAuthorsRow>, HexforgeError> {
-        fetch_bibitem_authors_by_owner_ids(self.pool, ids).await
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        query_as::<_, BibitemAuthorsRow>(
+            "SELECT j.bibkey, j.author_key, j.role, j.position, j.name_variant_latex, j.name_variant_unicode \
+             FROM bibitem_authors j JOIN bibitems m ON m.bibkey = j.bibkey \
+             WHERE m.id = ANY($1) ORDER BY j.bibkey, j.role, j.position"
+        )
+        .bind(ids)
+        .fetch_all(self.pool)
+        .await
+        .map_err(HexforgeError::data_source)
     }
 
     async fn fetch_bibitem_keywords_batch(
         &self,
         ids: &[i64],
     ) -> Result<Vec<BibitemKeywordsRow>, HexforgeError> {
-        fetch_bibitem_keywords_by_owner_ids(self.pool, ids).await
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        query_as::<_, BibitemKeywordsRow>(
+            "SELECT j.bibkey, j.keyword_key, j.keyword_level \
+             FROM bibitem_keywords j JOIN bibitems m ON m.bibkey = j.bibkey \
+             WHERE m.id = ANY($1) ORDER BY j.bibkey",
+        )
+        .bind(ids)
+        .fetch_all(self.pool)
+        .await
+        .map_err(HexforgeError::data_source)
     }
 }
 
@@ -812,68 +841,6 @@ fn strip_outer_braces(s: &str) -> String {
     } else {
         s.to_string()
     }
-}
-
-pub fn parse_variant_to_keys(variant: &str) -> Vec<AuthorNameKey> {
-    if let Ok(parsed) = crate::adapters::field_parsing::author::parse_authors(variant) {
-        parsed.iter().map(AuthorNameKey::from_parsed).collect()
-    } else {
-        vec![AuthorNameKey::Mononym(variant.to_string())]
-    }
-}
-
-// =============================================================================
-// CSV parse function (wire format — belongs at the adapter boundary)
-// =============================================================================
-
-pub fn parse_all_rows(data: &[u8]) -> Result<(Vec<ParsedBibRow>, Vec<RowError>), HexforgeError> {
-    let mut rdr = csv::ReaderBuilder::new()
-        .has_headers(true)
-        .flexible(true)
-        .from_reader(data);
-
-    let headers = rdr
-        .headers()
-        .map_err(|e| {
-            HexforgeError::Validation(ValidationError::custom(format!("invalid CSV headers: {e}")))
-        })?
-        .clone();
-
-    let header_fields: Vec<&str> = headers.iter().collect();
-    let csv_headers = CsvHeaders::from_headers(&header_fields);
-    let mut parsed_rows = Vec::new();
-    let mut row_errors = Vec::new();
-
-    for (idx, result) in rdr.records().enumerate() {
-        let record = match result {
-            Ok(r) => r,
-            Err(e) => {
-                row_errors.push(RowError {
-                    row: idx + 2,
-                    bibkey: None,
-                    errors: vec![FieldError {
-                        field: "_csv".to_string(),
-                        error: format!("malformed CSV row: {e}"),
-                    }],
-                });
-                continue;
-            }
-        };
-
-        let fields: Vec<&str> = record.iter().collect();
-        match parse_row(&csv_headers, &fields) {
-            RowParseResult::Ok(row) => parsed_rows.push(*row),
-            RowParseResult::Err { bibkey, errors } => {
-                row_errors.push(RowError {
-                    row: idx + 2,
-                    bibkey,
-                    errors,
-                });
-            }
-        }
-    }
-
-    Ok((parsed_rows, row_errors))
 }
 
 #[cfg(test)]

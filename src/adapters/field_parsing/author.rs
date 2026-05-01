@@ -1,4 +1,4 @@
-use crate::logic::full_import::ParsedAuthor;
+use crate::logic::full_import::{AuthorNameKey, ParsedAuthor};
 
 fn normalize_whitespace(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
@@ -80,6 +80,15 @@ pub fn parse_person(text: &str) -> Result<Option<ParsedAuthor>, String> {
     }
 
     Ok(Some(ParsedAuthor::Mononym(cleaned)))
+}
+
+/// Parse a name variant string into lookup keys.
+pub fn parse_variant_to_keys(variant: &str) -> Vec<AuthorNameKey> {
+    if let Ok(parsed) = parse_authors(variant) {
+        parsed.iter().map(AuthorNameKey::from_parsed).collect()
+    } else {
+        vec![AuthorNameKey::Mononym(variant.to_string())]
+    }
 }
 
 #[cfg(test)]

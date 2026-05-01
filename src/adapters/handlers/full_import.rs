@@ -10,7 +10,7 @@ use serde::Deserialize;
 use super::import::extract_csv_bytes;
 use crate::AppState;
 use crate::adapters::csv_rows::full_csv_to_bytes;
-use crate::adapters::full_import::parse_all_rows;
+use crate::adapters::field_parsing::parse_all_rows;
 use crate::logic::full_import::{EntityImportReport, FullImportResult, ValidationReport};
 use crate::process::full_import;
 
