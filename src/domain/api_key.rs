@@ -5,11 +5,10 @@
 use chrono::{DateTime, Utc};
 use hexforge::{Crud, Entity};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 
 use crate::domain::PermissionLevel;
 
-#[derive(Entity, Crud, Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Entity, Crud, Clone, Debug, Serialize, Deserialize)]
 #[entity(table = "api_keys", no_query)]
 pub struct ApiKey {
     #[entity(id)]

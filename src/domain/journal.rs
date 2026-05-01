@@ -5,9 +5,8 @@
 use chrono::{DateTime, Utc};
 use hexforge::{Crud, Entity};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 
-#[derive(Entity, Crud, Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Entity, Crud, Clone, Debug, Serialize, Deserialize)]
 #[entity(table = "journals", no_query)]
 pub struct Journal {
     #[entity(id)]

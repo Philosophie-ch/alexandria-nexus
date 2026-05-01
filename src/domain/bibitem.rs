@@ -5,11 +5,10 @@
 use chrono::{DateTime, Utc};
 use hexforge::{Crud, Entity};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 
 use crate::domain::{EntryType, Epoch, LangId, PubState};
 
-#[derive(Entity, Crud, Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Entity, Crud, Clone, Debug, Serialize, Deserialize)]
 #[entity(table = "bibitems", no_query)]
 #[crud(pre_create = "pre_create_bib_item", pre_update = "pre_update_bib_item")]
 pub struct BibItem {

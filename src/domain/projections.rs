@@ -4,14 +4,13 @@
 
 use hexforge::Projection;
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 
 use super::{
     Author, BibItem, EntryType, Institution, Journal, Keyword, PubState, Publisher, School, Series,
 };
 
 /// summary projection of [`BibItem`] for `?view=summary` responses.
-#[derive(Projection, Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Projection, Clone, Debug, Serialize, Deserialize)]
 #[projection(entity = "BibItem")]
 pub struct BibItemSummary {
     pub id: i64,
@@ -23,7 +22,7 @@ pub struct BibItemSummary {
 }
 
 /// Expanded projection of [`Author`] for `?expand=` responses.
-#[derive(Projection, Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Projection, Clone, Debug, Serialize, Deserialize)]
 #[projection(entity = "Author")]
 pub struct AuthorExpanded {
     pub id: i64,
@@ -34,7 +33,7 @@ pub struct AuthorExpanded {
 }
 
 /// Expanded projection of [`BibItem`] for `?expand=` responses.
-#[derive(Projection, Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Projection, Clone, Debug, Serialize, Deserialize)]
 #[projection(entity = "BibItem")]
 pub struct BibItemCrossref {
     pub id: i64,
@@ -45,7 +44,7 @@ pub struct BibItemCrossref {
 }
 
 /// Expanded projection of [`Institution`] for `?expand=` responses.
-#[derive(Projection, Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Projection, Clone, Debug, Serialize, Deserialize)]
 #[projection(entity = "Institution")]
 pub struct InstitutionExpanded {
     pub id: i64,
@@ -54,7 +53,7 @@ pub struct InstitutionExpanded {
 }
 
 /// Expanded projection of [`Journal`] for `?expand=` responses.
-#[derive(Projection, Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Projection, Clone, Debug, Serialize, Deserialize)]
 #[projection(entity = "Journal")]
 pub struct JournalExpanded {
     pub id: i64,
@@ -63,7 +62,7 @@ pub struct JournalExpanded {
 }
 
 /// Expanded projection of [`Keyword`] for `?expand=` responses.
-#[derive(Projection, Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Projection, Clone, Debug, Serialize, Deserialize)]
 #[projection(entity = "Keyword")]
 pub struct KeywordExpanded {
     pub id: i64,
@@ -73,7 +72,7 @@ pub struct KeywordExpanded {
 }
 
 /// Expanded projection of [`Publisher`] for `?expand=` responses.
-#[derive(Projection, Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Projection, Clone, Debug, Serialize, Deserialize)]
 #[projection(entity = "Publisher")]
 pub struct PublisherExpanded {
     pub id: i64,
@@ -82,7 +81,7 @@ pub struct PublisherExpanded {
 }
 
 /// Expanded projection of [`School`] for `?expand=` responses.
-#[derive(Projection, Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Projection, Clone, Debug, Serialize, Deserialize)]
 #[projection(entity = "School")]
 pub struct SchoolExpanded {
     pub id: i64,
@@ -91,7 +90,7 @@ pub struct SchoolExpanded {
 }
 
 /// Expanded projection of [`Series`] for `?expand=` responses.
-#[derive(Projection, Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Projection, Clone, Debug, Serialize, Deserialize)]
 #[projection(entity = "Series")]
 pub struct SeriesExpanded {
     pub id: i64,
