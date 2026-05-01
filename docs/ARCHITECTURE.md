@@ -206,10 +206,13 @@ Orchestration. Defines **what** needs to happen via traits. Receives I/O as inje
 
 Concrete I/O implementations. **All format-specific parsing AND serialization (CSV, JSON, wire formats, SQL array literals) lives here** — it's a boundary concern, exactly like SQL queries. The process layer only sees domain types; only adapters produce external formats.
 
+- `api_schemas.rs` — generated `impl_to_schema!` for all domain types (Regenerate policy, keeps utoipa out of domain)
+- `api_schemas_logic.rs` — hand-written `impl_to_schema!` for logic-layer response types (consumer-owned)
 - `db/` — database enum mappings, query filters (all generated)
 - `field_parsing/` — CSV field parsers for the full-CSV import pipeline
 - `csv_rows.rs` — CSV row-builders for entity/bibitem export and snapshot: `build_author_rows`, `build_bibitem_*_rows`, header constants, `text_array()`. Everything that produces `Vec<Vec<String>>` lives here.
-- Root files (`search.rs`, `render.rs`, `import.rs`, `export.rs`, etc.) — implement process-layer traits with concrete I/O
+- `snapshot_zip.rs` — ZIP archive builder for snapshot export (utility module, imports csv_rows)
+- Root files (`search.rs`, `render.rs`, `import.rs`, `export.rs`, `snapshot.rs`, etc.) — implement process-layer traits with concrete I/O
 - `handlers/` — **thin** HTTP handlers only: extract request → call process with injected dependencies → format response. No business logic. No adapter instantiation — composition provides all dependencies via `AppState`.
 - `handlers/bulk_import.rs` — `POST /api/v1/admin/bulk-import/{table}`: PostgreSQL COPY-based bulk loader for post-wipe corpus releases (~50× faster than upsert import)
 
@@ -218,7 +221,7 @@ Concrete I/O implementations. **All format-specific parsing AND serialization (C
 Wires everything together. The only layer that knows about all others.
 
 - `mod.rs` — `build_app()`: registers CRUD resources, junctions, expansions, custom handlers
-- `state.rs` — `AppState` with `DataStore<Entity, Query>` per entity and `DatabasePool`
+- `state.rs` — `AppState` with `DataStore<Entity, Query>` per entity, `DatabasePool`, and pre-wired adapter instances for all process-layer trait impls
 
 ## Error Flow
 
@@ -240,7 +243,7 @@ Schema source of truth: `hexforge.yml`
 
 | Policy | Files | Behavior |
 |--------|-------|----------|
-| **Regenerate** | Entity files, enums, projections, db_mappings, queries, junctions, state | Always overwritten. Do not edit. |
+| **Regenerate** | Entity files, enums, projections, db_mappings, queries, junctions, api_schemas, state | Always overwritten. Do not edit. |
 | **CreateOnce** | Validation stubs, operation stubs, lib.rs, main.rs, composition/mod.rs | Written once, then consumer-owned. |
 | **Merge** | mod.rs files | Generated modules merged with consumer-added modules and re-exports. |
 
