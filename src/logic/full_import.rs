@@ -7,7 +7,6 @@
 use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
-use utoipa::ToSchema;
 
 use crate::domain::{AuthorRole, CreateBibItem, EntryType, Epoch, LangId, PubState, RefType};
 use crate::logic::latex_citations::extract_cite_keys;
@@ -85,7 +84,7 @@ pub struct ParsedKeywords {
     pub level_3: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize)]
 pub struct FieldError {
     pub field: String,
     pub error: String,
@@ -160,7 +159,7 @@ pub struct ParsedBibRow {
 // Response types
 // =============================================================================
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct ValidationReport {
     pub total_rows: usize,
     pub valid_rows: usize,
@@ -180,26 +179,26 @@ pub struct ValidationReport {
     pub stale_bibitems: Vec<String>,
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct RowError {
     pub row: usize,
     pub bibkey: Option<String>,
     pub errors: Vec<FieldError>,
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct AmbiguousAuthor {
     pub name: String,
     pub matching_ids: Vec<i64>,
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct DuplicateBibkey {
     pub bibkey: String,
     pub rows: Vec<usize>,
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct MissingKeywords {
     pub level_1: Vec<String>,
     pub level_2: Vec<String>,
@@ -240,7 +239,7 @@ impl ValidationReport {
 // Entity import report types
 // =============================================================================
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct EntityImportReport {
     pub created_institutions: usize,
     pub created_schools: usize,
@@ -249,7 +248,7 @@ pub struct EntityImportReport {
     pub errors: Vec<EntityImportError>,
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct EntityImportError {
     pub entity_type: NamedEntityKind,
     pub name: String,
@@ -268,7 +267,7 @@ pub enum ConvertOutcome {
 }
 
 /// Aggregate report for a batch LaTeX-to-Unicode conversion operation.
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct LatexConvertReport {
     pub columns: Vec<ColumnConvertResult>,
     pub total_updated: usize,
@@ -278,7 +277,7 @@ pub struct LatexConvertReport {
 }
 
 /// Stats for one converted column.
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct ColumnConvertResult {
     pub entity: &'static str,
     pub field: &'static str,
@@ -286,7 +285,7 @@ pub struct ColumnConvertResult {
 }
 
 /// A row whose LaTeX value could not be converted — mirrors `EntityImportError`.
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct LatexConvertError {
     pub entity: &'static str,
     pub field: &'static str,
@@ -298,7 +297,7 @@ pub struct LatexConvertError {
 // Full import report types
 // =============================================================================
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct FullImportReport {
     pub imported: usize,
     pub updated: usize,
@@ -496,7 +495,7 @@ impl ResolutionCtx {
 // Named entity kind
 // =============================================================================
 
-#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum NamedEntityKind {
     Institution,

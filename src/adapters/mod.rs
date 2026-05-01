@@ -3,6 +3,7 @@
 pub mod db;
 pub mod handlers;
 
+pub mod api_schemas;
 pub mod auth;
 pub mod csv_rows;
 pub mod export;
