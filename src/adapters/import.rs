@@ -1158,6 +1158,7 @@ pub fn parse_bibitems_csv(
             person_key: None,
             has_fulltext: false,
             fulltext_path: None,
+            license: None,
         };
 
         rows.push(ParsedBibitemRow {

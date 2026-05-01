@@ -341,6 +341,9 @@ models:
       options: { type: "string?" }
       shorthand: { type: "string?" }
 
+      # Rights
+      license: { type: "string?" }
+
       # Internal tracking
       person_key: { type: "string?" }
       has_fulltext: { type: bool }
@@ -438,7 +441,7 @@ models:
       entry_type: { op: eq_cast, column: "entry_type::entry_type" }
       year_from: { op: gte, column: "date_year" }
       year_to: { op: lte, column: "date_year" }
-      author_key: { op: raw, sql: "bibkey IN (SELECT bibkey FROM bibitem_authors WHERE author_key = $)" }
+      author_key: { op: raw, type: string, sql: "bibkey IN (SELECT bibkey FROM bibitem_authors WHERE author_key = $)" }
       journal_key: { op: eq, column: "journal_key" }
       epoch: { op: eq_cast, column: "epoch::epoch" }
       search_term: { op: like, column: "title_unicode" }

@@ -147,6 +147,7 @@ mod tests {
             person_key: None,
             has_fulltext: false,
             fulltext_path: None,
+            license: None,
         }
     }
 

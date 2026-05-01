@@ -189,6 +189,7 @@ pub fn parse_row(headers: &CsvHeaders, record: &[&str]) -> RowParseResult {
     // --- Booleans ---
     let is_translation = get_field(record, headers, "_lang_der").is_some();
     let has_fulltext = get_field(record, headers, "_has_link_to_full_text").is_some();
+    let license = get_field(record, headers, "_license");
 
     // --- Simple string fields ---
     let booktitle = get_field(record, headers, "booktitle");
@@ -266,6 +267,7 @@ pub fn parse_row(headers: &CsvHeaders, record: &[&str]) -> RowParseResult {
         langid,
         is_translation,
         has_fulltext,
+        license,
     }))
 }
 

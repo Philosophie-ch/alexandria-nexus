@@ -153,6 +153,7 @@ pub struct ParsedBibRow {
     pub langid: Option<LangId>,
     pub is_translation: bool,
     pub has_fulltext: bool,
+    pub license: Option<String>,
 }
 
 // =============================================================================
@@ -718,6 +719,7 @@ pub fn build_bibitem_dto(row: &ParsedBibRow, ctx: &ResolutionCtx) -> Result<Crea
         person_key,
         has_fulltext: row.has_fulltext,
         fulltext_path: None,
+        license: row.license.clone(),
     };
 
     apply_date_to_dto(&row.date, &mut dto);
