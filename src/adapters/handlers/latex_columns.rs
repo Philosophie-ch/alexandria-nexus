@@ -6,9 +6,6 @@ use hexforge::HexforgeError;
 use hexforge::axum_exports::{Json, State};
 
 use crate::AppState;
-use crate::adapters::latex_citations::PgCitationResolver;
-use crate::adapters::latex_columns::PgLatexColumnConverter;
-use crate::adapters::latex_to_unicode::PyLatexConverter;
 use crate::logic::full_import::LatexConvertReport;
 use crate::process::latex_columns::convert_all_columns;
 
@@ -21,9 +18,10 @@ use crate::process::latex_columns::convert_all_columns;
 pub async fn convert_latex_columns(
     State(state): State<AppState>,
 ) -> Result<Json<LatexConvertReport>, HexforgeError> {
-    let pool = state.pool.pool();
-    let pg = PgLatexColumnConverter::new(pool);
-    let citation_resolver = PgCitationResolver::new(pool);
-    let report = convert_all_columns(&pg, &PyLatexConverter, &citation_resolver, &pg).await?;
+    let converter = state.latex_column_converter();
+    let latex_converter = state.latex_converter();
+    let citation_resolver = state.citation_resolver();
+    let report =
+        convert_all_columns(&converter, &latex_converter, &citation_resolver, &converter).await?;
     Ok(Json(report))
 }

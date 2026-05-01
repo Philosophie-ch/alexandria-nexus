@@ -9,9 +9,6 @@ use hexforge::axum_exports::{IntoResponse, Json, Response, State, StatusCode};
 use serde::{Deserialize, Serialize};
 
 use crate::AppState;
-use crate::adapters::render::{
-    PgBibitemResolver, PgRenderAuthorFetcher, PgRenderEntityFetcher, PgTransitiveDepsResolver,
-};
 use crate::process::render::{RenderPipelineError, RenderSelection, render_pipeline};
 
 // =============================================================================
@@ -73,11 +70,10 @@ pub async fn render_bibitems(
         );
     };
 
-    let pool = state.pool.pool();
-    let resolver = PgBibitemResolver::new(&state.bibitem_ds);
-    let entity_fetcher = PgRenderEntityFetcher::new(pool);
-    let author_fetcher = PgRenderAuthorFetcher::new(pool, &state.author_ds);
-    let deps_resolver = PgTransitiveDepsResolver::new(pool);
+    let resolver = state.bibitem_resolver();
+    let entity_fetcher = state.render_entity_fetcher();
+    let author_fetcher = state.render_author_fetcher();
+    let deps_resolver = state.transitive_deps_resolver();
 
     match render_pipeline(
         &resolver,

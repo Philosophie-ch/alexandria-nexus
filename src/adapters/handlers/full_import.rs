@@ -10,7 +10,7 @@ use serde::Deserialize;
 use super::import::extract_csv_bytes;
 use crate::AppState;
 use crate::adapters::csv_rows::full_csv_to_bytes;
-use crate::adapters::full_import::{PgFullImportStore, parse_all_rows};
+use crate::adapters::full_import::parse_all_rows;
 use crate::logic::full_import::{EntityImportReport, FullImportResult, ValidationReport};
 use crate::process::full_import;
 
@@ -28,7 +28,7 @@ pub async fn validate_full_csv(
 ) -> Result<Json<ValidationReport>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
     let (rows, row_errors) = parse_all_rows(&data)?;
-    let store = PgFullImportStore::new(state.pool.pool());
+    let store = state.full_import_store();
     let report =
         full_import::validate_import(&store, &store, &store, &store, &rows, row_errors).await?;
     Ok(Json(report))
@@ -42,7 +42,7 @@ pub async fn import_entities_from_full_csv(
 ) -> Result<Json<EntityImportReport>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
     let (rows, _) = parse_all_rows(&data)?;
-    let store = PgFullImportStore::new(state.pool.pool());
+    let store = state.full_import_store();
     let report = full_import::import_entities(
         &store,
         &store,
@@ -70,7 +70,7 @@ pub async fn import_full_csv(
 ) -> Result<Response, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
     let (rows, row_errors) = parse_all_rows(&data)?;
-    let store = PgFullImportStore::new(state.pool.pool());
+    let store = state.full_import_store();
     let result = full_import::import_bibitems(
         &store,
         &store,
@@ -102,7 +102,7 @@ pub async fn import_full_csv(
 pub async fn recompute_deps(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, HexforgeError> {
-    let store = PgFullImportStore::new(state.pool.pool());
+    let store = state.full_import_store();
     let (further_refs, depends_on) = full_import::recompute_transitive_deps(&store).await?;
     Ok(Json(
         serde_json::json!({ "further_refs": further_refs, "depends_on": depends_on }),
@@ -112,7 +112,7 @@ pub async fn recompute_deps(
 /// Export all bibitems as a human-readable CSV matching the full import format.
 /// `POST /api/v1/admin/export-full-csv`
 pub async fn export_full_csv(State(state): State<AppState>) -> Result<Response, HexforgeError> {
-    let store = PgFullImportStore::new(state.pool.pool());
+    let store = state.full_import_store();
     let data =
         full_import::fetch_export_data(&store, &store, &store, &store, &store, &store).await?;
     let bytes = full_csv_to_bytes(&data)?;
