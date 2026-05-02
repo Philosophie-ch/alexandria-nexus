@@ -345,6 +345,8 @@ impl_to_schema! {
         id: i64,
         journal_key: String,
         name_unicode: String,
+        issn_print: Option<String>,
+        issn_electronic: Option<String>,
     }
 }
 
