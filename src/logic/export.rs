@@ -59,6 +59,10 @@ pub fn opt_i16(v: Option<i16>) -> String {
     v.map(|n| n.to_string()).unwrap_or_default()
 }
 
+pub fn opt_i32(v: Option<i32>) -> String {
+    v.map(|n| n.to_string()).unwrap_or_default()
+}
+
 pub fn opt_display<T: std::fmt::Display>(v: &Option<T>) -> String {
     v.as_ref().map(|x| x.to_string()).unwrap_or_default()
 }

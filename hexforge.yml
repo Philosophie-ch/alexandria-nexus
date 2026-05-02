@@ -308,6 +308,7 @@ models:
       volume: { type: "string?" }
       number: { type: "string?" }
       pages: { type: "string?" }
+      start_page: { type: "i32?" }
       eid: { type: "string?" }
       series_key: { type: "string?" }
       edition: { type: "string?" }
@@ -445,6 +446,8 @@ models:
       journal_key: { op: eq, column: "journal_key" }
       epoch: { op: eq_cast, column: "epoch::epoch" }
       search_term: { op: like, column: "title_unicode" }
+      start_page_from: { op: gte, column: "start_page" }
+      start_page_to: { op: lte, column: "start_page" }
 
     indexes:
       - { columns: [entry_type] }

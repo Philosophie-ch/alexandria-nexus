@@ -10,6 +10,7 @@ use serde::Serialize;
 
 use crate::domain::{AuthorRole, CreateBibItem, EntryType, Epoch, LangId, PubState, RefType};
 use crate::logic::latex_citations::extract_cite_keys;
+use crate::logic::pages::compute_start_page;
 
 // =============================================================================
 // Parsed data types (produced by adapters/field_parsing, consumed by process)
@@ -685,6 +686,7 @@ pub fn build_bibitem_dto(row: &ParsedBibRow, ctx: &ResolutionCtx) -> Result<Crea
         volume: row.volume.clone(),
         number: row.number.clone(),
         pages: row.pages.clone(),
+        start_page: None,
         eid: row.eid.clone(),
         series_key: row
             .series_name
@@ -723,6 +725,7 @@ pub fn build_bibitem_dto(row: &ParsedBibRow, ctx: &ResolutionCtx) -> Result<Crea
     };
 
     apply_date_to_dto(&row.date, &mut dto);
+    dto.start_page = compute_start_page(dto.pages.as_deref());
     Ok(dto)
 }
 

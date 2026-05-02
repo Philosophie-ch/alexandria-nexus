@@ -14,7 +14,8 @@ use crate::domain::{
     Series,
 };
 use crate::logic::export::{
-    format_keywords_at_level, format_role_ids, format_role_names, opt_display, opt_i16, opt_str,
+    format_keywords_at_level, format_role_ids, format_role_names, opt_display, opt_i16, opt_i32,
+    opt_str,
 };
 use crate::logic::full_import::ExportContext;
 use crate::process::export::{BibitemExpandedData, BibitemExportData};
@@ -39,6 +40,7 @@ pub const IDS_FORMAT_HEADER: &[&str] = &[
     "volume",
     "number",
     "pages",
+    "start_page",
     "eid",
     "series_key",
     "address",
@@ -86,6 +88,7 @@ pub const EXPANDED_FORMAT_HEADER: &[&str] = &[
     "volume",
     "number",
     "pages",
+    "start_page",
     "eid",
     "series",
     "address",
@@ -377,6 +380,7 @@ fn build_bibitem_id_rows(
             opt_str(&bib.volume).to_string(),
             opt_str(&bib.number).to_string(),
             opt_str(&bib.pages).to_string(),
+            opt_i32(bib.start_page),
             opt_str(&bib.eid).to_string(),
             opt_str(&bib.series_key).to_string(),
             opt_str(&bib.address).to_string(),
@@ -482,6 +486,7 @@ fn build_bibitem_expanded_rows(
             opt_str(&bib.volume).to_string(),
             opt_str(&bib.number).to_string(),
             opt_str(&bib.pages).to_string(),
+            opt_i32(bib.start_page),
             opt_str(&bib.eid).to_string(),
             bib.series_key
                 .as_deref()
@@ -795,6 +800,7 @@ mod tests {
             number: None,
             options: None,
             pages: None,
+            start_page: None,
             person_key: None,
             publisher_key: None,
             pubstate: None,

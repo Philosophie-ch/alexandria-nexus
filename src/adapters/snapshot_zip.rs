@@ -338,6 +338,7 @@ mod tests {
             volume: None,
             number: None,
             pages: None,
+            start_page: None,
             eid: None,
             series_key: None,
             edition: None,

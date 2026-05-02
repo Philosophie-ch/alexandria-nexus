@@ -13,6 +13,8 @@ use serde::Deserialize;
 /// - `epoch` — exact match on `epoch::epoch`
 /// - `journal_key` — exact match on `journal_key`
 /// - `search_term` — LIKE on `title_unicode`
+/// - `start_page_from` — >= on `start_page`
+/// - `start_page_to` — <= on `start_page`
 /// - `year_from` — >= on `date_year`
 /// - `year_to` — <= on `date_year`
 #[derive(Filter, Debug, Default, Deserialize)]
@@ -27,6 +29,10 @@ pub struct BibItemQuery {
     pub journal_key: Option<String>,
     #[query(like = "title_unicode")]
     pub search_term: Option<String>,
+    #[query(gte = "start_page")]
+    pub start_page_from: Option<i32>,
+    #[query(lte = "start_page")]
+    pub start_page_to: Option<i32>,
     #[query(gte = "date_year")]
     pub year_from: Option<i16>,
     #[query(lte = "date_year")]

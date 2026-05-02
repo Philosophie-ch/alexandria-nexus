@@ -41,6 +41,7 @@ use crate::domain::{
     update_institution_transform, update_journal_transform, update_keyword_transform,
     update_publisher_transform, update_school_transform, update_series_transform,
 };
+use crate::logic::pages::compute_start_page;
 use crate::logic::validation::{
     validate_create_author, validate_create_bibitem, validate_create_institution,
     validate_create_journal, validate_create_keyword, validate_create_publisher,
@@ -53,6 +54,18 @@ use crate::logic::validation::{
 /// Health check endpoint
 async fn health() -> &'static str {
     "OK"
+}
+
+fn create_bibitem_with_start_page(input: CreateBibItem) -> BibItem {
+    let mut bib = create_bib_item_transform(input);
+    bib.start_page = compute_start_page(bib.pages.as_deref());
+    bib
+}
+
+fn update_bibitem_with_start_page(input: UpdateBibItem, existing: BibItem) -> BibItem {
+    let mut bib = update_bib_item_transform(input, existing);
+    bib.start_page = compute_start_page(bib.pages.as_deref());
+    bib
 }
 
 /// Build the complete application router.
@@ -185,8 +198,8 @@ pub fn build_app(
             .permissions(CrudPermissions::standard())
             .create_validator(validate_create_bibitem)
             .update_validator(validate_update_bibitem)
-            .create_transform(create_bib_item_transform)
-            .update_transform(update_bib_item_transform)
+            .create_transform(create_bibitem_with_start_page)
+            .update_transform(update_bibitem_with_start_page)
             .lookup_by("bibkey")
             // Projection view for list endpoint: ?view=summary
             .view("summary", hexforge::build_projection_view::<_, _, BibItemSummary>(state.bibitem_ds.clone()))

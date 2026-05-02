@@ -11,4 +11,5 @@ pub mod validation;
 pub mod wipe;
 
 pub mod latex_citations;
+pub mod pages;
 pub mod transitive_closure;

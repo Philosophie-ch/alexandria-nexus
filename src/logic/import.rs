@@ -127,6 +127,7 @@ pub fn build_bibitem_update_dto(create: &CreateBibItem) -> UpdateBibItem {
         volume: create.volume.clone(),
         number: create.number.clone(),
         pages: create.pages.clone(),
+        start_page: create.start_page,
         eid: create.eid.clone(),
         series_key: create.series_key.clone(),
         edition: create.edition.clone(),
