@@ -18,10 +18,11 @@ use crate::process::latex_columns::convert_all_columns;
 pub async fn convert_latex_columns(
     State(state): State<AppState>,
 ) -> Result<Json<LatexConvertReport>, HexforgeError> {
-    let converter = state.latex_column_converter();
+    let fetcher = state.latex_column_fetcher();
+    let writer = state.latex_column_writer();
     let latex_converter = state.latex_converter();
     let citation_resolver = state.citation_resolver();
     let report =
-        convert_all_columns(&converter, &latex_converter, &citation_resolver, &converter).await?;
+        convert_all_columns(&fetcher, &latex_converter, &citation_resolver, &writer).await?;
     Ok(Json(report))
 }
