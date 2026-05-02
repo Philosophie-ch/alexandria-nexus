@@ -53,15 +53,15 @@ check:
 
 # Unit tests only (fast, no Docker)
 test-unit:
-	cargo test --lib
+	cargo test --lib -j 2
 
 # Integration tests (uses Docker — one test at a time to save resources)
 test-integration:
-	cargo test --test '*' -- --test-threads=1
+	cargo test --test '*' -j 2 -- --test-threads=1
 
 # All tests
 test:
-	cargo test --lib && cargo test --test '*' -- --test-threads=1
+	cargo test --lib -j 2 && cargo test --test '*' -j 2 -- --test-threads=1
 
 # Code generation from hexforge.yml
 generate:
