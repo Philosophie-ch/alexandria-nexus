@@ -59,6 +59,8 @@ pub struct JournalExpanded {
     pub id: i64,
     pub journal_key: String,
     pub name_unicode: String,
+    pub issn_print: Option<String>,
+    pub issn_electronic: Option<String>,
 }
 
 /// Expanded projection of [`Keyword`] for `?expand=` responses.

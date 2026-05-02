@@ -472,7 +472,7 @@ models:
         fk: journal_key
         target: Journal
         target_key: journal_key
-        projection: [journal_key, name_unicode]
+        projection: [journal_key, name_unicode, issn_print, issn_electronic]
       publisher:
         type: fk
         fk: publisher_key
