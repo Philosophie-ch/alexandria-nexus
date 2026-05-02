@@ -89,6 +89,7 @@ const BIBITEM_COLS: &[&str] = &[
     "volume",
     "number",
     "pages",
+    "start_page",
     "eid",
     "series_key",
     "address",

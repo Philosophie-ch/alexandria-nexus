@@ -55,6 +55,7 @@ pub struct BibItem {
     pub school_key: Option<String>,
     pub series_key: Option<String>,
     pub shorthand: Option<String>,
+    pub start_page: Option<i32>,
     #[crud(required)]
     pub title_latex: String,
     pub title_unicode: Option<String>,

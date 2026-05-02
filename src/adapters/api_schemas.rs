@@ -80,6 +80,7 @@ impl_to_schema! {
         school_key: Option<String>,
         series_key: Option<String>,
         shorthand: Option<String>,
+        start_page: Option<i32>,
         title_latex: String,
         title_unicode: Option<String>,
         type_field: Option<String>,

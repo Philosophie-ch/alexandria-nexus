@@ -1107,7 +1107,7 @@ pub fn parse_bibitems_csv(
             .unwrap_or_default();
         let title_unicode = col_title_unicode.and_then(|i| get_field(&record, i));
 
-        let dto = CreateBibItem {
+        let mut dto = CreateBibItem {
             bibkey: bibkey.clone(),
             entry_type,
             date_year: col_date_year.and_then(|i| parse_i16_field(&record, i)),
@@ -1129,6 +1129,7 @@ pub fn parse_bibitems_csv(
             volume: col_volume.and_then(|i| get_field(&record, i)),
             number: col_number.and_then(|i| get_field(&record, i)),
             pages: col_pages.and_then(|i| get_field(&record, i)),
+            start_page: None,
             eid: col_eid.and_then(|i| get_field(&record, i)),
             series_key: col_series_key.and_then(|i| get_field(&record, i)),
             edition: col_edition.and_then(|i| get_field(&record, i)),
@@ -1160,6 +1161,7 @@ pub fn parse_bibitems_csv(
             fulltext_path: None,
             license: None,
         };
+        dto.start_page = crate::logic::pages::compute_start_page(dto.pages.as_deref());
 
         rows.push(ParsedBibitemRow {
             row_num,

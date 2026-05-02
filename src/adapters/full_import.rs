@@ -311,6 +311,7 @@ impl BulkBibitemInsert for PgFullImportStore<'_> {
         let mut number: Vec<Option<String>> = Vec::new();
         let mut options: Vec<Option<String>> = Vec::new();
         let mut pages: Vec<Option<String>> = Vec::new();
+        let mut start_page: Vec<Option<i32>> = Vec::new();
         let mut person_key: Vec<Option<String>> = Vec::new();
         let mut publisher_key: Vec<Option<String>> = Vec::new();
         let mut pubstate: Vec<Option<String>> = Vec::new();
@@ -358,6 +359,7 @@ impl BulkBibitemInsert for PgFullImportStore<'_> {
             number.push(e.number.clone());
             options.push(e.options.clone());
             pages.push(e.pages.clone());
+            start_page.push(e.start_page);
             person_key.push(e.person_key.clone());
             publisher_key.push(e.publisher_key.clone());
             pubstate.push(e.pubstate.as_ref().map(PubState::to_string));
@@ -381,7 +383,7 @@ impl BulkBibitemInsert for PgFullImportStore<'_> {
                has_fulltext, institution_key, is_translation, issuetitle_latex, issuetitle_unicode,
                journal_key, langid, license, note_latex, note_unicode, number, options, pages,
                person_key, publisher_key, pubstate, school_key, series_key, shorthand,
-               title_latex, title_unicode, type_field, url, urn, volume
+               start_page, title_latex, title_unicode, type_field, url, urn, volume
              )
              SELECT
                address, bibkey, booktitle_latex, booktitle_unicode,
@@ -391,7 +393,7 @@ impl BulkBibitemInsert for PgFullImportStore<'_> {
                has_fulltext, institution_key, is_translation, issuetitle_latex, issuetitle_unicode,
                journal_key, langid::langid, license, note_latex, note_unicode, number, options, pages,
                person_key, publisher_key, pubstate::pubstate, school_key, series_key, shorthand,
-               title_latex, title_unicode, type_field, url, urn, volume
+               start_page, title_latex, title_unicode, type_field, url, urn, volume
              FROM unnest(
                $1::text[], $2::text[], $3::text[], $4::text[],
                $5::text[], $6::int2[], $7::bool[], $8::int2[], $9::int2[],
@@ -400,7 +402,7 @@ impl BulkBibitemInsert for PgFullImportStore<'_> {
                $21::bool[], $22::text[], $23::bool[], $24::text[], $25::text[],
                $26::text[], $27::text[], $28::text[], $29::text[], $30::text[], $31::text[], $32::text[], $33::text[],
                $34::text[], $35::text[], $36::text[], $37::text[], $38::text[], $39::text[],
-               $40::text[], $41::text[], $42::text[], $43::text[], $44::text[], $45::text[]
+               $40::int4[], $41::text[], $42::text[], $43::text[], $44::text[], $45::text[], $46::text[]
              ) AS t(
                address, bibkey, booktitle_latex, booktitle_unicode,
                crossref, date_day, date_is_no_date, date_month, date_year,
@@ -409,7 +411,7 @@ impl BulkBibitemInsert for PgFullImportStore<'_> {
                has_fulltext, institution_key, is_translation, issuetitle_latex, issuetitle_unicode,
                journal_key, langid, license, note_latex, note_unicode, number, options, pages,
                person_key, publisher_key, pubstate, school_key, series_key, shorthand,
-               title_latex, title_unicode, type_field, url, urn, volume
+               start_page, title_latex, title_unicode, type_field, url, urn, volume
              )
              RETURNING id, bibkey",
         )
@@ -452,6 +454,7 @@ impl BulkBibitemInsert for PgFullImportStore<'_> {
         .bind(school_key)
         .bind(series_key)
         .bind(shorthand)
+        .bind(start_page)
         .bind(title_latex)
         .bind(title_unicode)
         .bind(type_field)
