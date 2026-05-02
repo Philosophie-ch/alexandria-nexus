@@ -8,6 +8,7 @@ use hexforge::HexforgeError;
 
 use super::AppState;
 
+use crate::adapters::compute_start_pages::PgStartPageComputer;
 use crate::adapters::export::{
     PgBibitemFetcher, PgEntityBatchFetcher, PgExportJunctionFetcher, PgKeyedEntityFetcher,
     PgKeywordFetcher as PgKeywordExportFetcher,
@@ -88,11 +89,29 @@ impl AppState {
 }
 
 // =============================================================================
+// Compute start pages
+// =============================================================================
+
+impl AppState {
+    pub fn start_page_fetcher(&self) -> PgStartPageComputer<'_> {
+        PgStartPageComputer::new(self.pool.pool())
+    }
+
+    pub fn start_page_writer(&self) -> PgStartPageComputer<'_> {
+        PgStartPageComputer::new(self.pool.pool())
+    }
+}
+
+// =============================================================================
 // LaTeX conversion
 // =============================================================================
 
 impl AppState {
-    pub fn latex_column_converter(&self) -> PgLatexColumnConverter<'_> {
+    pub fn latex_column_fetcher(&self) -> PgLatexColumnConverter<'_> {
+        PgLatexColumnConverter::new(self.pool.pool())
+    }
+
+    pub fn latex_column_writer(&self) -> PgLatexColumnConverter<'_> {
         PgLatexColumnConverter::new(self.pool.pool())
     }
 

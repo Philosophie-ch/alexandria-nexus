@@ -17,13 +17,14 @@ use crate::adapters::db::queries::{
     PublisherQuery, SchoolQuery, SeriesQuery,
 };
 use crate::adapters::handlers::{
-    bulk_import_table, convert_latex_columns, convert_latex_to_unicode, export_authors,
-    export_bibitems, export_full_csv, export_institutions, export_journals, export_keywords,
-    export_publishers, export_schools, export_series, get_keyword_tree,
-    import_author_name_variants, import_authors, import_bibitem_notes, import_bibitem_refs,
-    import_bibitems, import_entities_from_full_csv, import_full_csv, import_institutions,
-    import_journals, import_keywords, import_publishers, import_schools, import_series,
-    recompute_deps, render_bibitems, search_bibitems, snapshot_data, validate_full_csv, wipe_data,
+    bulk_import_table, compute_start_pages_handler, convert_latex_columns,
+    convert_latex_to_unicode, export_authors, export_bibitems, export_full_csv,
+    export_institutions, export_journals, export_keywords, export_publishers, export_schools,
+    export_series, get_keyword_tree, import_author_name_variants, import_authors,
+    import_bibitem_notes, import_bibitem_refs, import_bibitems, import_entities_from_full_csv,
+    import_full_csv, import_institutions, import_journals, import_keywords, import_publishers,
+    import_schools, import_series, recompute_deps, render_bibitems, search_bibitems, snapshot_data,
+    validate_full_csv, wipe_data,
 };
 use crate::domain::projections::{
     AuthorExpanded, BibItemCrossref, BibItemSummary, InstitutionExpanded, JournalExpanded,
@@ -331,6 +332,7 @@ pub fn build_app(
                 .post("/export-full-csv", export_full_csv)
                 .post("/recompute-deps", recompute_deps)
                 .post("/latex-to-unicode", convert_latex_to_unicode)
+                .post("/compute-start-pages", compute_start_pages_handler)
                 .post("/convert-latex-columns", convert_latex_columns)
                 .post("/bulk-import/{table}", bulk_import_table)
                 .post("/wipe", wipe_data)
