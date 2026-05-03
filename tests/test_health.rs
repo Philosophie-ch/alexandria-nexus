@@ -30,3 +30,24 @@ async fn test_openapi_returns_json() {
     );
     assert!(body.get("info").is_some(), "Missing info field");
 }
+
+#[tokio::test]
+async fn test_openapi_includes_enum_schemas() {
+    let app = TestApp::spawn().await;
+
+    let resp = app.get_no_auth("/docs/openapi.json").await;
+
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+
+    let schemas = body
+        .pointer("/components/schemas")
+        .expect("OpenAPI spec must have components.schemas");
+
+    for name in &["EntryType", "Epoch", "LangId", "PubState"] {
+        assert!(
+            schemas.get(name).is_some(),
+            "Missing enum schema in components.schemas: {name}"
+        );
+    }
+}

@@ -5,7 +5,7 @@ mod wiring;
 
 use hexforge::{
     Api, CorsConfig, CrudPermissions, CrudResourceConfig, JunctionConfig, OpenApiConfig,
-    Permission, Resource,
+    Permission, Resource, SchemaInfo,
     axum_exports::{DefaultBodyLimit, Router, get},
 };
 
@@ -202,6 +202,12 @@ pub fn build_app(
             .create_transform(create_bibitem_with_start_page)
             .update_transform(update_bibitem_with_start_page)
             .lookup_by("bibkey")
+            .extra_schemas(vec![
+                SchemaInfo::from_type::<crate::domain::EntryType>(),
+                SchemaInfo::from_type::<crate::domain::Epoch>(),
+                SchemaInfo::from_type::<crate::domain::LangId>(),
+                SchemaInfo::from_type::<crate::domain::PubState>(),
+            ])
             // Projection view for list endpoint: ?view=summary
             .view("summary", hexforge::build_projection_view::<_, _, BibItemSummary>(state.bibitem_ds.clone()))
             // Junction tables (many-to-many)
