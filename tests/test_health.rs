@@ -104,6 +104,38 @@ async fn test_openapi_custom_endpoint_schemas_in_components() {
 }
 
 #[tokio::test]
+async fn test_openapi_auxiliary_schemas_in_components() {
+    let app = TestApp::spawn().await;
+
+    let resp = app.get_no_auth("/docs/openapi.json").await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+
+    let schemas = body
+        .pointer("/components/schemas")
+        .expect("OpenAPI spec must have components.schemas");
+
+    // Nested types registered via Api::extra_schemas() — not auto-discovered by impl_to_schema!
+    for name in &[
+        "FieldError",
+        "RowError",
+        "AmbiguousAuthor",
+        "DuplicateBibkey",
+        "MissingKeywords",
+        "EntityImportError",
+        "NamedEntityKind",
+        "ColumnConvertResult",
+        "LatexConvertError",
+        "LatexConvertItem",
+    ] {
+        assert!(
+            schemas.get(name).is_some(),
+            "Missing auxiliary schema in components.schemas: {name}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn test_openapi_search_endpoint_has_request_and_response_schemas() {
     let app = TestApp::spawn().await;
 
