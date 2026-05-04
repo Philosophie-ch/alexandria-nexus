@@ -7,6 +7,7 @@
 
 use hexforge::axum_exports::{IntoResponse, Json, Response, State, StatusCode};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::AppState;
 use crate::process::render::{RenderPipelineError, RenderSelection, render_pipeline};
@@ -16,7 +17,7 @@ use crate::process::render::{RenderPipelineError, RenderSelection, render_pipeli
 // =============================================================================
 
 /// Request body for the render endpoint.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct RenderRequest {
     /// Select bibitems by ID.
     pub ids: Option<Vec<i64>>,
@@ -28,7 +29,7 @@ pub struct RenderRequest {
 }
 
 /// Response body for the render endpoint.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct RenderResponseBody {
     pub main_html: String,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -1,6 +1,7 @@
 use hexforge::axum_exports::{Json, Query, State};
 use hexforge::{HexforgeError, ValidationError};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::AppState;
 
@@ -9,7 +10,7 @@ pub struct WipeParams {
     confirm: Option<bool>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct WipeResponse {
     wiped: bool,
 }
