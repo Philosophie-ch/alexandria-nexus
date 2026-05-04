@@ -29,10 +29,15 @@ pub use search::search_bibitems;
 pub use snapshot::snapshot_data;
 pub use wipe::wipe_data;
 
-pub use bulk_import::bulk_import_table;
+pub use bulk_import::{BulkImportResponse, bulk_import_table};
 pub use compute_start_pages::compute_start_pages_handler;
+pub use keyword_tree::KeywordTreeResponse;
 pub use latex_columns::convert_latex_columns;
-pub use latex_to_unicode::convert_latex_to_unicode;
+pub use latex_to_unicode::{
+    LatexConvertItem, LatexConvertRequest, LatexConvertResponse, convert_latex_to_unicode,
+};
+pub use render::{RenderRequest, RenderResponseBody};
+pub use wipe::WipeResponse;
 mod bulk_import;
 mod compute_start_pages;
 mod latex_columns;

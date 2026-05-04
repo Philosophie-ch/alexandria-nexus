@@ -4,7 +4,7 @@ pub mod state;
 mod wiring;
 
 use hexforge::{
-    Api, CorsConfig, CrudPermissions, CrudResourceConfig, JunctionConfig, OpenApiConfig,
+    Api, CorsConfig, CrudPermissions, CrudResourceConfig, Endpoint, JunctionConfig, OpenApiConfig,
     Permission, Resource, SchemaInfo,
     axum_exports::{DefaultBodyLimit, Router, get},
 };
@@ -17,14 +17,15 @@ use crate::adapters::db::queries::{
     PublisherQuery, SchoolQuery, SeriesQuery,
 };
 use crate::adapters::handlers::{
-    bulk_import_table, compute_start_pages_handler, convert_latex_columns,
-    convert_latex_to_unicode, export_authors, export_bibitems, export_full_csv,
-    export_institutions, export_journals, export_keywords, export_publishers, export_schools,
-    export_series, get_keyword_tree, import_author_name_variants, import_authors,
-    import_bibitem_notes, import_bibitem_refs, import_bibitems, import_entities_from_full_csv,
-    import_full_csv, import_institutions, import_journals, import_keywords, import_publishers,
-    import_schools, import_series, recompute_deps, render_bibitems, search_bibitems, snapshot_data,
-    validate_full_csv, wipe_data,
+    BulkImportResponse, KeywordTreeResponse, LatexConvertItem, LatexConvertRequest,
+    LatexConvertResponse, RenderRequest, RenderResponseBody, WipeResponse, bulk_import_table,
+    compute_start_pages_handler, convert_latex_columns, convert_latex_to_unicode, export_authors,
+    export_bibitems, export_full_csv, export_institutions, export_journals, export_keywords,
+    export_publishers, export_schools, export_series, get_keyword_tree,
+    import_author_name_variants, import_authors, import_bibitem_notes, import_bibitem_refs,
+    import_bibitems, import_entities_from_full_csv, import_full_csv, import_institutions,
+    import_journals, import_keywords, import_publishers, import_schools, import_series,
+    recompute_deps, render_bibitems, search_bibitems, snapshot_data, validate_full_csv, wipe_data,
 };
 use crate::domain::projections::{
     AuthorExpanded, BibItemCrossref, BibItemSummary, InstitutionExpanded, JournalExpanded,
@@ -42,7 +43,15 @@ use crate::domain::{
     update_institution_transform, update_journal_transform, update_keyword_transform,
     update_publisher_transform, update_school_transform, update_series_transform,
 };
+use crate::logic::export::{BibitemExportRequest, EntityExportRequest, ExportFormat};
+use crate::logic::full_import::{
+    AmbiguousAuthor, ColumnConvertResult, DuplicateBibkey, EntityImportError, EntityImportReport,
+    FieldError, FullImportReport, LatexConvertError, LatexConvertReport, MissingKeywords,
+    NamedEntityKind, RowError, ValidationReport,
+};
+use crate::logic::import::{ImportResponse, ImportRowError, MissingReferencesError};
 use crate::logic::pages::compute_start_page;
+use crate::logic::search::{SearchRequest, SearchResponse};
 use crate::logic::validation::{
     validate_create_author, validate_create_bibitem, validate_create_institution,
     validate_create_journal, validate_create_keyword, validate_create_publisher,
@@ -51,6 +60,7 @@ use crate::logic::validation::{
     validate_update_keyword, validate_update_publisher, validate_update_school,
     validate_update_series,
 };
+use crate::process::compute_start_pages::ComputeStartPagesReport;
 
 /// Health check endpoint
 async fn health() -> &'static str {
@@ -83,6 +93,20 @@ pub fn build_app(
 
     let api = Api::new()
         .with_auth(validator)
+        .extra_schemas(vec![
+            SchemaInfo::from_type::<FieldError>(),
+            SchemaInfo::from_type::<RowError>(),
+            SchemaInfo::from_type::<AmbiguousAuthor>(),
+            SchemaInfo::from_type::<DuplicateBibkey>(),
+            SchemaInfo::from_type::<MissingKeywords>(),
+            SchemaInfo::from_type::<EntityImportError>(),
+            SchemaInfo::from_type::<NamedEntityKind>(),
+            SchemaInfo::from_type::<ColumnConvertResult>(),
+            SchemaInfo::from_type::<LatexConvertError>(),
+            SchemaInfo::from_type::<ImportRowError>(),
+            SchemaInfo::from_type::<ExportFormat>(),
+            SchemaInfo::from_type::<LatexConvertItem>(),
+        ])
         // Authors CRUD
         .crud_auto(
             CrudResourceConfig::<Author, _, CreateAuthor, UpdateAuthor, AuthorQuery>::new(
@@ -282,67 +306,267 @@ pub fn build_app(
         // Keyword tree
         .resource(
             Resource::<AppState>::new("/api/v1/keywords")
-                .get("/tree", get_keyword_tree)
+                .operation(
+                    Endpoint::get("/tree")
+                        .response_schema::<KeywordTreeResponse>()
+                        .tag("Keywords")
+                        .description("Hierarchical keyword tree (levels 1–3)"),
+                    get_keyword_tree,
+                )
                 .with_state(state.clone()),
         )
         // Search
         .resource(
             Resource::<AppState>::new("/api/v1")
-                .post("/search", search_bibitems)
+                .operation(
+                    Endpoint::post("/search")
+                        .request_schema::<SearchRequest>()
+                        .response_schema::<SearchResponse>()
+                        .tag("Search")
+                        .description("Full-text search with filters"),
+                    search_bibitems,
+                )
                 .with_state(state.clone()),
         )
         // Render (HTML bibliography)
         .resource(
             Resource::<AppState>::new("/api/v1")
-                .post("/render", render_bibitems)
+                .operation(
+                    Endpoint::post("/render")
+                        .request_schema::<RenderRequest>()
+                        .response_schema::<RenderResponseBody>()
+                        .tag("Render")
+                        .description("Render bibliography items as HTML"),
+                    render_bibitems,
+                )
                 .with_state(state.clone()),
         )
-        // Admin: Export endpoints
+        // Admin: Export endpoints (return CSV streams — request schemas only)
         .resource(
             Resource::<AppState>::new("/api/v1/admin/export")
                 .require_permission(Permission::Admin)
-                .post("/bibitems", export_bibitems)
-                .post("/authors", export_authors)
-                .post("/journals", export_journals)
-                .post("/publishers", export_publishers)
-                .post("/institutions", export_institutions)
-                .post("/schools", export_schools)
-                .post("/series", export_series)
-                .post("/keywords", export_keywords)
+                .operation(
+                    Endpoint::post("/bibitems")
+                        .request_schema::<BibitemExportRequest>()
+                        .tag("Admin")
+                        .description("Export bibitems as CSV"),
+                    export_bibitems,
+                )
+                .operation(
+                    Endpoint::post("/authors")
+                        .request_schema::<EntityExportRequest>()
+                        .tag("Admin")
+                        .description("Export authors as CSV"),
+                    export_authors,
+                )
+                .operation(
+                    Endpoint::post("/journals")
+                        .request_schema::<EntityExportRequest>()
+                        .tag("Admin")
+                        .description("Export journals as CSV"),
+                    export_journals,
+                )
+                .operation(
+                    Endpoint::post("/publishers")
+                        .request_schema::<EntityExportRequest>()
+                        .tag("Admin")
+                        .description("Export publishers as CSV"),
+                    export_publishers,
+                )
+                .operation(
+                    Endpoint::post("/institutions")
+                        .request_schema::<EntityExportRequest>()
+                        .tag("Admin")
+                        .description("Export institutions as CSV"),
+                    export_institutions,
+                )
+                .operation(
+                    Endpoint::post("/schools")
+                        .request_schema::<EntityExportRequest>()
+                        .tag("Admin")
+                        .description("Export schools as CSV"),
+                    export_schools,
+                )
+                .operation(
+                    Endpoint::post("/series")
+                        .request_schema::<EntityExportRequest>()
+                        .tag("Admin")
+                        .description("Export series as CSV"),
+                    export_series,
+                )
+                .operation(
+                    Endpoint::post("/keywords")
+                        .request_schema::<EntityExportRequest>()
+                        .tag("Admin")
+                        .description("Export keywords as CSV"),
+                    export_keywords,
+                )
                 .with_state(state.clone()),
         )
-        // Admin: Import endpoints
+        // Admin: Import endpoints (multipart CSV uploads — response schemas only)
         .resource(
             Resource::<AppState>::new("/api/v1/admin/import")
                 .require_permission(Permission::Admin)
-                .post("/bibitems", import_bibitems)
-                .post("/authors", import_authors)
-                .post("/journals", import_journals)
-                .post("/publishers", import_publishers)
-                .post("/institutions", import_institutions)
-                .post("/schools", import_schools)
-                .post("/series", import_series)
-                .post("/keywords", import_keywords)
-                .post("/author-name-variants", import_author_name_variants)
-                .post("/bibitem-refs", import_bibitem_refs)
-                .post("/bibitem-notes", import_bibitem_notes)
+                .operation(
+                    Endpoint::post("/bibitems")
+                        .response_schema::<ImportResponse>()
+                        .error_schema::<MissingReferencesError>("422")
+                        .tag("Admin")
+                        .description("Import bibitems from IDs-format CSV"),
+                    import_bibitems,
+                )
+                .operation(
+                    Endpoint::post("/authors")
+                        .response_schema::<ImportResponse>()
+                        .tag("Admin")
+                        .description("Import authors from CSV"),
+                    import_authors,
+                )
+                .operation(
+                    Endpoint::post("/journals")
+                        .response_schema::<ImportResponse>()
+                        .tag("Admin")
+                        .description("Import journals from CSV"),
+                    import_journals,
+                )
+                .operation(
+                    Endpoint::post("/publishers")
+                        .response_schema::<ImportResponse>()
+                        .tag("Admin")
+                        .description("Import publishers from CSV"),
+                    import_publishers,
+                )
+                .operation(
+                    Endpoint::post("/institutions")
+                        .response_schema::<ImportResponse>()
+                        .tag("Admin")
+                        .description("Import institutions from CSV"),
+                    import_institutions,
+                )
+                .operation(
+                    Endpoint::post("/schools")
+                        .response_schema::<ImportResponse>()
+                        .tag("Admin")
+                        .description("Import schools from CSV"),
+                    import_schools,
+                )
+                .operation(
+                    Endpoint::post("/series")
+                        .response_schema::<ImportResponse>()
+                        .tag("Admin")
+                        .description("Import series from CSV"),
+                    import_series,
+                )
+                .operation(
+                    Endpoint::post("/keywords")
+                        .response_schema::<ImportResponse>()
+                        .tag("Admin")
+                        .description("Import keywords from CSV"),
+                    import_keywords,
+                )
+                .operation(
+                    Endpoint::post("/author-name-variants")
+                        .response_schema::<ImportResponse>()
+                        .tag("Admin")
+                        .description("Import author name variants from CSV"),
+                    import_author_name_variants,
+                )
+                .operation(
+                    Endpoint::post("/bibitem-refs")
+                        .response_schema::<ImportResponse>()
+                        .tag("Admin")
+                        .description("Import bibitem references from CSV"),
+                    import_bibitem_refs,
+                )
+                .operation(
+                    Endpoint::post("/bibitem-notes")
+                        .response_schema::<ImportResponse>()
+                        .tag("Admin")
+                        .description("Import bibitem notes from CSV"),
+                    import_bibitem_notes,
+                )
                 .with_state(state.clone()),
         )
-        // Admin: Full CSV import endpoints
+        // Admin: Full CSV, utility, and bulk endpoints
         .resource(
             Resource::<AppState>::new("/api/v1/admin")
                 .require_permission(Permission::Admin)
-                .post("/validate-full-csv", validate_full_csv)
-                .post("/import-entities-from-full-csv", import_entities_from_full_csv)
-                .post("/import-full-csv", import_full_csv)
-                .post("/export-full-csv", export_full_csv)
-                .post("/recompute-deps", recompute_deps)
-                .post("/latex-to-unicode", convert_latex_to_unicode)
-                .post("/compute-start-pages", compute_start_pages_handler)
-                .post("/convert-latex-columns", convert_latex_columns)
-                .post("/bulk-import/{table}", bulk_import_table)
-                .post("/wipe", wipe_data)
-                .post("/snapshot", snapshot_data)
+                .operation(
+                    Endpoint::post("/validate-full-csv")
+                        .response_schema::<ValidationReport>()
+                        .tag("Admin")
+                        .description("Validate a human-readable CSV without importing"),
+                    validate_full_csv,
+                )
+                .operation(
+                    Endpoint::post("/import-entities-from-full-csv")
+                        .response_schema::<EntityImportReport>()
+                        .tag("Admin")
+                        .description("Import missing entities from a human-readable CSV"),
+                    import_entities_from_full_csv,
+                )
+                .operation(
+                    Endpoint::post("/import-full-csv")
+                        .response_schema::<FullImportReport>()
+                        .error_schema::<ValidationReport>("422")
+                        .tag("Admin")
+                        .description("Import bibitems from human-readable CSV; upserts and optionally deletes stale"),
+                    import_full_csv,
+                )
+                .operation(
+                    Endpoint::post("/export-full-csv")
+                        .tag("Admin")
+                        .description("Export all bibitems as human-readable CSV"),
+                    export_full_csv,
+                )
+                .operation(
+                    Endpoint::post("/recompute-deps")
+                        .tag("Admin")
+                        .description("Recompute transitive further-ref dependencies"),
+                    recompute_deps,
+                )
+                .operation(
+                    Endpoint::post("/latex-to-unicode")
+                        .request_schema::<LatexConvertRequest>()
+                        .response_schema::<LatexConvertResponse>()
+                        .tag("Admin")
+                        .description("Convert a batch of LaTeX strings to Unicode"),
+                    convert_latex_to_unicode,
+                )
+                .operation(
+                    Endpoint::post("/compute-start-pages")
+                        .response_schema::<ComputeStartPagesReport>()
+                        .tag("Admin")
+                        .description("Compute and persist start_page for all bibitems"),
+                    compute_start_pages_handler,
+                )
+                .operation(
+                    Endpoint::post("/convert-latex-columns")
+                        .response_schema::<LatexConvertReport>()
+                        .tag("Admin")
+                        .description("Convert all LaTeX columns to Unicode across all entity tables"),
+                    convert_latex_columns,
+                )
+                .operation(
+                    Endpoint::post("/bulk-import/{table}")
+                        .response_schema::<BulkImportResponse>()
+                        .tag("Admin")
+                        .description("Bulk import via PostgreSQL COPY (post-wipe only)"),
+                    bulk_import_table,
+                )
+                .operation(
+                    Endpoint::post("/wipe")
+                        .response_schema::<WipeResponse>()
+                        .tag("Admin")
+                        .description("Truncate all data tables (pass ?confirm=true)"),
+                    wipe_data,
+                )
+                .operation(
+                    Endpoint::post("/snapshot")
+                        .tag("Admin")
+                        .description("Generate and download a ZIP snapshot of all data tables"),
+                    snapshot_data,
+                )
                 .with_state(state.clone()),
         )
         // DataVersion CRUD (list is public; all mutations are admin-only)

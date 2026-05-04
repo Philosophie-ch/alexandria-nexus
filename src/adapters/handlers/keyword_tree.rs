@@ -3,13 +3,14 @@
 use hexforge::HexforgeError;
 use hexforge::axum_exports::{Json, State};
 use serde::Serialize;
+use utoipa::ToSchema;
 
 use crate::AppState;
 use crate::domain::Keyword;
 use crate::process::keyword_tree::build_keyword_tree;
 
 /// JSON-serializable keyword tree response.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct KeywordTreeResponse {
     pub level_1: Vec<Keyword>,
     pub level_2: Vec<Keyword>,

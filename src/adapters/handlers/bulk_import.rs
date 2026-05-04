@@ -155,7 +155,7 @@ fn allowed_columns(table: &str) -> Option<&'static [&'static str]> {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct BulkImportResponse {
     pub table: String,
     pub rows: u64,

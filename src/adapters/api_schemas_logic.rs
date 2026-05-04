@@ -147,3 +147,104 @@ impl_to_schema! {
         Keyword,
     }
 }
+
+// =============================================================================
+// Search types
+// =============================================================================
+
+impl_to_schema! {
+    struct crate::logic::search::SearchRequest => "SearchRequest" {
+        query: String,
+        entry_type: Option<crate::domain::EntryType>,
+        year_from: Option<i16>,
+        year_to: Option<i16>,
+        author_id: Option<i64>,
+        journal_id: Option<i64>,
+        epoch: Option<crate::domain::Epoch>,
+        limit: i64,
+        offset: i64,
+    }
+}
+
+impl_to_schema! {
+    struct crate::logic::search::SearchResponse => "SearchResponse" {
+        results: Vec<crate::domain::BibItem>,
+        total: i64,
+        limit: i64,
+        offset: i64,
+    }
+}
+
+// =============================================================================
+// Import response types
+// =============================================================================
+
+impl_to_schema! {
+    struct crate::logic::import::ImportRowError => "ImportRowError" {
+        row: usize,
+        identifier: String,
+        error: String,
+    }
+}
+
+impl_to_schema! {
+    struct crate::logic::import::ImportResponse => "ImportResponse" {
+        imported: usize,
+        updated: usize,
+        failed: usize,
+        errors: Vec<crate::logic::import::ImportRowError>,
+    }
+}
+
+impl_to_schema! {
+    struct crate::logic::import::MissingReferencesError => "MissingReferencesError" {
+        error: &'static str,
+        message: &'static str,
+        missing_author_keys: Vec<String>,
+        missing_journal_keys: Vec<String>,
+        missing_publisher_keys: Vec<String>,
+        missing_institution_keys: Vec<String>,
+        missing_school_keys: Vec<String>,
+        missing_series_keys: Vec<String>,
+        missing_keyword_keys: Vec<String>,
+        missing_crossref_keys: Vec<String>,
+    }
+}
+
+// =============================================================================
+// Export request types
+// =============================================================================
+
+impl_to_schema! {
+    crate::logic::export::ExportFormat => "ExportFormat", rename_all = "lowercase" {
+        Expanded,
+        Ids,
+    }
+}
+
+impl_to_schema! {
+    struct crate::logic::export::EntityExportRequest => "EntityExportRequest" {
+        all: bool,
+        ids: Option<Vec<i64>>,
+        keys: Option<Vec<String>>,
+    }
+}
+
+impl_to_schema! {
+    struct crate::logic::export::BibitemExportRequest => "BibitemExportRequest" {
+        format: crate::logic::export::ExportFormat,
+        all: bool,
+        ids: Option<Vec<i64>>,
+        bibkeys: Option<Vec<String>>,
+    }
+}
+
+// =============================================================================
+// Compute start pages report (process layer)
+// =============================================================================
+
+impl_to_schema! {
+    struct crate::process::compute_start_pages::ComputeStartPagesReport => "ComputeStartPagesReport" {
+        updated: usize,
+    }
+}
