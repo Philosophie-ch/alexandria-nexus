@@ -42,10 +42,13 @@ These rules are **non-negotiable**. Every import must respect them.
 | Logic | domain | process, adapters, composition |
 | Process | domain, logic | adapters, composition |
 | Adapters (trait impls) | domain, logic, process **traits only** | composition |
+| Adapters (schema adapters) | domain, logic, process **types** | composition |
 | Adapters (handlers) | domain, logic, process (traits + types + functions) | composition |
 | Composition | everything | — |
 
 **Adapter trait impls and process:** Adapter trait impl files (e.g., `adapters/search.rs`, `adapters/render.rs`) import from process **only to implement traits** that process defines. They CANNOT import process functions or orchestration logic — only trait definitions. This keeps the dependency one-directional: process defines contracts, adapters fulfill them.
+
+**Adapter schema adapters and process:** `api_schemas.rs` and `api_schemas_logic.rs` are a distinct adapter category: they provide `ToSchema` implementations for inner-layer types, keeping `utoipa` out of domain, logic, and process. These files may import **types** (not traits or functions) from domain, logic, and process — because providing an OpenAPI schema for a type requires referencing it. They do not call any functions or implement any process contracts.
 
 **Handlers and process:** Handlers import process **types** (e.g., `ResolveResult`) and process **functions** (e.g., `render_bibitems_to_html`) to call process orchestration. Handlers are **thin HTTP adapters only**: extract request → forward to process → format response. They do not contain business logic and do not decide which adapter implementation to use — that is composition's job.
 
@@ -207,14 +210,24 @@ Orchestration. Defines **what** needs to happen via traits. Receives I/O as inje
 Concrete I/O implementations. **All format-specific parsing AND serialization (CSV, JSON, wire formats, SQL array literals) lives here** — it's a boundary concern, exactly like SQL queries. The process layer only sees domain types; only adapters produce external formats.
 
 - `api_schemas.rs` — generated `impl_to_schema!` for all domain types (Regenerate policy, keeps utoipa out of domain)
-- `api_schemas_logic.rs` — hand-written `impl_to_schema!` for logic-layer response types (consumer-owned)
+- `api_schemas_logic.rs` — hand-written `impl_to_schema!` for logic-layer and process-layer types (consumer-owned); may also hold `impl_to_schema!` for handler-defined types that need external schema registration
 - `db/` — database enum mappings, query filters (all generated)
 - `field_parsing/` — CSV field parsers for the full-CSV import pipeline
 - `csv_rows.rs` — CSV row-builders for entity/bibitem export and snapshot: `build_author_rows`, `build_bibitem_*_rows`, header constants, `text_array()`. Everything that produces `Vec<Vec<String>>` lives here.
 - `snapshot_zip.rs` — ZIP archive builder for snapshot export (utility module, imports csv_rows)
 - Root files (`search.rs`, `render.rs`, `import.rs`, `export.rs`, `snapshot.rs`, etc.) — implement process-layer traits with concrete I/O
 - `handlers/` — **thin** HTTP handlers only: extract request → call process with injected dependencies → format response. No business logic. No adapter instantiation — composition provides all dependencies via `AppState`.
-- `handlers/bulk_import.rs` — `POST /api/v1/admin/bulk-import/{table}`: PostgreSQL COPY-based bulk loader for post-wipe corpus releases (~50× faster than upsert import)
+- `handlers/bulk_import.rs` — `POST /api/v1/admin/bulk-import/{table}`: COPY-based bulk loader for post-wipe corpus releases (~50× faster than upsert import)
+
+**OpenAPI schema registration — two valid patterns:**
+
+| Type location | Pattern | Reason |
+|--------------|---------|--------|
+| `src/domain/` | `impl_to_schema!` in `api_schemas.rs` (generated) | Domain must be pure — no framework imports |
+| `src/logic/` or `src/process/` | `impl_to_schema!` in `api_schemas_logic.rs` | Logic/process must be pure — no framework imports |
+| `src/adapters/handlers/` | `#[derive(ToSchema)]` directly on the type | Already in the adapter layer — direct derive is fine |
+
+**Nested type registration:** `impl_to_schema!` does not override `ToSchema::schemas()`, so nested types referenced inside an `impl_to_schema!` struct are NOT auto-discovered. Any type used as a field type inside an `impl_to_schema!` struct must be explicitly registered via `CrudResourceConfig::extra_schemas()` or `Api::extra_schemas()` in `composition/mod.rs`, otherwise it will be absent from `components.schemas`. `#[derive(ToSchema)]` does auto-discover nested types and does not require this manual step.
 
 ### Composition (`src/composition/`)
 
