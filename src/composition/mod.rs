@@ -551,7 +551,7 @@ pub fn build_app(
                     Endpoint::post("/bulk-import/{table}")
                         .response_schema::<BulkImportResponse>()
                         .tag("Admin")
-                        .description("Bulk import via PostgreSQL COPY (post-wipe only)"),
+                        .description("High-throughput bulk import (~50× faster than upsert); use only after wipe"),
                     bulk_import_table,
                 )
                 .operation(
