@@ -164,6 +164,7 @@ models:
     filters:
       family_name: { op: like, column: "family_name_unicode" }
       search_term: { op: like_any, columns: "family_name_unicode,given_name_unicode" }
+      author_keys: { op: eq_any, column: "author_key" }
     indexes:
       - { columns: [family_name_unicode] }
       - { columns: [family_name_unicode, given_name_unicode] }
@@ -186,6 +187,7 @@ models:
       issn_electronic: { type: "string?" }
     filters:
       name: { op: like, column: "name_unicode" }
+      journal_keys: { op: eq_any, column: "journal_key" }
     indexes:
       - { columns: [name_unicode] }
       - { columns: [name_unicode], type: gin_trgm }
@@ -203,6 +205,7 @@ models:
       default_address: { type: "string?" }
     filters:
       name: { op: like, column: "name_unicode" }
+      publisher_keys: { op: eq_any, column: "publisher_key" }
     indexes:
       - { columns: [name_unicode] }
       - { columns: [name_unicode], type: gin_trgm }
@@ -220,6 +223,7 @@ models:
       default_address: { type: "string?" }
     filters:
       name: { op: like, column: "name_unicode" }
+      institution_keys: { op: eq_any, column: "institution_key" }
     indexes:
       - { columns: [name_unicode] }
       - { columns: [name_unicode], type: gin_trgm }
@@ -236,6 +240,7 @@ models:
       name_unicode: { type: string, required: true }
     filters:
       name: { op: like, column: "name_unicode" }
+      school_keys: { op: eq_any, column: "school_key" }
     indexes:
       - { columns: [name_unicode] }
       - { columns: [name_unicode], type: gin_trgm }
@@ -252,6 +257,7 @@ models:
       name_unicode: { type: string, required: true }
     filters:
       name: { op: like, column: "name_unicode" }
+      series_keys: { op: eq_any, column: "series_key" }
     indexes:
       - { columns: [name_unicode] }
       - { columns: [name_unicode], type: gin_trgm }
@@ -269,6 +275,7 @@ models:
     filters:
       level: { op: eq, column: "level" }
       name: { op: like, column: "name" }
+      keyword_keys: { op: eq_any, column: "keyword_key" }
     indexes:
       - { columns: [level] }
       - { columns: [name] }
@@ -448,6 +455,7 @@ models:
       search_term: { op: like, column: "title_unicode" }
       start_page_from: { op: gte, column: "start_page" }
       start_page_to: { op: lte, column: "start_page" }
+      bibkeys: { op: eq_any, column: "bibkey" }
 
     indexes:
       - { columns: [entry_type] }

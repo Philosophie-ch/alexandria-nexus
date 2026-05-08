@@ -8,10 +8,13 @@ use serde::Deserialize;
 /// Query parameters for filtering author results.
 ///
 /// Supported filters:
+/// - `author_keys` — batch match on `author_key`
 /// - `family_name` — LIKE on `family_name_unicode`
 /// - `search_term` — LIKE across `family_name_unicode,given_name_unicode`
 #[derive(Filter, Debug, Default, Deserialize)]
 pub struct AuthorQuery {
+    #[query(eq_any = "author_key")]
+    pub author_keys: Option<Vec<String>>,
     #[query(like = "family_name_unicode")]
     pub family_name: Option<String>,
     #[query(like_any = "family_name_unicode,given_name_unicode")]

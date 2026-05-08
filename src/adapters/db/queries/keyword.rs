@@ -8,10 +8,13 @@ use serde::Deserialize;
 /// Query parameters for filtering keyword results.
 ///
 /// Supported filters:
+/// - `keyword_keys` — batch match on `keyword_key`
 /// - `level` — exact match on `level`
 /// - `name` — LIKE on `name`
 #[derive(Filter, Debug, Default, Deserialize)]
 pub struct KeywordQuery {
+    #[query(eq_any = "keyword_key")]
+    pub keyword_keys: Option<Vec<String>>,
     #[query(eq = "level")]
     pub level: Option<i16>,
     #[query(like = "name")]

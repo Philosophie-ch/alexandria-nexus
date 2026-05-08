@@ -8,9 +8,12 @@ use serde::Deserialize;
 /// Query parameters for filtering institution results.
 ///
 /// Supported filters:
+/// - `institution_keys` — batch match on `institution_key`
 /// - `name` — LIKE on `name_unicode`
 #[derive(Filter, Debug, Default, Deserialize)]
 pub struct InstitutionQuery {
+    #[query(eq_any = "institution_key")]
+    pub institution_keys: Option<Vec<String>>,
     #[query(like = "name_unicode")]
     pub name: Option<String>,
 }
