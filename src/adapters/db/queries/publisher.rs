@@ -9,8 +9,11 @@ use serde::Deserialize;
 ///
 /// Supported filters:
 /// - `name` — LIKE on `name_unicode`
+/// - `publisher_keys` — batch match on `publisher_key`
 #[derive(Filter, Debug, Default, Deserialize)]
 pub struct PublisherQuery {
     #[query(like = "name_unicode")]
     pub name: Option<String>,
+    #[query(eq_any = "publisher_key")]
+    pub publisher_keys: Option<Vec<String>>,
 }

@@ -203,3 +203,58 @@ async fn test_list_authors_with_filter() {
     assert_eq!(items.len(), 1, "Filter should return exactly 1 author");
     assert_eq!(items[0]["family_name_unicode"], "Schopenhauer");
 }
+
+// ============================================================================
+// BATCH LOOKUP BY AUTHOR KEY
+// ============================================================================
+
+#[tokio::test]
+async fn test_list_authors_by_author_keys() {
+    let app = TestApp::spawn().await;
+    let suffix = unique_suffix();
+
+    let key_a = format!("batch-kant-{}", suffix);
+    let key_b = format!("batch-hegel-{}", suffix);
+    let key_c = format!("batch-fichte-{}", suffix);
+
+    for (key, name) in [(&key_a, "Kant"), (&key_b, "Hegel"), (&key_c, "Fichte")] {
+        let resp = app
+            .post_json(
+                "/api/v1/authors",
+                &json!({
+                    "author_key": key,
+                    "family_name_latex": name,
+                    "family_name_simplified": name.to_lowercase()
+                }),
+            )
+            .await;
+        assert_eq!(resp.status(), 200, "Failed to create author {key}");
+    }
+
+    // Fetch two of the three by author_key
+    let resp = app
+        .get(&format!(
+            "/api/v1/authors?author_keys[]={}&author_keys[]={}",
+            key_a, key_c
+        ))
+        .await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let items = body["items"].as_array().expect("Expected items array");
+
+    let returned_keys: Vec<&str> = items
+        .iter()
+        .filter_map(|i| i["author_key"].as_str())
+        .collect();
+    assert_eq!(
+        returned_keys.len(),
+        2,
+        "Expected exactly 2 authors, got {returned_keys:?}"
+    );
+    assert!(returned_keys.contains(&key_a.as_str()), "Missing {key_a}");
+    assert!(returned_keys.contains(&key_c.as_str()), "Missing {key_c}");
+    assert!(
+        !returned_keys.contains(&key_b.as_str()),
+        "Should not include {key_b}"
+    );
+}

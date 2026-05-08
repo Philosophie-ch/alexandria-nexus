@@ -9,8 +9,11 @@ use serde::Deserialize;
 ///
 /// Supported filters:
 /// - `name` — LIKE on `name_unicode`
+/// - `school_keys` — batch match on `school_key`
 #[derive(Filter, Debug, Default, Deserialize)]
 pub struct SchoolQuery {
     #[query(like = "name_unicode")]
     pub name: Option<String>,
+    #[query(eq_any = "school_key")]
+    pub school_keys: Option<Vec<String>>,
 }

@@ -123,3 +123,122 @@ async fn test_list_bibitems_with_filter() {
         );
     }
 }
+
+// ============================================================================
+// BATCH LOOKUP BY BIBKEY
+// ============================================================================
+
+#[tokio::test]
+async fn test_list_bibitems_by_bibkeys() {
+    let app = TestApp::spawn().await;
+    let suffix = unique_suffix();
+
+    let key_a = format!("test:batch-a-{}", suffix);
+    let key_b = format!("test:batch-b-{}", suffix);
+    let key_c = format!("test:batch-c-{}", suffix);
+
+    for (key, title) in [(&key_a, "Alpha"), (&key_b, "Beta"), (&key_c, "Gamma")] {
+        let resp = app
+            .post_json(
+                "/api/v1/bibitems",
+                &json!({
+                    "bibkey": key,
+                    "entry_type": "article",
+                    "title_latex": title,
+                    "title_unicode": title,
+                    "title_simplified": title.to_lowercase(),
+                    "date_year": 2000
+                }),
+            )
+            .await;
+        assert_eq!(resp.status(), 200, "Failed to create bibitem {key}");
+    }
+
+    // Fetch two of the three by bibkey
+    let resp = app
+        .get(&format!(
+            "/api/v1/bibitems?bibkeys[]={}&bibkeys[]={}",
+            key_a, key_c
+        ))
+        .await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let items = body["items"].as_array().expect("Expected items array");
+
+    let returned_keys: Vec<&str> = items.iter().filter_map(|i| i["bibkey"].as_str()).collect();
+    assert_eq!(
+        returned_keys.len(),
+        2,
+        "Expected exactly 2 items, got {returned_keys:?}"
+    );
+    assert!(returned_keys.contains(&key_a.as_str()), "Missing {key_a}");
+    assert!(returned_keys.contains(&key_c.as_str()), "Missing {key_c}");
+    assert!(
+        !returned_keys.contains(&key_b.as_str()),
+        "Should not include {key_b}"
+    );
+}
+
+#[tokio::test]
+async fn test_list_bibitems_bibkeys_empty_returns_no_results() {
+    let app = TestApp::spawn().await;
+
+    // bibkeys[] present but empty — should return empty items, not the full table
+    let resp = app.get("/api/v1/bibitems?bibkeys[]=").await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let items = body["items"].as_array().expect("Expected items array");
+    assert!(items.is_empty(), "Empty bibkeys[] should return no items");
+}
+
+#[tokio::test]
+async fn test_list_bibitems_bibkeys_unknown_key_returns_empty() {
+    let app = TestApp::spawn().await;
+
+    let resp = app
+        .get("/api/v1/bibitems?bibkeys[]=does-not-exist-ever")
+        .await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let items = body["items"].as_array().expect("Expected items array");
+    assert!(items.is_empty(), "Unknown bibkey should return no items");
+}
+
+#[tokio::test]
+async fn test_list_bibitems_bibkeys_percent_encoded_brackets() {
+    // Browsers percent-encode [ and ] as %5B and %5D. Verify the server handles
+    // both forms identically so the filter works regardless of client encoding.
+    let app = TestApp::spawn().await;
+    let suffix = unique_suffix();
+
+    let key_a = format!("test:pct-a-{}", suffix);
+    let key_b = format!("test:pct-b-{}", suffix);
+
+    for (key, title) in [(&key_a, "PctAlpha"), (&key_b, "PctBeta")] {
+        let resp = app.post_json("/api/v1/bibitems", &json!({
+            "bibkey": key,
+            "entry_type": "article",
+            "title_latex": title,
+            "title_unicode": title,
+            "title_simplified": title.to_lowercase(),
+            "date_year": 2000
+        })).await;
+        assert_eq!(resp.status(), 200, "Failed to create bibitem {key}");
+    }
+
+    // Use percent-encoded brackets and colons as a browser would
+    let key_a_enc = key_a.replace(':', "%3A");
+    let url = format!(
+        "/api/v1/bibitems?bibkeys%5B%5D={}",
+        key_a_enc
+    );
+    let resp = app.get(&url).await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let items = body["items"].as_array().expect("Expected items array");
+
+    let returned_keys: Vec<&str> = items.iter().filter_map(|i| i["bibkey"].as_str()).collect();
+    assert_eq!(returned_keys.len(), 1, "Expected exactly 1 item, got {returned_keys:?}");
+    assert!(returned_keys.contains(&key_a.as_str()), "Missing {key_a}");
+    assert!(!returned_keys.contains(&key_b.as_str()), "Should not include {key_b}");
+}

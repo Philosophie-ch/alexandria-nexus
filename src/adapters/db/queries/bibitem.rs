@@ -9,6 +9,7 @@ use serde::Deserialize;
 ///
 /// Supported filters:
 /// - `author_key` — raw SQL filter
+/// - `bibkeys` — batch match on `bibkey`
 /// - `entry_type` — exact match on `entry_type::entry_type`
 /// - `epoch` — exact match on `epoch::epoch`
 /// - `journal_key` — exact match on `journal_key`
@@ -21,6 +22,8 @@ use serde::Deserialize;
 pub struct BibItemQuery {
     #[query(raw = "bibkey IN (SELECT bibkey FROM bibitem_authors WHERE author_key = $)")]
     pub author_key: Option<String>,
+    #[query(eq_any = "bibkey")]
+    pub bibkeys: Option<Vec<String>>,
     #[query(eq_cast = "entry_type::entry_type")]
     pub entry_type: Option<String>,
     #[query(eq_cast = "epoch::epoch")]

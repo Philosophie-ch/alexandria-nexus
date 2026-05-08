@@ -9,8 +9,11 @@ use serde::Deserialize;
 ///
 /// Supported filters:
 /// - `name` — LIKE on `name_unicode`
+/// - `series_keys` — batch match on `series_key`
 #[derive(Filter, Debug, Default, Deserialize)]
 pub struct SeriesQuery {
     #[query(like = "name_unicode")]
     pub name: Option<String>,
+    #[query(eq_any = "series_key")]
+    pub series_keys: Option<Vec<String>>,
 }

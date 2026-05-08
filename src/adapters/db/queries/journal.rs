@@ -8,9 +8,12 @@ use serde::Deserialize;
 /// Query parameters for filtering journal results.
 ///
 /// Supported filters:
+/// - `journal_keys` — batch match on `journal_key`
 /// - `name` — LIKE on `name_unicode`
 #[derive(Filter, Debug, Default, Deserialize)]
 pub struct JournalQuery {
+    #[query(eq_any = "journal_key")]
+    pub journal_keys: Option<Vec<String>>,
     #[query(like = "name_unicode")]
     pub name: Option<String>,
 }

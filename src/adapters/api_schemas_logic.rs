@@ -161,8 +161,8 @@ impl_to_schema! {
         author_id: Option<i64>,
         journal_id: Option<i64>,
         epoch: Option<crate::domain::Epoch>,
-        limit: i64,
-        offset: i64,
+        limit: Option<i64>,
+        offset: Option<i64>,
     }
 }
 
@@ -200,14 +200,14 @@ impl_to_schema! {
     struct crate::logic::import::MissingReferencesError => "MissingReferencesError" {
         error: &'static str,
         message: &'static str,
-        missing_author_keys: Vec<String>,
-        missing_journal_keys: Vec<String>,
-        missing_publisher_keys: Vec<String>,
-        missing_institution_keys: Vec<String>,
-        missing_school_keys: Vec<String>,
-        missing_series_keys: Vec<String>,
-        missing_keyword_keys: Vec<String>,
-        missing_crossref_keys: Vec<String>,
+        missing_author_keys: Option<Vec<String>>,
+        missing_journal_keys: Option<Vec<String>>,
+        missing_publisher_keys: Option<Vec<String>>,
+        missing_institution_keys: Option<Vec<String>>,
+        missing_school_keys: Option<Vec<String>>,
+        missing_series_keys: Option<Vec<String>>,
+        missing_keyword_keys: Option<Vec<String>>,
+        missing_crossref_keys: Option<Vec<String>>,
     }
 }
 
@@ -224,7 +224,7 @@ impl_to_schema! {
 
 impl_to_schema! {
     struct crate::logic::export::EntityExportRequest => "EntityExportRequest" {
-        all: bool,
+        all: Option<bool>,
         ids: Option<Vec<i64>>,
         keys: Option<Vec<String>>,
     }
@@ -232,8 +232,8 @@ impl_to_schema! {
 
 impl_to_schema! {
     struct crate::logic::export::BibitemExportRequest => "BibitemExportRequest" {
-        format: crate::logic::export::ExportFormat,
-        all: bool,
+        format: Option<crate::logic::export::ExportFormat>,
+        all: Option<bool>,
         ids: Option<Vec<i64>>,
         bibkeys: Option<Vec<String>>,
     }
