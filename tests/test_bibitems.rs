@@ -215,30 +215,39 @@ async fn test_list_bibitems_bibkeys_percent_encoded_brackets() {
     let key_b = format!("test:pct-b-{}", suffix);
 
     for (key, title) in [(&key_a, "PctAlpha"), (&key_b, "PctBeta")] {
-        let resp = app.post_json("/api/v1/bibitems", &json!({
-            "bibkey": key,
-            "entry_type": "article",
-            "title_latex": title,
-            "title_unicode": title,
-            "title_simplified": title.to_lowercase(),
-            "date_year": 2000
-        })).await;
+        let resp = app
+            .post_json(
+                "/api/v1/bibitems",
+                &json!({
+                    "bibkey": key,
+                    "entry_type": "article",
+                    "title_latex": title,
+                    "title_unicode": title,
+                    "title_simplified": title.to_lowercase(),
+                    "date_year": 2000
+                }),
+            )
+            .await;
         assert_eq!(resp.status(), 200, "Failed to create bibitem {key}");
     }
 
     // Use percent-encoded brackets and colons as a browser would
     let key_a_enc = key_a.replace(':', "%3A");
-    let url = format!(
-        "/api/v1/bibitems?bibkeys%5B%5D={}",
-        key_a_enc
-    );
+    let url = format!("/api/v1/bibitems?bibkeys%5B%5D={}", key_a_enc);
     let resp = app.get(&url).await;
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.unwrap();
     let items = body["items"].as_array().expect("Expected items array");
 
     let returned_keys: Vec<&str> = items.iter().filter_map(|i| i["bibkey"].as_str()).collect();
-    assert_eq!(returned_keys.len(), 1, "Expected exactly 1 item, got {returned_keys:?}");
+    assert_eq!(
+        returned_keys.len(),
+        1,
+        "Expected exactly 1 item, got {returned_keys:?}"
+    );
     assert!(returned_keys.contains(&key_a.as_str()), "Missing {key_a}");
-    assert!(!returned_keys.contains(&key_b.as_str()), "Should not include {key_b}");
+    assert!(
+        !returned_keys.contains(&key_b.as_str()),
+        "Should not include {key_b}"
+    );
 }

@@ -431,8 +431,58 @@ mod tests {
             "booktitle"
         );
         assert!(html.contains("edited by Jane Editor"), "editor inline");
-        assert!(html.contains("pp. "), "pages prefix");
+        assert!(html.contains("pp. "), "range pages use pp.");
         assert!(html.contains("100\u{2013}120"), "pages with en-dash");
+    }
+
+    #[test]
+    fn test_render_incollection_single_page() {
+        let mut item = make_bibitem(
+            EntryType::Incollection,
+            "doe:2020ch",
+            "A Chapter Title",
+            Some(2020),
+        );
+        item.booktitle_unicode = Some("The Big Book".to_string());
+        item.pages = Some("42".to_string());
+
+        let ctx = RenderContext {
+            authors: vec![make_author("John", "Doe")],
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(html.contains("p. "), "single page uses p.");
+        assert!(!html.contains("pp. "), "single page must not use pp.");
+        assert!(html.contains("42"), "page number present");
+    }
+
+    #[test]
+    fn test_render_incollection_roman_page() {
+        // Roman numeral intro pages (ix, vii, xi) appear in real incollection data
+        let mut item = make_bibitem(
+            EntryType::Incollection,
+            "doe:2020intro",
+            "Introduction",
+            Some(2020),
+        );
+        item.booktitle_unicode = Some("Collected Essays".to_string());
+        item.pages = Some("ix".to_string());
+
+        let ctx = RenderContext {
+            authors: vec![make_author("John", "Doe")],
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(html.contains("p. "), "roman numeral page uses p.");
+        assert!(
+            !html.contains("pp. "),
+            "roman numeral page must not use pp."
+        );
+        assert!(html.contains("ix"), "roman numeral present");
     }
 
     // =========================================================================

@@ -7,9 +7,9 @@ use crate::domain::{AuthorRole, BibItem};
 
 use super::RenderContext;
 use super::components::{
-    render_access, render_authors, render_booktitle, render_date, render_edition, render_eid,
-    render_journal, render_note, render_pages, render_publisher, render_series, render_title,
-    render_volume_number,
+    pages_prefix, render_access, render_authors, render_booktitle, render_date, render_edition,
+    render_eid, render_journal, render_note, render_pages, render_publisher, render_series,
+    render_title, render_volume_number,
 };
 
 // =============================================================================
@@ -167,7 +167,7 @@ pub fn render_book(item: &BibItem, ctx: &RenderContext) -> String {
 
 /// Render an incollection or inproceedings entry.
 ///
-/// `AUTHOR. YEAR. "TITLE." In BOOKTITLE, [volume VOL,] [edited by EDITOR,] pp. PAGES.
+/// `AUTHOR. YEAR. "TITLE." In BOOKTITLE, [volume VOL,] [edited by EDITOR,] p./pp. PAGES.
 ///  ADDRESS: PUBLISHER. doi:DOI`
 pub fn render_chapter(item: &BibItem, ctx: &RenderContext) -> String {
     let mut parts = Vec::new();
@@ -179,7 +179,7 @@ pub fn render_chapter(item: &BibItem, ctx: &RenderContext) -> String {
     // YEAR
     push_segment(&mut parts, render_date(item));
 
-    // "TITLE." In BOOKTITLE, [edited by EDITOR,] pp. PAGES. ADDRESS: PUBLISHER
+    // "TITLE." In BOOKTITLE, [edited by EDITOR,] p./pp. PAGES. ADDRESS: PUBLISHER
     let title = render_title(
         item.title_unicode.as_deref().unwrap_or(&item.title_latex),
         true,
@@ -209,11 +209,12 @@ pub fn render_chapter(item: &BibItem, ctx: &RenderContext) -> String {
         container_parts.push(format!("edited by {editor_names}"));
     }
 
-    // pp. PAGES
+    // p./pp. PAGES
     let pages_or_eid = if item.pages.as_deref().is_some_and(|p| !p.is_empty()) {
-        let pages_html = render_pages(item.pages.as_deref().unwrap_or(""));
+        let raw = item.pages.as_deref().unwrap_or("");
+        let pages_html = render_pages(raw);
         if !pages_html.is_empty() {
-            format!("pp. {pages_html}")
+            format!("{} {pages_html}", pages_prefix(raw))
         } else {
             String::new()
         }
@@ -235,7 +236,7 @@ pub fn render_chapter(item: &BibItem, ctx: &RenderContext) -> String {
         container_parts.push(publisher);
     }
 
-    // Join: "TITLE." In BOOKTITLE, edited by EDITOR, pp. PAGES. ADDRESS: PUBLISHER
+    // Join: "TITLE." In BOOKTITLE, edited by EDITOR, p./pp. PAGES. ADDRESS: PUBLISHER
     let container = container_parts.join(", ");
     if !container.is_empty() {
         push_segment(&mut parts, format!("{title}. {container}"));

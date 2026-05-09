@@ -140,6 +140,15 @@ pub fn render_title(title_unicode: &str, quoted: bool) -> String {
 // Pages rendering
 // =============================================================================
 
+/// Returns "pp." for a page range (contains a dash), "p." for a single page.
+pub fn pages_prefix(pages: &str) -> &'static str {
+    if pages.contains('-') || pages.contains('\u{2013}') {
+        "pp."
+    } else {
+        "p."
+    }
+}
+
 /// Render pages field.
 ///
 /// The `pages` field is a raw string like "1-25" or "1--25".
@@ -318,5 +327,63 @@ pub fn render_booktitle(booktitle_unicode: Option<&str>) -> String {
     match booktitle_unicode.filter(|b| !b.is_empty()) {
         Some(bt) => format!("<span data-field=\"booktitle\"><em>{}</em></span>", esc(bt)),
         None => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pages_prefix_range() {
+        // Single-hyphen ranges (e.g. "57--72", "100-120" in corpus)
+        assert_eq!(pages_prefix("1-25"), "pp.");
+        assert_eq!(pages_prefix("57-72"), "pp.");
+        assert_eq!(pages_prefix("129-144"), "pp.");
+        // Double-hyphen ranges (most common form in corpus: "1--14", "3--18")
+        assert_eq!(pages_prefix("1--14"), "pp.");
+        assert_eq!(pages_prefix("3--18"), "pp.");
+        assert_eq!(pages_prefix("57--72"), "pp.");
+        // Roman numeral ranges
+        assert_eq!(pages_prefix("v-x"), "pp.");
+        // Already-normalized en-dash
+        assert_eq!(pages_prefix("1\u{2013}25"), "pp.");
+    }
+
+    #[test]
+    fn test_pages_prefix_single_numeric() {
+        // Plain page numbers seen in incollection entries (e.g. 289, 221, 1)
+        assert_eq!(pages_prefix("1"), "p.");
+        assert_eq!(pages_prefix("42"), "p.");
+        assert_eq!(pages_prefix("289"), "p.");
+    }
+
+    #[test]
+    fn test_pages_prefix_single_roman() {
+        // Roman numeral intro pages seen in incollection entries (ix, vii, xi)
+        assert_eq!(pages_prefix("ix"), "p.");
+        assert_eq!(pages_prefix("vii"), "p.");
+        assert_eq!(pages_prefix("xi"), "p.");
+        assert_eq!(pages_prefix("v"), "p.");
+    }
+
+    #[test]
+    fn test_pages_prefix_article_only_values() {
+        // These patterns appear exclusively in article entries (prefix not applied there),
+        // but the function should still return "p." since none contain a dash.
+        // Electronic article IDs (e.g. e12560, e0173496)
+        assert_eq!(pages_prefix("e12560"), "p.");
+        assert_eq!(pages_prefix("e0173496"), "p.");
+        // Supplement pages (S640, S87)
+        assert_eq!(pages_prefix("S640"), "p.");
+        assert_eq!(pages_prefix("S87"), "p.");
+        // Variant page labels (59b)
+        assert_eq!(pages_prefix("59b"), "p.");
+        // Discontinuous pages stored as comma list (no dash → p.)
+        assert_eq!(pages_prefix("248, 260"), "p.");
+        assert_eq!(pages_prefix("39a, 39b"), "p.");
+        // Dirty data seen in incollection (Mar 16, ad loc.)
+        assert_eq!(pages_prefix("Mar 16"), "p.");
+        assert_eq!(pages_prefix("ad loc."), "p.");
     }
 }
