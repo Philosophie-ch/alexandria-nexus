@@ -34,7 +34,7 @@ async fn test_keyword_sort_by_name_asc() {
 
     let resp = app
         .get(&format!(
-            "/api/v1/keywords?sort_by=name&sort_dir=asc&keyword_key={suffix}"
+            "/api/v1/keywords?sort_by=name&sort_dir=asc&name={suffix}"
         ))
         .await;
     assert_eq!(resp.status(), 200);
@@ -75,7 +75,7 @@ async fn test_keyword_sort_by_name_desc() {
 
     let resp = app
         .get(&format!(
-            "/api/v1/keywords?sort_by=name&sort_dir=desc&keyword_key={suffix}"
+            "/api/v1/keywords?sort_by=name&sort_dir=desc&name={suffix}"
         ))
         .await;
     assert_eq!(resp.status(), 200);
@@ -148,7 +148,7 @@ async fn test_author_sort_by_family_name_unicode() {
                 &json!({
                     "author_key": format!("{key}-{suffix}"),
                     "family_name_latex": family,
-                    "family_name_unicode": family,
+                    "family_name_unicode": format!("{family}-{suffix}"),
                     "family_name_simplified": family.to_lowercase()
                 }),
             )
@@ -217,6 +217,14 @@ async fn test_author_sort_by_invalid_column_rejected() {
 // ============================================================================
 
 #[tokio::test]
+async fn test_journal_sort_by_invalid_column_rejected() {
+    let app = TestApp::spawn().await;
+
+    let resp = app.get("/api/v1/journals?sort_by=nonexistent").await;
+    assert_eq!(resp.status(), 400);
+}
+
+#[tokio::test]
 async fn test_journal_sort_by_name_unicode() {
     let app = TestApp::spawn().await;
 
@@ -239,6 +247,14 @@ async fn test_journal_sort_by_journal_key() {
 // ============================================================================
 // PUBLISHERS
 // ============================================================================
+
+#[tokio::test]
+async fn test_publisher_sort_by_invalid_column_rejected() {
+    let app = TestApp::spawn().await;
+
+    let resp = app.get("/api/v1/publishers?sort_by=nonexistent").await;
+    assert_eq!(resp.status(), 400);
+}
 
 #[tokio::test]
 async fn test_publisher_sort_by_name_unicode() {
@@ -265,6 +281,14 @@ async fn test_publisher_sort_by_publisher_key() {
 // ============================================================================
 
 #[tokio::test]
+async fn test_institution_sort_by_invalid_column_rejected() {
+    let app = TestApp::spawn().await;
+
+    let resp = app.get("/api/v1/institutions?sort_by=nonexistent").await;
+    assert_eq!(resp.status(), 400);
+}
+
+#[tokio::test]
 async fn test_institution_sort_by_name_unicode() {
     let app = TestApp::spawn().await;
 
@@ -289,6 +313,14 @@ async fn test_institution_sort_by_institution_key() {
 // ============================================================================
 
 #[tokio::test]
+async fn test_school_sort_by_invalid_column_rejected() {
+    let app = TestApp::spawn().await;
+
+    let resp = app.get("/api/v1/schools?sort_by=nonexistent").await;
+    assert_eq!(resp.status(), 400);
+}
+
+#[tokio::test]
 async fn test_school_sort_by_name_unicode() {
     let app = TestApp::spawn().await;
 
@@ -311,6 +343,14 @@ async fn test_school_sort_by_school_key() {
 // ============================================================================
 // SERIES
 // ============================================================================
+
+#[tokio::test]
+async fn test_series_sort_by_invalid_column_rejected() {
+    let app = TestApp::spawn().await;
+
+    let resp = app.get("/api/v1/series?sort_by=nonexistent").await;
+    assert_eq!(resp.status(), 400);
+}
 
 #[tokio::test]
 async fn test_series_sort_by_name_unicode() {
