@@ -24,6 +24,7 @@ Always use hexforge's built-in abstractions before writing custom consumer code.
 | `WhereClause` | SQL WHERE builder without exposing sqlx types | Adapter impls that need ad-hoc conditions |
 | `crud_auto()` | Registers all CRUD routes + OpenAPI schema from type params | `composition/mod.rs` — 8 entities |
 | `.lookup_by(column)` | Auto `GET /by-key/{key}` route with full `?expand` and `?expand=all` support | All 8 entities in `composition/mod.rs` |
+| `.sortable_columns(&[...])` | Whitelists columns for `?sort_by=col&sort_dir=asc\|desc` on list endpoints; rejects unlisted columns with 400 | All 8 entities in `composition/mod.rs` |
 | `.junction(JunctionConfig)` | Auto junction CRUD routes | `bibitem_authors`, `bibitem_keywords` |
 | `.expand_fk_projected` | Declarative FK expansion with `?expand=` | Author, journal, publisher, etc. expansions |
 | `.expand_junction_projected_by_key` | String-key junction expansion with optional enum-safe role filter | `bibitem_authors` (role), `bibitem_keywords` |

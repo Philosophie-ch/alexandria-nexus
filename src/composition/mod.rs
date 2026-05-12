@@ -120,7 +120,12 @@ pub fn build_app(
             .update_validator(validate_update_author)
             .create_transform(create_author_transform)
             .update_transform(update_author_transform)
-            .lookup_by("author_key"),
+            .lookup_by("author_key")
+            .sortable_columns(&[
+                "author_key",
+                "family_name_unicode",
+                "given_name_unicode",
+            ]),
         )
         // Journals CRUD
         .crud_auto(
@@ -135,7 +140,8 @@ pub fn build_app(
             .update_validator(validate_update_journal)
             .create_transform(create_journal_transform)
             .update_transform(update_journal_transform)
-            .lookup_by("journal_key"),
+            .lookup_by("journal_key")
+            .sortable_columns(&["journal_key", "name_unicode"]),
         )
         // Publishers CRUD
         .crud_auto(
@@ -150,7 +156,8 @@ pub fn build_app(
             .update_validator(validate_update_publisher)
             .create_transform(create_publisher_transform)
             .update_transform(update_publisher_transform)
-            .lookup_by("publisher_key"),
+            .lookup_by("publisher_key")
+            .sortable_columns(&["publisher_key", "name_unicode"]),
         )
         // Institutions CRUD
         .crud_auto(
@@ -165,7 +172,8 @@ pub fn build_app(
             .update_validator(validate_update_institution)
             .create_transform(create_institution_transform)
             .update_transform(update_institution_transform)
-            .lookup_by("institution_key"),
+            .lookup_by("institution_key")
+            .sortable_columns(&["institution_key", "name_unicode"]),
         )
         // Schools CRUD
         .crud_auto(
@@ -180,7 +188,8 @@ pub fn build_app(
             .update_validator(validate_update_school)
             .create_transform(create_school_transform)
             .update_transform(update_school_transform)
-            .lookup_by("school_key"),
+            .lookup_by("school_key")
+            .sortable_columns(&["school_key", "name_unicode"]),
         )
         // Series CRUD
         .crud_auto(
@@ -195,7 +204,8 @@ pub fn build_app(
             .update_validator(validate_update_series)
             .create_transform(create_series_transform)
             .update_transform(update_series_transform)
-            .lookup_by("series_key"),
+            .lookup_by("series_key")
+            .sortable_columns(&["series_key", "name_unicode"]),
         )
         // Keywords CRUD
         .crud_auto(
@@ -210,7 +220,8 @@ pub fn build_app(
             .update_validator(validate_update_keyword)
             .create_transform(create_keyword_transform)
             .update_transform(update_keyword_transform)
-            .lookup_by("keyword_key"),
+            .lookup_by("keyword_key")
+            .sortable_columns(&["keyword_key", "name", "level"]),
         )
         // BibItems CRUD
         .crud_auto(
@@ -226,6 +237,12 @@ pub fn build_app(
             .create_transform(create_bibitem_with_start_page)
             .update_transform(update_bibitem_with_start_page)
             .lookup_by("bibkey")
+            .sortable_columns(&[
+                "bibkey",
+                "title_unicode",
+                "entry_type",
+                "date_year",
+            ])
             .extra_schemas(vec![
                 SchemaInfo::from_type::<crate::domain::EntryType>(),
                 SchemaInfo::from_type::<crate::domain::Epoch>(),
