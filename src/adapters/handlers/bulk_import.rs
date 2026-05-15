@@ -11,7 +11,7 @@
 //! silently dropped, so the caller does not need to pre-filter the CSV.
 
 use hexforge::axum_exports::{Json, Multipart, Path, State};
-use hexforge::db_exports::PgPoolCopyExt;
+use hexforge::db_exports::{PgPoolCopyExt, query};
 use hexforge::{HexforgeError, ValidationError};
 use serde::Serialize;
 
@@ -21,10 +21,12 @@ use crate::adapters::handlers::import::extract_csv_bytes;
 // ── Allowed columns per table ─────────────────────────────────────────────────
 //
 // Column order here determines the column order written to the filtered CSV
-// (and therefore what PostgreSQL receives via COPY). id, created_at, updated_at
-// are excluded — they have DB-side defaults and must not be overridden.
+// (and therefore what PostgreSQL receives via COPY). created_at, updated_at
+// are excluded — they have DB-side defaults. The id column IS included so that
+// corpus round-trips preserve stable IDs; sequences are synced after COPY.
 
 const AUTHOR_COLS: &[&str] = &[
+    "id",
     "author_key",
     "given_name_latex",
     "given_name_unicode",
@@ -42,6 +44,7 @@ const AUTHOR_COLS: &[&str] = &[
 ];
 
 const JOURNAL_COLS: &[&str] = &[
+    "id",
     "journal_key",
     "name_latex",
     "name_unicode",
@@ -50,6 +53,7 @@ const JOURNAL_COLS: &[&str] = &[
 ];
 
 const PUBLISHER_COLS: &[&str] = &[
+    "id",
     "publisher_key",
     "name_latex",
     "name_unicode",
@@ -57,23 +61,25 @@ const PUBLISHER_COLS: &[&str] = &[
 ];
 
 const INSTITUTION_COLS: &[&str] = &[
+    "id",
     "institution_key",
     "name_latex",
     "name_unicode",
     "default_address",
 ];
 
-const SCHOOL_COLS: &[&str] = &["school_key", "name_latex", "name_unicode"];
+const SCHOOL_COLS: &[&str] = &["id", "school_key", "name_latex", "name_unicode"];
 
-const SERIES_COLS: &[&str] = &["series_key", "name_latex", "name_unicode"];
+const SERIES_COLS: &[&str] = &["id", "series_key", "name_latex", "name_unicode"];
 
-const KEYWORD_COLS: &[&str] = &["keyword_key", "name", "level"];
+const KEYWORD_COLS: &[&str] = &["id", "keyword_key", "name", "level"];
 
 // Matches IDS_FORMAT_HEADER minus junction columns (author_keys, editor_keys,
 // guesteditor_keys, keyword_keys) which are loaded separately via bibitem_authors/keywords.
 // Fields absent from the snapshot CSV (person_key, date_month/day, date_year_2_*,
 // date_is_no_date, has_fulltext, fulltext_path) are all nullable/have DB defaults.
 const BIBITEM_COLS: &[&str] = &[
+    "id",
     "entry_type",
     "bibkey",
     "options",
@@ -192,6 +198,16 @@ pub async fn bulk_import_table(
         .await
         .map_err(HexforgeError::data_source)?;
     let rows = copy_in.finish().await.map_err(HexforgeError::data_source)?;
+
+    if cols.first() == Some(&"id") {
+        let sync_sql = format!(
+            "SELECT setval(pg_get_serial_sequence('{table}', 'id'), COALESCE(MAX(id), 1)) FROM {table}"
+        );
+        query(&sync_sql)
+            .execute(pool)
+            .await
+            .map_err(HexforgeError::data_source)?;
+    }
 
     Ok(Json(BulkImportResponse { table, rows }))
 }
