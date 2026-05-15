@@ -1,7 +1,8 @@
 //! Integration tests for POST /api/v1/admin/bulk-import/{table}.
 //!
 //! Covers: all supported tables, column filtering (extra columns dropped),
-//! data round-trip integrity, missing required columns → 400, unknown table → 400.
+//! data round-trip integrity, missing required columns → 400, unknown table → 400,
+//! sequence sync after COPY with explicit IDs.
 
 mod common;
 use common::TestApp;
@@ -341,6 +342,36 @@ noted:2000,my note,,,,,
     let resp = bulk_import(&app, "bibitem_notes", csv).await;
     assert_eq!(resp.status(), 200, "{}", resp.text().await.unwrap());
     assert_eq!(resp.json::<serde_json::Value>().await.unwrap()["rows"], 1);
+}
+
+// ── sequence sync ────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_bulk_import_syncs_sequence_for_subsequent_creates() {
+    let app = TestApp::spawn().await;
+    let csv = "\
+id,journal_key,name_latex,name_unicode,issn_print,issn_electronic
+90000,high-id-journal,High ID Journal,High ID Journal,,
+";
+    let resp = bulk_import(&app, "journals", csv).await;
+    assert_eq!(resp.status(), 200, "{}", resp.text().await.unwrap());
+
+    let payload = serde_json::json!({
+        "journal_key": "auto-id-journal",
+        "name_latex": "Auto ID Journal",
+        "name_unicode": "Auto ID Journal",
+    });
+    let create_resp = app.post_json("/api/v1/journals", &payload).await;
+    assert_eq!(
+        create_resp.status(),
+        200,
+        "create must not conflict with bulk-imported ID 90000"
+    );
+    let new: serde_json::Value = create_resp.json().await.unwrap();
+    assert!(
+        new["id"].as_i64().unwrap() > 90000,
+        "auto-assigned ID must be above the bulk-imported explicit ID"
+    );
 }
 
 // ── count verification ────────────────────────────────────────────────────────
