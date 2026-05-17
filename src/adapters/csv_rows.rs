@@ -408,7 +408,7 @@ fn build_bibitem_id_rows(
             opt_display(&bib.langid),
             bib.is_translation.to_string(),
             opt_display(&bib.epoch),
-            opt_str(&bib.license).to_string(),
+            opt_display(&bib.license),
             author_ids,
             editor_ids,
             guesteditor_ids,
@@ -539,7 +539,7 @@ fn build_bibitem_expanded_rows(
             opt_display(&bib.epoch),
             opt_display(&bib.langid),
             bib.is_translation.to_string(),
-            opt_str(&bib.license).to_string(),
+            opt_display(&bib.license),
         ]);
     }
     rows
@@ -718,7 +718,7 @@ pub fn build_export_record(bib: &BibItem, ctx: &ExportContext) -> Vec<String> {
         bib.url.clone().unwrap_or_default(),
         bib.eprint.clone().unwrap_or_default(),
         bib.urn.clone().unwrap_or_default(),
-        bib.license.clone().unwrap_or_default(),
+        bib.license.map(|l| l.to_string()).unwrap_or_default(),
         note(|n| n.note_perso.clone()),
         note(|n| n.note_stock.clone()),
         note(|n| n.note_missing.clone()),

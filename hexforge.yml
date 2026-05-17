@@ -48,11 +48,11 @@ enums:
       - Dutch
       - English
       - French
+      - German
       - Greek
       - Italian
       - Latin
       - Lithuanian
-      - Ngerman
       - Polish
       - Portuguese
       - Romanian
@@ -127,6 +127,23 @@ enums:
       - Read
       - Write
       - Admin
+
+  License:
+    db_name: "license"
+    rename_all: "kebab-case"
+    variants:
+      - { name: CcBy3, rename: "cc-by-3" }
+      - { name: CcBy4, rename: "cc-by-4" }
+      - { name: CcBySa3, rename: "cc-by-sa-3" }
+      - { name: CcBySa4, rename: "cc-by-sa-4" }
+      - { name: CcByNc3, rename: "cc-by-nc-3" }
+      - { name: CcByNc4, rename: "cc-by-nc-4" }
+      - { name: CcByNcSa3, rename: "cc-by-nc-sa-3" }
+      - { name: CcByNcSa4, rename: "cc-by-nc-sa-4" }
+      - { name: CcByNd4, rename: "cc-by-nd-4" }
+      - { name: CcByNcNd4, rename: "cc-by-nc-nd-4" }
+      - Cc0
+      - AllRightsReserved
 
 # =============================================================================
 # CUSTOM TYPES
@@ -352,7 +369,7 @@ models:
       shorthand: { type: "string?" }
 
       # Rights
-      license: { type: "string?" }
+      license: { type: "License?" }
 
       # Internal tracking
       person_key: { type: "string?" }

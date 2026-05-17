@@ -8,7 +8,9 @@ use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
 
-use crate::domain::{AuthorRole, CreateBibItem, EntryType, Epoch, LangId, PubState, RefType};
+use crate::domain::{
+    AuthorRole, CreateBibItem, EntryType, Epoch, LangId, License, PubState, RefType,
+};
 use crate::logic::latex_citations::extract_cite_keys;
 use crate::logic::pages::compute_start_page;
 
@@ -154,7 +156,7 @@ pub struct ParsedBibRow {
     pub langid: Option<LangId>,
     pub is_translation: bool,
     pub has_fulltext: bool,
-    pub license: Option<String>,
+    pub license: Option<License>,
 }
 
 // =============================================================================
@@ -723,7 +725,7 @@ pub fn build_bibitem_dto(row: &ParsedBibRow, ctx: &ResolutionCtx) -> Result<Crea
         person_key,
         has_fulltext: row.has_fulltext,
         fulltext_path: None,
-        license: row.license.clone(),
+        license: row.license,
     };
 
     apply_date_to_dto(&row.date, &mut dto);

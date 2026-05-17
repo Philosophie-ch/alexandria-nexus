@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use hexforge::{Crud, Entity};
 use serde::{Deserialize, Serialize};
 
-use crate::domain::{EntryType, Epoch, LangId, PubState};
+use crate::domain::{EntryType, Epoch, LangId, License, PubState};
 
 #[derive(Entity, Crud, Clone, Debug, Serialize, Deserialize)]
 #[entity(table = "bibitems", no_query)]
@@ -43,7 +43,7 @@ pub struct BibItem {
     pub issuetitle_unicode: Option<String>,
     pub journal_key: Option<String>,
     pub langid: Option<LangId>,
-    pub license: Option<String>,
+    pub license: Option<License>,
     pub note_latex: Option<String>,
     pub note_unicode: Option<String>,
     pub number: Option<String>,

@@ -9,7 +9,7 @@ use hexforge::HexforgeError;
 use hexforge::db_exports::{FromRow, PgPool, query, query_as};
 
 use crate::domain::junctions::{BibitemAuthorsRow, BibitemKeywordsRow, BibitemRefsRow};
-use crate::domain::{BibItem, BibitemNotes, Epoch, LangId, PubState, RefType};
+use crate::domain::{BibItem, BibitemNotes, Epoch, LangId, License, PubState, RefType};
 use crate::logic::full_import::{
     AuthorJunctionRow, AuthorLookupResult, AuthorNameKey, BibitemRefInsertRow, KeywordJunctionRow,
     VariantInfo,
@@ -348,7 +348,7 @@ impl BulkBibitemInsert for PgFullImportStore<'_> {
             fulltext_path.push(e.fulltext_path.clone());
             has_fulltext.push(e.has_fulltext);
             institution_key.push(e.institution_key.clone());
-            license.push(e.license.clone());
+            license.push(e.license.as_ref().map(License::to_string));
             is_translation.push(e.is_translation);
             issuetitle_latex.push(e.issuetitle_latex.clone());
             issuetitle_unicode.push(e.issuetitle_unicode.clone());
@@ -391,7 +391,7 @@ impl BulkBibitemInsert for PgFullImportStore<'_> {
                date_year_2_hyphen, date_year_2_slash, doi, edition, eid, entry_type::entry_type,
                epoch::epoch, eprint, extra_note_latex, extra_note_unicode, fulltext_path,
                has_fulltext, institution_key, is_translation, issuetitle_latex, issuetitle_unicode,
-               journal_key, langid::langid, license, note_latex, note_unicode, number, options, pages,
+               journal_key, langid::langid, license::license, note_latex, note_unicode, number, options, pages,
                person_key, publisher_key, pubstate::pubstate, school_key, series_key, shorthand,
                start_page, title_latex, title_unicode, type_field, url, urn, volume
              FROM unnest(

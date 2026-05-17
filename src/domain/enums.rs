@@ -245,11 +245,11 @@ pub enum LangId {
     Dutch,
     English,
     French,
+    German,
     Greek,
     Italian,
     Latin,
     Lithuanian,
-    Ngerman,
     Polish,
     Portuguese,
     Romanian,
@@ -269,11 +269,11 @@ impl fmt::Display for LangId {
             Self::Dutch => write!(f, "dutch"),
             Self::English => write!(f, "english"),
             Self::French => write!(f, "french"),
+            Self::German => write!(f, "german"),
             Self::Greek => write!(f, "greek"),
             Self::Italian => write!(f, "italian"),
             Self::Latin => write!(f, "latin"),
             Self::Lithuanian => write!(f, "lithuanian"),
-            Self::Ngerman => write!(f, "ngerman"),
             Self::Polish => write!(f, "polish"),
             Self::Portuguese => write!(f, "portuguese"),
             Self::Romanian => write!(f, "romanian"),
@@ -297,11 +297,11 @@ impl FromStr for LangId {
             "dutch" => Ok(Self::Dutch),
             "english" => Ok(Self::English),
             "french" => Ok(Self::French),
+            "german" => Ok(Self::German),
             "greek" => Ok(Self::Greek),
             "italian" => Ok(Self::Italian),
             "latin" => Ok(Self::Latin),
             "lithuanian" => Ok(Self::Lithuanian),
-            "ngerman" => Ok(Self::Ngerman),
             "polish" => Ok(Self::Polish),
             "portuguese" => Ok(Self::Portuguese),
             "romanian" => Ok(Self::Romanian),
@@ -311,6 +311,78 @@ impl FromStr for LangId {
             "swedish" => Ok(Self::Swedish),
             "unknown" => Ok(Self::Unknown),
             other => Err(format!("unknown lang_id: {other}")),
+        }
+    }
+}
+
+// =============================================================================
+// License
+// =============================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum License {
+    #[serde(rename = "cc-by-3")]
+    CcBy3,
+    #[serde(rename = "cc-by-4")]
+    CcBy4,
+    #[serde(rename = "cc-by-sa-3")]
+    CcBySa3,
+    #[serde(rename = "cc-by-sa-4")]
+    CcBySa4,
+    #[serde(rename = "cc-by-nc-3")]
+    CcByNc3,
+    #[serde(rename = "cc-by-nc-4")]
+    CcByNc4,
+    #[serde(rename = "cc-by-nc-sa-3")]
+    CcByNcSa3,
+    #[serde(rename = "cc-by-nc-sa-4")]
+    CcByNcSa4,
+    #[serde(rename = "cc-by-nd-4")]
+    CcByNd4,
+    #[serde(rename = "cc-by-nc-nd-4")]
+    CcByNcNd4,
+    Cc0,
+    AllRightsReserved,
+}
+
+impl fmt::Display for License {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CcBy3 => write!(f, "cc-by-3"),
+            Self::CcBy4 => write!(f, "cc-by-4"),
+            Self::CcBySa3 => write!(f, "cc-by-sa-3"),
+            Self::CcBySa4 => write!(f, "cc-by-sa-4"),
+            Self::CcByNc3 => write!(f, "cc-by-nc-3"),
+            Self::CcByNc4 => write!(f, "cc-by-nc-4"),
+            Self::CcByNcSa3 => write!(f, "cc-by-nc-sa-3"),
+            Self::CcByNcSa4 => write!(f, "cc-by-nc-sa-4"),
+            Self::CcByNd4 => write!(f, "cc-by-nd-4"),
+            Self::CcByNcNd4 => write!(f, "cc-by-nc-nd-4"),
+            Self::Cc0 => write!(f, "cc0"),
+            Self::AllRightsReserved => write!(f, "all-rights-reserved"),
+        }
+    }
+}
+
+impl FromStr for License {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "cc-by-3" => Ok(Self::CcBy3),
+            "cc-by-4" => Ok(Self::CcBy4),
+            "cc-by-sa-3" => Ok(Self::CcBySa3),
+            "cc-by-sa-4" => Ok(Self::CcBySa4),
+            "cc-by-nc-3" => Ok(Self::CcByNc3),
+            "cc-by-nc-4" => Ok(Self::CcByNc4),
+            "cc-by-nc-sa-3" => Ok(Self::CcByNcSa3),
+            "cc-by-nc-sa-4" => Ok(Self::CcByNcSa4),
+            "cc-by-nd-4" => Ok(Self::CcByNd4),
+            "cc-by-nc-nd-4" => Ok(Self::CcByNcNd4),
+            "cc0" => Ok(Self::Cc0),
+            "all-rights-reserved" => Ok(Self::AllRightsReserved),
+            other => Err(format!("unknown license: {other}")),
         }
     }
 }
