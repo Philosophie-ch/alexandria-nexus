@@ -72,6 +72,7 @@ impl_to_schema! {
         note_latex: Option<String>,
         note_unicode: Option<String>,
         number: Option<String>,
+        number_numeric: Option<i32>,
         options: Option<String>,
         pages: Option<String>,
         person_key: Option<String>,
@@ -87,6 +88,7 @@ impl_to_schema! {
         url: Option<String>,
         urn: Option<String>,
         volume: Option<String>,
+        volume_numeric: Option<i32>,
         created_at: String,
         updated_at: String,
     }

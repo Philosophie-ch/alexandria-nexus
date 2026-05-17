@@ -717,6 +717,133 @@ async fn test_bibitem_sort_by_number_asc() {
 }
 
 #[tokio::test]
+async fn test_bibitem_sort_by_volume_numeric_beats_lexicographic() {
+    let app = TestApp::spawn().await;
+    let suffix = unique_suffix();
+
+    // Lexicographic: "9" > "77", but numeric: 9 < 77
+    for (key, vol) in [("b", "77"), ("a", "9")] {
+        create_bibitem(
+            &app,
+            &suffix,
+            key,
+            json!({"volume": vol, "title_unicode": format!("{key}-{suffix}")}),
+        )
+        .await;
+    }
+
+    let resp = app
+        .get(&format!(
+            "/api/v1/bibitems?sort_by=volume_numeric&sort_dir=asc&search_term={suffix}"
+        ))
+        .await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+
+    let numerics = get_i64_values(items, "volume_numeric");
+    assert_eq!(numerics, vec![9, 77], "Numeric sort should put 9 before 77");
+}
+
+#[tokio::test]
+async fn test_bibitem_sort_by_number_numeric_beats_lexicographic() {
+    let app = TestApp::spawn().await;
+    let suffix = unique_suffix();
+
+    // "3/4" -> number_numeric=3, "11" -> number_numeric=11
+    for (key, num) in [("b", "11"), ("a", "3/4")] {
+        create_bibitem(
+            &app,
+            &suffix,
+            key,
+            json!({"number": num, "title_unicode": format!("{key}-{suffix}")}),
+        )
+        .await;
+    }
+
+    let resp = app
+        .get(&format!(
+            "/api/v1/bibitems?sort_by=number_numeric&sort_dir=asc&search_term={suffix}"
+        ))
+        .await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+
+    let numerics = get_i64_values(items, "number_numeric");
+    assert_eq!(numerics, vec![3, 11], "Numeric sort should put 3 before 11");
+}
+
+#[tokio::test]
+async fn test_bibitem_multi_column_sort_numeric_columns() {
+    let app = TestApp::spawn().await;
+    let suffix = unique_suffix();
+
+    // Same volume_numeric, different number_numeric and start_page
+    create_bibitem(
+        &app,
+        &suffix,
+        "v1n2p100",
+        json!({"volume": "1", "number": "2", "pages": "100--199", "title_unicode": format!("v1n2p100-{suffix}")}),
+    )
+    .await;
+    create_bibitem(
+        &app,
+        &suffix,
+        "v1n1p50",
+        json!({"volume": "1", "number": "1", "pages": "50--99", "title_unicode": format!("v1n1p50-{suffix}")}),
+    )
+    .await;
+    create_bibitem(
+        &app,
+        &suffix,
+        "v2n1p10",
+        json!({"volume": "2", "number": "1", "pages": "10--20", "title_unicode": format!("v2n1p10-{suffix}")}),
+    )
+    .await;
+    create_bibitem(
+        &app,
+        &suffix,
+        "v1n1p10",
+        json!({"volume": "1", "number": "1", "pages": "10--20", "title_unicode": format!("v1n1p10-{suffix}")}),
+    )
+    .await;
+
+    let resp = app
+        .get(&format!(
+            "/api/v1/bibitems?sort_by=volume_numeric,number_numeric,start_page&sort_dir=asc,asc,asc&search_term={suffix}"
+        ))
+        .await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 4);
+
+    let bibkeys: Vec<&str> = items.iter().filter_map(|i| i["bibkey"].as_str()).collect();
+    assert!(
+        bibkeys[0].starts_with("v1n1p10"),
+        "First should be v1n1p10, got {bibkeys:?}"
+    );
+    assert!(
+        bibkeys[1].starts_with("v1n1p50"),
+        "Second should be v1n1p50, got {bibkeys:?}"
+    );
+    assert!(
+        bibkeys[2].starts_with("v1n2p100"),
+        "Third should be v1n2p100, got {bibkeys:?}"
+    );
+    assert!(
+        bibkeys[3].starts_with("v2n1p10"),
+        "Fourth should be v2n1p10, got {bibkeys:?}"
+    );
+}
+
+#[tokio::test]
 async fn test_bibitem_multi_column_sort_volume_number_start_page() {
     let app = TestApp::spawn().await;
     let suffix = unique_suffix();
@@ -828,6 +955,8 @@ async fn test_bibitem_sort_accepts_all_new_columns() {
         "epoch",
         "entry_type",
         "title_unicode",
+        "volume_numeric",
+        "number_numeric",
         "created_at",
         "updated_at",
     ] {

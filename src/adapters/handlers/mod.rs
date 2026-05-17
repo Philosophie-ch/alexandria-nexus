@@ -30,12 +30,12 @@ pub use snapshot::snapshot_data;
 pub use wipe::{WipeResponse, wipe_data};
 
 pub use bulk_import::{BulkImportResponse, bulk_import_table};
-pub use compute_start_pages::compute_start_pages_handler;
+pub use compute_numeric_fields::compute_numeric_fields_handler;
 pub use latex_columns::convert_latex_columns;
 pub use latex_to_unicode::{
     LatexConvertItem, LatexConvertRequest, LatexConvertResponse, convert_latex_to_unicode,
 };
 mod bulk_import;
-mod compute_start_pages;
+mod compute_numeric_fields;
 mod latex_columns;
 mod latex_to_unicode;

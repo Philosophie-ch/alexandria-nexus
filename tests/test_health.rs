@@ -67,7 +67,7 @@ async fn test_openapi_spec() {
         "LatexConvertReport",
         "LatexConvertRequest",
         "LatexConvertResponse",
-        "ComputeStartPagesReport",
+        "ComputeNumericFieldsReport",
         "BulkImportResponse",
         "WipeResponse",
         "EntityExportRequest",
