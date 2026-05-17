@@ -73,11 +73,11 @@ hexforge::impl_db_enum! {
         Dutch,
         English,
         French,
+        German,
         Greek,
         Italian,
         Latin,
         Lithuanian,
-        Ngerman,
         Polish,
         Portuguese,
         Romanian,
@@ -86,6 +86,23 @@ hexforge::impl_db_enum! {
         Spanish,
         Swedish,
         Unknown,
+    }
+}
+
+hexforge::impl_db_enum! {
+    crate::domain::License => "license", rename_all = "kebab-case" {
+        CcBy3 = "cc-by-3",
+        CcBy4 = "cc-by-4",
+        CcBySa3 = "cc-by-sa-3",
+        CcBySa4 = "cc-by-sa-4",
+        CcByNc3 = "cc-by-nc-3",
+        CcByNc4 = "cc-by-nc-4",
+        CcByNcSa3 = "cc-by-nc-sa-3",
+        CcByNcSa4 = "cc-by-nc-sa-4",
+        CcByNd4 = "cc-by-nd-4",
+        CcByNcNd4 = "cc-by-nc-nd-4",
+        Cc0,
+        AllRightsReserved,
     }
 }
 

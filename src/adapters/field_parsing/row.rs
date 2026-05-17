@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::str::FromStr;
 
-use crate::domain::{Epoch, LangId, PubState};
+use crate::domain::{Epoch, LangId, License, PubState};
 use crate::logic::full_import::{
     FieldError, ParsedAuthor, ParsedBibRow, ParsedDate, ParsedKeywords, RowParseResult,
 };
@@ -189,7 +189,7 @@ pub fn parse_row(headers: &CsvHeaders, record: &[&str]) -> RowParseResult {
     // --- Booleans ---
     let is_translation = get_field(record, headers, "_lang_der").is_some();
     let has_fulltext = get_field(record, headers, "_has_link_to_full_text").is_some();
-    let license = get_field(record, headers, "_license");
+    let license = get_field(record, headers, "_license").and_then(|s| License::from_str(&s).ok());
 
     // --- Simple string fields ---
     let booktitle = get_field(record, headers, "booktitle");

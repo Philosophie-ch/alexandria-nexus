@@ -68,7 +68,7 @@ impl_to_schema! {
         issuetitle_unicode: Option<String>,
         journal_key: Option<String>,
         langid: Option<crate::domain::LangId>,
-        license: Option<String>,
+        license: Option<crate::domain::License>,
         note_latex: Option<String>,
         note_unicode: Option<String>,
         number: Option<String>,
@@ -261,11 +261,11 @@ impl_to_schema! {
         Dutch,
         English,
         French,
+        German,
         Greek,
         Italian,
         Latin,
         Lithuanian,
-        Ngerman,
         Polish,
         Portuguese,
         Romanian,
@@ -274,6 +274,23 @@ impl_to_schema! {
         Spanish,
         Swedish,
         Unknown,
+    }
+}
+
+impl_to_schema! {
+    crate::domain::License => "License", rename_all = "kebab-case" {
+        CcBy3 = "cc-by-3",
+        CcBy4 = "cc-by-4",
+        CcBySa3 = "cc-by-sa-3",
+        CcBySa4 = "cc-by-sa-4",
+        CcByNc3 = "cc-by-nc-3",
+        CcByNc4 = "cc-by-nc-4",
+        CcByNcSa3 = "cc-by-nc-sa-3",
+        CcByNcSa4 = "cc-by-nc-sa-4",
+        CcByNd4 = "cc-by-nd-4",
+        CcByNcNd4 = "cc-by-nc-nd-4",
+        Cc0,
+        AllRightsReserved,
     }
 }
 
