@@ -125,6 +125,11 @@ pub fn build_app(
                 "author_key",
                 "family_name_unicode",
                 "given_name_unicode",
+                "famous",
+                "mononym_unicode",
+                "shorthand_unicode",
+                "created_at",
+                "updated_at",
             ]),
         )
         // Journals CRUD
@@ -141,7 +146,13 @@ pub fn build_app(
             .create_transform(create_journal_transform)
             .update_transform(update_journal_transform)
             .lookup_by("journal_key")
-            .sortable_columns(&["journal_key", "name_unicode"]),
+            .sortable_columns(&[
+                "journal_key",
+                "name_unicode",
+                "name_latex",
+                "created_at",
+                "updated_at",
+            ]),
         )
         // Publishers CRUD
         .crud_auto(
@@ -157,7 +168,14 @@ pub fn build_app(
             .create_transform(create_publisher_transform)
             .update_transform(update_publisher_transform)
             .lookup_by("publisher_key")
-            .sortable_columns(&["publisher_key", "name_unicode"]),
+            .sortable_columns(&[
+                "publisher_key",
+                "name_unicode",
+                "name_latex",
+                "default_address",
+                "created_at",
+                "updated_at",
+            ]),
         )
         // Institutions CRUD
         .crud_auto(
@@ -173,7 +191,14 @@ pub fn build_app(
             .create_transform(create_institution_transform)
             .update_transform(update_institution_transform)
             .lookup_by("institution_key")
-            .sortable_columns(&["institution_key", "name_unicode"]),
+            .sortable_columns(&[
+                "institution_key",
+                "name_unicode",
+                "name_latex",
+                "default_address",
+                "created_at",
+                "updated_at",
+            ]),
         )
         // Schools CRUD
         .crud_auto(
@@ -189,7 +214,13 @@ pub fn build_app(
             .create_transform(create_school_transform)
             .update_transform(update_school_transform)
             .lookup_by("school_key")
-            .sortable_columns(&["school_key", "name_unicode"]),
+            .sortable_columns(&[
+                "school_key",
+                "name_unicode",
+                "name_latex",
+                "created_at",
+                "updated_at",
+            ]),
         )
         // Series CRUD
         .crud_auto(
@@ -205,7 +236,13 @@ pub fn build_app(
             .create_transform(create_series_transform)
             .update_transform(update_series_transform)
             .lookup_by("series_key")
-            .sortable_columns(&["series_key", "name_unicode"]),
+            .sortable_columns(&[
+                "series_key",
+                "name_unicode",
+                "name_latex",
+                "created_at",
+                "updated_at",
+            ]),
         )
         // Keywords CRUD
         .crud_auto(
@@ -221,7 +258,13 @@ pub fn build_app(
             .create_transform(create_keyword_transform)
             .update_transform(update_keyword_transform)
             .lookup_by("keyword_key")
-            .sortable_columns(&["keyword_key", "name", "level"]),
+            .sortable_columns(&[
+                "keyword_key",
+                "name",
+                "level",
+                "created_at",
+                "updated_at",
+            ]),
         )
         // BibItems CRUD
         .crud_auto(
@@ -242,6 +285,16 @@ pub fn build_app(
                 "title_unicode",
                 "entry_type",
                 "date_year",
+                "volume",
+                "number",
+                "start_page",
+                "journal_key",
+                "publisher_key",
+                "pubstate",
+                "langid",
+                "epoch",
+                "created_at",
+                "updated_at",
             ])
             .extra_schemas(vec![
                 SchemaInfo::from_type::<crate::domain::EntryType>(),

@@ -113,6 +113,22 @@ async fn test_keyword_sort_by_level() {
 }
 
 #[tokio::test]
+async fn test_keyword_sort_accepts_all_columns() {
+    let app = TestApp::spawn().await;
+
+    for col in ["keyword_key", "name", "level", "created_at", "updated_at"] {
+        let resp = app
+            .get(&format!("/api/v1/keywords?sort_by={col}&sort_dir=asc"))
+            .await;
+        assert_eq!(
+            resp.status(),
+            200,
+            "Keyword column '{col}' should be accepted as sortable"
+        );
+    }
+}
+
+#[tokio::test]
 async fn test_keyword_sort_by_name_unicode_rejected() {
     let app = TestApp::spawn().await;
 
@@ -201,6 +217,31 @@ async fn test_author_sort_by_given_name_unicode() {
 }
 
 #[tokio::test]
+async fn test_author_sort_accepts_all_columns() {
+    let app = TestApp::spawn().await;
+
+    for col in [
+        "author_key",
+        "family_name_unicode",
+        "given_name_unicode",
+        "famous",
+        "mononym_unicode",
+        "shorthand_unicode",
+        "created_at",
+        "updated_at",
+    ] {
+        let resp = app
+            .get(&format!("/api/v1/authors?sort_by={col}&sort_dir=asc"))
+            .await;
+        assert_eq!(
+            resp.status(),
+            200,
+            "Author column '{col}' should be accepted as sortable"
+        );
+    }
+}
+
+#[tokio::test]
 async fn test_author_sort_by_invalid_column_rejected() {
     let app = TestApp::spawn().await;
 
@@ -215,6 +256,28 @@ async fn test_author_sort_by_invalid_column_rejected() {
 // ============================================================================
 // JOURNALS
 // ============================================================================
+
+#[tokio::test]
+async fn test_journal_sort_accepts_all_columns() {
+    let app = TestApp::spawn().await;
+
+    for col in [
+        "journal_key",
+        "name_unicode",
+        "name_latex",
+        "created_at",
+        "updated_at",
+    ] {
+        let resp = app
+            .get(&format!("/api/v1/journals?sort_by={col}&sort_dir=asc"))
+            .await;
+        assert_eq!(
+            resp.status(),
+            200,
+            "Journal column '{col}' should be accepted as sortable"
+        );
+    }
+}
 
 #[tokio::test]
 async fn test_journal_sort_by_invalid_column_rejected() {
@@ -249,6 +312,29 @@ async fn test_journal_sort_by_journal_key() {
 // ============================================================================
 
 #[tokio::test]
+async fn test_publisher_sort_accepts_all_columns() {
+    let app = TestApp::spawn().await;
+
+    for col in [
+        "publisher_key",
+        "name_unicode",
+        "name_latex",
+        "default_address",
+        "created_at",
+        "updated_at",
+    ] {
+        let resp = app
+            .get(&format!("/api/v1/publishers?sort_by={col}&sort_dir=asc"))
+            .await;
+        assert_eq!(
+            resp.status(),
+            200,
+            "Publisher column '{col}' should be accepted as sortable"
+        );
+    }
+}
+
+#[tokio::test]
 async fn test_publisher_sort_by_invalid_column_rejected() {
     let app = TestApp::spawn().await;
 
@@ -279,6 +365,29 @@ async fn test_publisher_sort_by_publisher_key() {
 // ============================================================================
 // INSTITUTIONS
 // ============================================================================
+
+#[tokio::test]
+async fn test_institution_sort_accepts_all_columns() {
+    let app = TestApp::spawn().await;
+
+    for col in [
+        "institution_key",
+        "name_unicode",
+        "name_latex",
+        "default_address",
+        "created_at",
+        "updated_at",
+    ] {
+        let resp = app
+            .get(&format!("/api/v1/institutions?sort_by={col}&sort_dir=asc"))
+            .await;
+        assert_eq!(
+            resp.status(),
+            200,
+            "Institution column '{col}' should be accepted as sortable"
+        );
+    }
+}
 
 #[tokio::test]
 async fn test_institution_sort_by_invalid_column_rejected() {
@@ -313,6 +422,28 @@ async fn test_institution_sort_by_institution_key() {
 // ============================================================================
 
 #[tokio::test]
+async fn test_school_sort_accepts_all_columns() {
+    let app = TestApp::spawn().await;
+
+    for col in [
+        "school_key",
+        "name_unicode",
+        "name_latex",
+        "created_at",
+        "updated_at",
+    ] {
+        let resp = app
+            .get(&format!("/api/v1/schools?sort_by={col}&sort_dir=asc"))
+            .await;
+        assert_eq!(
+            resp.status(),
+            200,
+            "School column '{col}' should be accepted as sortable"
+        );
+    }
+}
+
+#[tokio::test]
 async fn test_school_sort_by_invalid_column_rejected() {
     let app = TestApp::spawn().await;
 
@@ -343,6 +474,28 @@ async fn test_school_sort_by_school_key() {
 // ============================================================================
 // SERIES
 // ============================================================================
+
+#[tokio::test]
+async fn test_series_sort_accepts_all_columns() {
+    let app = TestApp::spawn().await;
+
+    for col in [
+        "series_key",
+        "name_unicode",
+        "name_latex",
+        "created_at",
+        "updated_at",
+    ] {
+        let resp = app
+            .get(&format!("/api/v1/series?sort_by={col}&sort_dir=asc"))
+            .await;
+        assert_eq!(
+            resp.status(),
+            200,
+            "Series column '{col}' should be accepted as sortable"
+        );
+    }
+}
 
 #[tokio::test]
 async fn test_series_sort_by_invalid_column_rejected() {
@@ -376,44 +529,327 @@ async fn test_series_sort_by_series_key() {
 // BIBITEMS
 // ============================================================================
 
-#[tokio::test]
-async fn test_bibitem_sort_by_bibkey() {
-    let app = TestApp::spawn().await;
+async fn create_bibitem(app: &TestApp, suffix: &str, bibkey: &str, fields: serde_json::Value) {
+    let mut obj = json!({
+        "bibkey": format!("{bibkey}-{suffix}:2024"),
+        "entry_type": "article",
+        "title_latex": format!("{bibkey}-{suffix}"),
+    });
+    if let serde_json::Value::Object(extra) = fields {
+        for (k, v) in extra {
+            obj[k.clone()] = v.clone();
+        }
+    }
+    let resp = app.post_json("/api/v1/bibitems", &obj).await;
+    assert_eq!(resp.status(), 200, "Failed to create bibitem {bibkey}");
+}
 
-    let resp = app
-        .get("/api/v1/bibitems?sort_by=bibkey&sort_dir=asc")
-        .await;
-    assert_eq!(resp.status(), 200);
+fn get_str_values(items: &[serde_json::Value], field: &str) -> Vec<String> {
+    items
+        .iter()
+        .filter_map(|i| i[field].as_str().map(String::from))
+        .collect()
+}
+
+fn get_i64_values(items: &[serde_json::Value], field: &str) -> Vec<i64> {
+    items.iter().filter_map(|i| i[field].as_i64()).collect()
 }
 
 #[tokio::test]
-async fn test_bibitem_sort_by_title_unicode() {
+async fn test_bibitem_sort_by_bibkey_asc() {
     let app = TestApp::spawn().await;
+    let suffix = unique_suffix();
+
+    for key in ["zebra", "alpha", "middle"] {
+        create_bibitem(
+            &app,
+            &suffix,
+            key,
+            json!({"title_unicode": format!("{key}-{suffix}")}),
+        )
+        .await;
+    }
 
     let resp = app
-        .get("/api/v1/bibitems?sort_by=title_unicode&sort_dir=asc")
+        .get(&format!(
+            "/api/v1/bibitems?sort_by=bibkey&sort_dir=asc&search_term={suffix}"
+        ))
         .await;
     assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 3);
+
+    let keys = get_str_values(items, "bibkey");
+    for w in keys.windows(2) {
+        assert!(w[0] <= w[1], "Expected ascending bibkeys, got {keys:?}");
+    }
 }
 
 #[tokio::test]
-async fn test_bibitem_sort_by_entry_type() {
+async fn test_bibitem_sort_by_date_year_desc() {
     let app = TestApp::spawn().await;
+    let suffix = unique_suffix();
+
+    for (key, year) in [("old", 1990), ("mid", 2005), ("new", 2024)] {
+        create_bibitem(
+            &app,
+            &suffix,
+            key,
+            json!({"date_year": year, "title_unicode": format!("{key}-{suffix}")}),
+        )
+        .await;
+    }
 
     let resp = app
-        .get("/api/v1/bibitems?sort_by=entry_type&sort_dir=asc")
+        .get(&format!(
+            "/api/v1/bibitems?sort_by=date_year&sort_dir=desc&search_term={suffix}"
+        ))
         .await;
     assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 3);
+
+    let years = get_i64_values(items, "date_year");
+    for w in years.windows(2) {
+        assert!(w[0] >= w[1], "Expected descending years, got {years:?}");
+    }
 }
 
 #[tokio::test]
-async fn test_bibitem_sort_by_date_year() {
+async fn test_bibitem_sort_by_volume_asc() {
+    let app = TestApp::spawn().await;
+    let suffix = unique_suffix();
+
+    for (key, vol) in [("c", "30"), ("a", "10"), ("b", "20")] {
+        create_bibitem(
+            &app,
+            &suffix,
+            key,
+            json!({"volume": vol, "title_unicode": format!("{key}-{suffix}")}),
+        )
+        .await;
+    }
+
+    let resp = app
+        .get(&format!(
+            "/api/v1/bibitems?sort_by=volume&sort_dir=asc&search_term={suffix}"
+        ))
+        .await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 3);
+
+    let volumes = get_str_values(items, "volume");
+    for w in volumes.windows(2) {
+        assert!(w[0] <= w[1], "Expected ascending volumes, got {volumes:?}");
+    }
+}
+
+#[tokio::test]
+async fn test_bibitem_sort_by_start_page_asc() {
+    let app = TestApp::spawn().await;
+    let suffix = unique_suffix();
+
+    for (key, pages) in [("c", "300--350"), ("a", "1--50"), ("b", "100--150")] {
+        create_bibitem(
+            &app,
+            &suffix,
+            key,
+            json!({"pages": pages, "title_unicode": format!("{key}-{suffix}")}),
+        )
+        .await;
+    }
+
+    let resp = app
+        .get(&format!(
+            "/api/v1/bibitems?sort_by=start_page&sort_dir=asc&search_term={suffix}"
+        ))
+        .await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 3);
+
+    let pages = get_i64_values(items, "start_page");
+    assert_eq!(pages.len(), 3);
+    for w in pages.windows(2) {
+        assert!(w[0] <= w[1], "Expected ascending start_page, got {pages:?}");
+    }
+}
+
+#[tokio::test]
+async fn test_bibitem_sort_by_number_asc() {
+    let app = TestApp::spawn().await;
+    let suffix = unique_suffix();
+
+    for (key, num) in [("c", "3"), ("a", "1"), ("b", "2")] {
+        create_bibitem(
+            &app,
+            &suffix,
+            key,
+            json!({"number": num, "title_unicode": format!("{key}-{suffix}")}),
+        )
+        .await;
+    }
+
+    let resp = app
+        .get(&format!(
+            "/api/v1/bibitems?sort_by=number&sort_dir=asc&search_term={suffix}"
+        ))
+        .await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 3);
+
+    let numbers = get_str_values(items, "number");
+    for w in numbers.windows(2) {
+        assert!(w[0] <= w[1], "Expected ascending numbers, got {numbers:?}");
+    }
+}
+
+#[tokio::test]
+async fn test_bibitem_multi_column_sort_volume_number_start_page() {
+    let app = TestApp::spawn().await;
+    let suffix = unique_suffix();
+
+    // Same volume, different number and start_page
+    create_bibitem(
+        &app,
+        &suffix,
+        "v1n2p100",
+        json!({"volume": "1", "number": "2", "pages": "100--199", "title_unicode": format!("v1n2p100-{suffix}")}),
+    )
+    .await;
+    create_bibitem(
+        &app,
+        &suffix,
+        "v1n1p50",
+        json!({"volume": "1", "number": "1", "pages": "50--99", "title_unicode": format!("v1n1p50-{suffix}")}),
+    )
+    .await;
+    create_bibitem(
+        &app,
+        &suffix,
+        "v2n1p10",
+        json!({"volume": "2", "number": "1", "pages": "10--20", "title_unicode": format!("v2n1p10-{suffix}")}),
+    )
+    .await;
+    create_bibitem(
+        &app,
+        &suffix,
+        "v1n1p10",
+        json!({"volume": "1", "number": "1", "pages": "10--20", "title_unicode": format!("v1n1p10-{suffix}")}),
+    )
+    .await;
+
+    let resp = app
+        .get(&format!(
+            "/api/v1/bibitems?sort_by=volume,number,start_page&sort_dir=asc,asc,asc&search_term={suffix}"
+        ))
+        .await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 4);
+
+    let bibkeys: Vec<&str> = items.iter().filter_map(|i| i["bibkey"].as_str()).collect();
+    // Expected order: v1n1p10, v1n1p50, v1n2p100, v2n1p10
+    assert!(
+        bibkeys[0].starts_with("v1n1p10"),
+        "First should be v1n1p10, got {bibkeys:?}"
+    );
+    assert!(
+        bibkeys[1].starts_with("v1n1p50"),
+        "Second should be v1n1p50, got {bibkeys:?}"
+    );
+    assert!(
+        bibkeys[2].starts_with("v1n2p100"),
+        "Third should be v1n2p100, got {bibkeys:?}"
+    );
+    assert!(
+        bibkeys[3].starts_with("v2n1p10"),
+        "Fourth should be v2n1p10, got {bibkeys:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_bibitem_multi_column_sort_partial_dir_defaults_to_asc() {
+    let app = TestApp::spawn().await;
+    let suffix = unique_suffix();
+
+    for (key, year) in [("old", 1990), ("new", 2024)] {
+        create_bibitem(
+            &app,
+            &suffix,
+            key,
+            json!({"date_year": year, "title_unicode": format!("{key}-{suffix}")}),
+        )
+        .await;
+    }
+
+    // sort_dir only specifies desc for date_year; bibkey should default to asc
+    let resp = app
+        .get(&format!(
+            "/api/v1/bibitems?sort_by=date_year,bibkey&sort_dir=desc&search_term={suffix}"
+        ))
+        .await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+
+    let years = get_i64_values(items, "date_year");
+    assert!(
+        years[0] >= years[1],
+        "Expected descending years, got {years:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_bibitem_sort_accepts_all_new_columns() {
+    let app = TestApp::spawn().await;
+
+    for col in [
+        "journal_key",
+        "publisher_key",
+        "pubstate",
+        "langid",
+        "epoch",
+        "entry_type",
+        "title_unicode",
+        "created_at",
+        "updated_at",
+    ] {
+        let resp = app
+            .get(&format!("/api/v1/bibitems?sort_by={col}&sort_dir=asc"))
+            .await;
+        assert_eq!(
+            resp.status(),
+            200,
+            "Column '{col}' should be accepted as sortable"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_bibitem_multi_column_sort_invalid_column_rejected() {
     let app = TestApp::spawn().await;
 
     let resp = app
-        .get("/api/v1/bibitems?sort_by=date_year&sort_dir=desc")
+        .get("/api/v1/bibitems?sort_by=volume,nonexistent&sort_dir=desc,asc")
         .await;
-    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.status(), 400);
 }
 
 #[tokio::test]
@@ -422,4 +858,16 @@ async fn test_bibitem_sort_by_invalid_column_rejected() {
 
     let resp = app.get("/api/v1/bibitems?sort_by=nonexistent").await;
     assert_eq!(resp.status(), 400);
+}
+
+#[tokio::test]
+async fn test_bibitem_sort_by_unsortable_column_rejected() {
+    let app = TestApp::spawn().await;
+
+    let resp = app.get("/api/v1/bibitems?sort_by=abstract_latex").await;
+    assert_eq!(
+        resp.status(),
+        400,
+        "abstract_latex is not in sortable_columns; should be rejected"
+    );
 }
