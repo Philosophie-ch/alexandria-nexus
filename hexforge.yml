@@ -313,7 +313,9 @@ models:
       publisher_key: { type: "string?" }
       address: { type: "string?" }
       volume: { type: "string?" }
+      volume_numeric: { type: "i32?" }
       number: { type: "string?" }
+      number_numeric: { type: "i32?" }
       pages: { type: "string?" }
       start_page: { type: "i32?" }
       eid: { type: "string?" }

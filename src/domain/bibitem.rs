@@ -47,6 +47,7 @@ pub struct BibItem {
     pub note_latex: Option<String>,
     pub note_unicode: Option<String>,
     pub number: Option<String>,
+    pub number_numeric: Option<i32>,
     pub options: Option<String>,
     pub pages: Option<String>,
     pub person_key: Option<String>,
@@ -63,6 +64,7 @@ pub struct BibItem {
     pub url: Option<String>,
     pub urn: Option<String>,
     pub volume: Option<String>,
+    pub volume_numeric: Option<i32>,
     #[crud(skip)]
     pub created_at: DateTime<Utc>,
     #[crud(skip)]

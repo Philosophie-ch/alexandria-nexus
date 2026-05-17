@@ -240,11 +240,11 @@ impl_to_schema! {
 }
 
 // =============================================================================
-// Compute start pages report (process layer)
+// Compute numeric fields report (process layer)
 // =============================================================================
 
 impl_to_schema! {
-    struct crate::process::compute_start_pages::ComputeStartPagesReport => "ComputeStartPagesReport" {
+    struct crate::process::compute_numeric_fields::ComputeNumericFieldsReport => "ComputeNumericFieldsReport" {
         updated: usize,
     }
 }

@@ -9,6 +9,30 @@ pub enum PageEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedPages(pub Vec<PageEntry>);
 
+fn collapse_hyphens(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut consecutive = 0u32;
+    for c in s.chars() {
+        if c == '-' {
+            consecutive += 1;
+        } else {
+            if consecutive >= 2 {
+                result.push_str("--");
+            } else if consecutive == 1 {
+                result.push('-');
+            }
+            consecutive = 0;
+            result.push(c);
+        }
+    }
+    if consecutive >= 2 {
+        result.push_str("--");
+    } else if consecutive == 1 {
+        result.push('-');
+    }
+    result
+}
+
 pub fn parse_pages_string(text: &str) -> Result<ParsedPages, String> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -23,6 +47,14 @@ pub fn parse_pages_string(text: &str) -> Result<ParsedPages, String> {
         if entry.is_empty() {
             continue;
         }
+
+        let normalized;
+        let entry = if entry.contains("---") {
+            normalized = collapse_hyphens(entry);
+            normalized.as_str()
+        } else {
+            entry
+        };
 
         if entry.contains("--") {
             let parts: Vec<&str> = entry.split("--").collect();
@@ -105,6 +137,14 @@ fn page_value_to_int(s: &str) -> Option<i32> {
         .parse::<i32>()
         .ok()
         .or_else(|| roman_to_arabic(trimmed))
+        .or_else(|| {
+            let bytes = trimmed.as_bytes();
+            if bytes.len() >= 2 && bytes[0].is_ascii_uppercase() {
+                trimmed[1..].parse::<i32>().ok()
+            } else {
+                None
+            }
+        })
 }
 
 pub fn compute_start_page(pages: Option<&str>) -> Option<i32> {
@@ -134,6 +174,63 @@ pub fn compute_start_page(pages: Option<&str>) -> Option<i32> {
     }
 
     min_page
+}
+
+// Philosophia Mathematica uses "sN-M" notation: series N, volume M.
+// Encoded as series * 1000 + volume to preserve ordering (e.g. s2-4 = 2004).
+fn parse_series_volume(text: &str) -> Option<i32> {
+    let rest = text.strip_prefix('s')?;
+    let (series_str, after_series) = rest.split_once('-')?;
+    let series = series_str.parse::<i32>().ok()?;
+    let volume_str = match after_series.split_once('-') {
+        Some((first, _)) => first,
+        None => after_series,
+    };
+    let volume = volume_str.parse::<i32>().ok()?;
+    Some(series * 1000 + volume)
+}
+
+pub fn extract_leading_integer(text: Option<&str>) -> Option<i32> {
+    let raw = text?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    if let Ok(n) = raw.parse::<i32>() {
+        return Some(n);
+    }
+
+    if let Some(n) = roman_to_arabic(raw) {
+        return Some(n);
+    }
+
+    if raw.starts_with('s')
+        && raw.contains('-')
+        && let Some(n) = parse_series_volume(raw)
+    {
+        return Some(n);
+    }
+
+    let stripped = raw
+        .strip_prefix("suppl.")
+        .map(|s| s.trim_start_matches(',').trim());
+    if let Some(remainder) = stripped {
+        if let Ok(n) = remainder.parse::<i32>() {
+            return Some(n);
+        }
+        return None;
+    }
+
+    for sep in ["--", "/", ",", "."] {
+        if let Some((before, _)) = raw.split_once(sep) {
+            let before = before.trim();
+            if let Some(n) = page_value_to_int(before) {
+                return Some(n);
+            }
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -265,6 +362,21 @@ mod tests {
     }
 
     #[test]
+    fn parse_excess_hyphens_normalized_to_range() {
+        for input in ["90---103", "90----103", "90------103"] {
+            let p = parse_pages_string(input).unwrap();
+            assert_eq!(
+                p.0,
+                vec![PageEntry::Range {
+                    start: "90".to_string(),
+                    end: "103".to_string()
+                }],
+                "Failed for input: {input}"
+            );
+        }
+    }
+
+    #[test]
     fn parse_whitespace_normalization() {
         let p = parse_pages_string(" 123 -- 456 ").unwrap();
         assert_eq!(
@@ -319,6 +431,22 @@ mod tests {
     }
 
     #[test]
+    fn start_page_uppercase_letter_prefix() {
+        assert_eq!(compute_start_page(Some("S339--353")), Some(339));
+        assert_eq!(compute_start_page(Some("C2--41")), Some(2));
+    }
+
+    #[test]
+    fn start_page_lowercase_elocator_returns_none() {
+        assert_eq!(compute_start_page(Some("e12936")), None);
+    }
+
+    #[test]
+    fn start_page_excess_hyphens() {
+        assert_eq!(compute_start_page(Some("90---103")), Some(90));
+    }
+
+    #[test]
     fn start_page_unparseable_returns_none() {
         assert_eq!(compute_start_page(Some("frontmatter")), None);
     }
@@ -326,5 +454,97 @@ mod tests {
     #[test]
     fn start_page_malformed_returns_none() {
         assert_eq!(compute_start_page(Some("123-456")), None);
+    }
+
+    // ── extract_leading_integer ─────────────────────────────────────────
+
+    #[test]
+    fn leading_int_none() {
+        assert_eq!(extract_leading_integer(None), None);
+    }
+
+    #[test]
+    fn leading_int_empty() {
+        assert_eq!(extract_leading_integer(Some("")), None);
+        assert_eq!(extract_leading_integer(Some("  ")), None);
+    }
+
+    #[test]
+    fn leading_int_plain_integer() {
+        assert_eq!(extract_leading_integer(Some("42")), Some(42));
+        assert_eq!(extract_leading_integer(Some("1")), Some(1));
+        assert_eq!(extract_leading_integer(Some("100")), Some(100));
+    }
+
+    #[test]
+    fn leading_int_roman_numeral() {
+        assert_eq!(extract_leading_integer(Some("XII")), Some(12));
+        assert_eq!(extract_leading_integer(Some("III")), Some(3));
+        assert_eq!(extract_leading_integer(Some("V")), Some(5));
+        assert_eq!(extract_leading_integer(Some("IX")), Some(9));
+    }
+
+    #[test]
+    fn leading_int_combined_slash() {
+        assert_eq!(extract_leading_integer(Some("3/4")), Some(3));
+        assert_eq!(extract_leading_integer(Some("38/39")), Some(38));
+        assert_eq!(extract_leading_integer(Some("7/8")), Some(7));
+        assert_eq!(extract_leading_integer(Some("11/12")), Some(11));
+    }
+
+    #[test]
+    fn leading_int_range_double_hyphen() {
+        assert_eq!(extract_leading_integer(Some("1--3")), Some(1));
+        assert_eq!(extract_leading_integer(Some("21--24")), Some(21));
+        assert_eq!(extract_leading_integer(Some("185--188")), Some(185));
+    }
+
+    #[test]
+    fn leading_int_series_volume() {
+        assert_eq!(extract_leading_integer(Some("s2-4")), Some(2004));
+        assert_eq!(extract_leading_integer(Some("s1-11")), Some(1011));
+        assert_eq!(extract_leading_integer(Some("s1-1")), Some(1001));
+        assert_eq!(extract_leading_integer(Some("s2-6")), Some(2006));
+    }
+
+    #[test]
+    fn leading_int_series_double_volume() {
+        assert_eq!(extract_leading_integer(Some("s1-13-14")), Some(1013));
+        assert_eq!(extract_leading_integer(Some("s1-15-16")), Some(1015));
+        assert_eq!(extract_leading_integer(Some("s1-17-18")), Some(1017));
+    }
+
+    #[test]
+    fn leading_int_number_with_trailing_text() {
+        assert_eq!(
+            extract_leading_integer(Some("10, Erg{\"a}nzungsband")),
+            Some(10)
+        );
+    }
+
+    #[test]
+    fn leading_int_latex_prefix() {
+        assert_eq!(
+            extract_leading_integer(Some("1.~Foundations of the Unity of Science")),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn leading_int_supplement_with_number() {
+        assert_eq!(extract_leading_integer(Some("suppl., 2")), Some(2));
+        assert_eq!(extract_leading_integer(Some("suppl., 1")), Some(1));
+        assert_eq!(extract_leading_integer(Some("suppl., 3")), Some(3));
+    }
+
+    #[test]
+    fn leading_int_supplement_bare() {
+        assert_eq!(extract_leading_integer(Some("suppl.")), None);
+    }
+
+    #[test]
+    fn leading_int_pure_text() {
+        assert_eq!(extract_leading_integer(Some("special issue")), None);
+        assert_eq!(extract_leading_integer(Some("s/n")), None);
     }
 }

@@ -19,9 +19,9 @@ use crate::adapters::db::queries::{
 use crate::adapters::handlers::{
     BulkImportResponse, KeywordTreeResponse, LatexConvertItem, LatexConvertRequest,
     LatexConvertResponse, RenderRequest, RenderResponseBody, WipeResponse, bulk_import_table,
-    compute_start_pages_handler, convert_latex_columns, convert_latex_to_unicode, export_authors,
-    export_bibitems, export_full_csv, export_institutions, export_journals, export_keywords,
-    export_publishers, export_schools, export_series, get_keyword_tree,
+    compute_numeric_fields_handler, convert_latex_columns, convert_latex_to_unicode,
+    export_authors, export_bibitems, export_full_csv, export_institutions, export_journals,
+    export_keywords, export_publishers, export_schools, export_series, get_keyword_tree,
     import_author_name_variants, import_authors, import_bibitem_notes, import_bibitem_refs,
     import_bibitems, import_entities_from_full_csv, import_full_csv, import_institutions,
     import_journals, import_keywords, import_publishers, import_schools, import_series,
@@ -50,7 +50,7 @@ use crate::logic::full_import::{
     NamedEntityKind, RowError, ValidationReport,
 };
 use crate::logic::import::{ImportResponse, ImportRowError, MissingReferencesError};
-use crate::logic::pages::compute_start_page;
+use crate::logic::pages::{compute_start_page, extract_leading_integer};
 use crate::logic::search::{SearchRequest, SearchResponse};
 use crate::logic::validation::{
     validate_create_author, validate_create_bibitem, validate_create_institution,
@@ -60,22 +60,26 @@ use crate::logic::validation::{
     validate_update_keyword, validate_update_publisher, validate_update_school,
     validate_update_series,
 };
-use crate::process::compute_start_pages::ComputeStartPagesReport;
+use crate::process::compute_numeric_fields::ComputeNumericFieldsReport;
 
 /// Health check endpoint
 async fn health() -> &'static str {
     "OK"
 }
 
-fn create_bibitem_with_start_page(input: CreateBibItem) -> BibItem {
+fn create_bibitem_computed(input: CreateBibItem) -> BibItem {
     let mut bib = create_bib_item_transform(input);
     bib.start_page = compute_start_page(bib.pages.as_deref());
+    bib.volume_numeric = extract_leading_integer(bib.volume.as_deref());
+    bib.number_numeric = extract_leading_integer(bib.number.as_deref());
     bib
 }
 
-fn update_bibitem_with_start_page(input: UpdateBibItem, existing: BibItem) -> BibItem {
+fn update_bibitem_computed(input: UpdateBibItem, existing: BibItem) -> BibItem {
     let mut bib = update_bib_item_transform(input, existing);
     bib.start_page = compute_start_page(bib.pages.as_deref());
+    bib.volume_numeric = extract_leading_integer(bib.volume.as_deref());
+    bib.number_numeric = extract_leading_integer(bib.number.as_deref());
     bib
 }
 
@@ -277,8 +281,8 @@ pub fn build_app(
             .permissions(CrudPermissions::standard())
             .create_validator(validate_create_bibitem)
             .update_validator(validate_update_bibitem)
-            .create_transform(create_bibitem_with_start_page)
-            .update_transform(update_bibitem_with_start_page)
+            .create_transform(create_bibitem_computed)
+            .update_transform(update_bibitem_computed)
             .lookup_by("bibkey")
             .sortable_columns(&[
                 "bibkey",
@@ -286,7 +290,9 @@ pub fn build_app(
                 "entry_type",
                 "date_year",
                 "volume",
+                "volume_numeric",
                 "number",
+                "number_numeric",
                 "start_page",
                 "journal_key",
                 "publisher_key",
@@ -604,11 +610,11 @@ pub fn build_app(
                     convert_latex_to_unicode,
                 )
                 .operation(
-                    Endpoint::post("/compute-start-pages")
-                        .response_schema::<ComputeStartPagesReport>()
+                    Endpoint::post("/compute-numeric-fields")
+                        .response_schema::<ComputeNumericFieldsReport>()
                         .tag("Admin")
-                        .description("Compute and persist start_page for all bibitems"),
-                    compute_start_pages_handler,
+                        .description("Compute and persist numeric fields (start_page, volume_numeric, number_numeric) for all bibitems"),
+                    compute_numeric_fields_handler,
                 )
                 .operation(
                     Endpoint::post("/convert-latex-columns")

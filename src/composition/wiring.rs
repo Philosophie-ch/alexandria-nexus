@@ -8,7 +8,7 @@ use hexforge::HexforgeError;
 
 use super::AppState;
 
-use crate::adapters::compute_start_pages::PgStartPageComputer;
+use crate::adapters::compute_numeric_fields::PgNumericFieldComputer;
 use crate::adapters::export::{
     PgBibitemFetcher, PgEntityBatchFetcher, PgExportJunctionFetcher, PgKeyedEntityFetcher,
     PgKeywordFetcher as PgKeywordExportFetcher,
@@ -89,16 +89,16 @@ impl AppState {
 }
 
 // =============================================================================
-// Compute start pages
+// Compute numeric fields (start_page, volume_numeric, number_numeric)
 // =============================================================================
 
 impl AppState {
-    pub fn start_page_fetcher(&self) -> PgStartPageComputer<'_> {
-        PgStartPageComputer::new(self.pool.pool())
+    pub fn numeric_field_fetcher(&self) -> PgNumericFieldComputer<'_> {
+        PgNumericFieldComputer::new(self.pool.pool())
     }
 
-    pub fn start_page_writer(&self) -> PgStartPageComputer<'_> {
-        PgStartPageComputer::new(self.pool.pool())
+    pub fn numeric_field_writer(&self) -> PgNumericFieldComputer<'_> {
+        PgNumericFieldComputer::new(self.pool.pool())
     }
 }
 
