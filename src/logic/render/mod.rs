@@ -28,6 +28,7 @@ use crate::domain::{Author, AuthorRole, BibItem, EntryType};
 /// bibitem references the author by an alternative name).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthorName {
+    pub author_key: String,
     pub family: Option<String>,
     pub given: Option<String>,
     pub mononym: Option<String>,
@@ -51,14 +52,19 @@ pub struct RenderContext {
     pub guesteditors: Vec<AuthorName>,
     /// Pre-resolved journal name (unicode).
     pub journal_name: Option<String>,
+    pub journal_key: Option<String>,
     /// Pre-resolved publisher name (unicode).
     pub publisher_name: Option<String>,
+    pub publisher_key: Option<String>,
     /// Pre-resolved series name (unicode).
     pub series_name: Option<String>,
+    pub series_key: Option<String>,
     /// Pre-resolved institution name (unicode).
     pub institution_name: Option<String>,
+    pub institution_key: Option<String>,
     /// Pre-resolved school name (unicode).
     pub school_name: Option<String>,
+    pub school_key: Option<String>,
     /// Crossref bibkey (pre-resolved).
     pub crossref_bibkey: Option<String>,
     /// If true, the author is replaced with an em-dash (consecutive same-author).
@@ -164,6 +170,7 @@ pub fn extract_role_authors(
                 .iter()
                 .filter_map(|r| {
                     authors_map.get(&r.author_key).map(|a| AuthorName {
+                        author_key: r.author_key.clone(),
                         family: a.family_name_unicode.clone(),
                         given: a.given_name_unicode.clone(),
                         mononym: a.mononym_unicode.clone(),
@@ -254,7 +261,15 @@ mod tests {
 
     /// Helper: create an AuthorName with family + given.
     fn make_author(given: &str, family: &str) -> AuthorName {
+        let initial = given
+            .chars()
+            .next()
+            .unwrap_or('x')
+            .to_lowercase()
+            .next()
+            .unwrap_or('x');
         AuthorName {
+            author_key: format!("{}_{}", family.to_lowercase(), initial),
             family: Some(family.to_string()),
             given: Some(given.to_string()),
             mononym: None,
@@ -265,6 +280,7 @@ mod tests {
     /// Helper: create an AuthorName with a mononym.
     fn make_mononym(name: &str) -> AuthorName {
         AuthorName {
+            author_key: name.to_lowercase(),
             family: None,
             given: None,
             mononym: Some(name.to_string()),
@@ -297,8 +313,8 @@ mod tests {
             "should have author field"
         );
         assert!(
-            html.contains("class=\"smallcaps\">Smith</span>"),
-            "family name in smallcaps"
+            html.contains("class=\"smallcaps\" data-author-key=\"smith_j\">Smith</span>"),
+            "family name in smallcaps with author key"
         );
         assert!(
             html.contains("data-field=\"given\">Jane</span>"),
@@ -351,8 +367,8 @@ mod tests {
 
         assert!(html.contains("data-type=\"book\""), "entry type book");
         assert!(
-            html.contains("class=\"smallcaps\">Kant</span>"),
-            "author family"
+            html.contains("class=\"smallcaps\" data-author-key=\"kant_i\">Kant</span>"),
+            "author family with key"
         );
         assert!(
             html.contains("<em>Critique of Pure Reason</em>"),
@@ -562,8 +578,10 @@ mod tests {
         let html = render_bibitem(&item, &ctx);
 
         assert!(
-            html.contains("data-field=\"author-name\">Aristotle</span>"),
-            "mononym rendered"
+            html.contains(
+                "data-field=\"author-name\" data-author-key=\"aristotle\">Aristotle</span>"
+            ),
+            "mononym rendered with key"
         );
         assert!(
             !html.contains("class=\"smallcaps\""),
@@ -723,5 +741,265 @@ mod tests {
             "quotes escaped in title"
         );
         assert!(html.contains("A&amp;B"), "ampersand in author escaped");
+    }
+
+    // =========================================================================
+    // Test: data-author-key on family name span
+    // =========================================================================
+
+    #[test]
+    fn test_data_author_key_on_family_span() {
+        let item = make_article("test:key", "Test", Some(2024));
+
+        let ctx = RenderContext {
+            authors: vec![make_author("Jane", "Smith")],
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(
+            html.contains("data-author-key=\"smith_j\""),
+            "author key on family span: {html}"
+        );
+        assert!(
+            html.contains("class=\"smallcaps\" data-author-key=\"smith_j\">Smith</span>"),
+            "key is on the smallcaps element: {html}"
+        );
+    }
+
+    #[test]
+    fn test_data_author_key_on_mononym() {
+        let item = make_article("test:mono", "Test", Some(2024));
+
+        let ctx = RenderContext {
+            authors: vec![make_mononym("Aristotle")],
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(
+            html.contains("data-author-key=\"aristotle\">Aristotle</span>"),
+            "author key on mononym span: {html}"
+        );
+    }
+
+    // =========================================================================
+    // Test: data-author-key on em-dash (comma-separated for multi-author)
+    // =========================================================================
+
+    #[test]
+    fn test_data_author_key_on_emdash() {
+        let item1 = make_article("smith:2020", "First Paper", Some(2020));
+        let item2 = make_article("smith:2021", "Second Paper", Some(2021));
+
+        let ctx1 = RenderContext {
+            authors: vec![make_author("Jane", "Smith"), make_author("John", "Doe")],
+            ..Default::default()
+        };
+        let ctx2 = RenderContext {
+            authors: vec![make_author("Jane", "Smith"), make_author("John", "Doe")],
+            ..Default::default()
+        };
+
+        let html = render_bibliography(&[(item1, ctx1), (item2, ctx2)]);
+        let lines: Vec<&str> = html.lines().collect();
+
+        assert!(
+            lines[1].contains("data-author-key=\"smith_j,doe_j\""),
+            "comma-separated keys on em-dash: {}",
+            lines[1]
+        );
+    }
+
+    // =========================================================================
+    // Test: data-journal-key
+    // =========================================================================
+
+    #[test]
+    fn test_data_journal_key() {
+        let item = make_article("test:jk", "Test", Some(2024));
+
+        let ctx = RenderContext {
+            authors: vec![make_author("Test", "Author")],
+            journal_name: Some("Dialectica".to_string()),
+            journal_key: Some("dialectica".to_string()),
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(
+            html.contains("data-journal-key=\"dialectica\""),
+            "journal key present: {html}"
+        );
+        assert!(
+            html.contains("<em data-journal-key=\"dialectica\">Dialectica</em>"),
+            "key on em element: {html}"
+        );
+    }
+
+    // =========================================================================
+    // Test: data-publisher-key
+    // =========================================================================
+
+    #[test]
+    fn test_data_publisher_key() {
+        let mut item = make_bibitem(EntryType::Book, "test:pk", "Test Book", Some(2024));
+        item.address = Some("Oxford".to_string());
+
+        let ctx = RenderContext {
+            authors: vec![make_author("Test", "Author")],
+            publisher_name: Some("Oxford University Press".to_string()),
+            publisher_key: Some("oup".to_string()),
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(
+            html.contains("data-publisher-key=\"oup\""),
+            "publisher key present: {html}"
+        );
+        assert!(
+            html.contains(
+                "data-field=\"publisher\" data-publisher-key=\"oup\">Oxford University Press</span>"
+            ),
+            "key on publisher span: {html}"
+        );
+    }
+
+    // =========================================================================
+    // Test: data-series-key
+    // =========================================================================
+
+    #[test]
+    fn test_data_series_key() {
+        let item = make_bibitem(EntryType::Book, "test:sk", "Test Book", Some(2024));
+
+        let ctx = RenderContext {
+            authors: vec![make_author("Test", "Author")],
+            series_name: Some("Cambridge Studies".to_string()),
+            series_key: Some("cambridge_studies".to_string()),
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(
+            html.contains("data-series-key=\"cambridge_studies\""),
+            "series key present: {html}"
+        );
+    }
+
+    // =========================================================================
+    // Test: data-school-key
+    // =========================================================================
+
+    #[test]
+    fn test_data_school_key() {
+        let item = make_bibitem(EntryType::Phdthesis, "test:school", "My Thesis", Some(2024));
+
+        let ctx = RenderContext {
+            authors: vec![make_author("Test", "Author")],
+            school_name: Some("MIT".to_string()),
+            school_key: Some("mit".to_string()),
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(
+            html.contains("data-school-key=\"mit\""),
+            "school key present: {html}"
+        );
+        assert!(
+            html.contains("data-field=\"school\" data-school-key=\"mit\">MIT</span>"),
+            "key on school span: {html}"
+        );
+    }
+
+    // =========================================================================
+    // Test: data-institution-key
+    // =========================================================================
+
+    #[test]
+    fn test_data_institution_key() {
+        let item = make_bibitem(EntryType::Misc, "test:inst", "Tech Report", Some(2024));
+
+        let ctx = RenderContext {
+            authors: vec![make_author("Test", "Author")],
+            institution_name: Some("CERN".to_string()),
+            institution_key: Some("cern".to_string()),
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(
+            html.contains("data-institution-key=\"cern\""),
+            "institution key present: {html}"
+        );
+        assert!(
+            html.contains("data-field=\"institution\" data-institution-key=\"cern\">CERN</span>"),
+            "key on institution span: {html}"
+        );
+    }
+
+    // =========================================================================
+    // Test: data-author-key on variant_unicode author
+    // =========================================================================
+
+    #[test]
+    fn test_data_author_key_on_variant_unicode() {
+        let item = make_article("test:variant", "Test", Some(2024));
+
+        let ctx = RenderContext {
+            authors: vec![AuthorName {
+                author_key: "plato_v".to_string(),
+                family: Some("Platon".to_string()),
+                given: None,
+                mononym: None,
+                variant_unicode: Some("Plato (variant)".to_string()),
+            }],
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(
+            html.contains("data-author-key=\"plato_v\""),
+            "author key present on variant_unicode author: {html}"
+        );
+        assert!(
+            html.contains(
+                "data-field=\"author-name\" data-author-key=\"plato_v\">Plato (variant)</span>"
+            ),
+            "key on author-name span with variant text: {html}"
+        );
+    }
+
+    // =========================================================================
+    // Test: no key attribute emitted when key is None
+    // =========================================================================
+
+    #[test]
+    fn test_key_none_no_attribute() {
+        let item = make_article("test:nokey", "Test", Some(2024));
+
+        let ctx = RenderContext {
+            authors: vec![make_author("Test", "Author")],
+            journal_name: Some("Some Journal".to_string()),
+            journal_key: None,
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(
+            !html.contains("data-journal-key"),
+            "no journal key attribute when key is None: {html}"
+        );
     }
 }

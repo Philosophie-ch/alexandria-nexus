@@ -31,7 +31,14 @@ pub fn esc(text: &str) -> String {
 pub fn render_authors(authors: &[AuthorName], role: AuthorRole, suppress: bool) -> String {
     let role_str = role.to_string();
     if suppress {
-        return format!("<span data-field=\"{role_str}\">\u{2014}</span>");
+        let keys: String = authors
+            .iter()
+            .map(|a| esc(&a.author_key))
+            .collect::<Vec<_>>()
+            .join(",");
+        return format!(
+            "<span data-field=\"{role_str}\" data-author-key=\"{keys}\">\u{2014}</span>"
+        );
     }
     if authors.is_empty() {
         return String::new();
@@ -43,14 +50,15 @@ pub fn render_authors(authors: &[AuthorName], role: AuthorRole, suppress: bool) 
     let parts: Vec<String> = display_authors
         .iter()
         .map(|a| {
+            let key = esc(&a.author_key);
             if let Some(ref variant) = a.variant_unicode {
                 format!(
-                    "<span data-field=\"author-name\">{}</span>",
+                    "<span data-field=\"author-name\" data-author-key=\"{key}\">{}</span>",
                     esc(variant)
                 )
             } else if let Some(ref mononym) = a.mononym {
                 format!(
-                    "<span data-field=\"author-name\">{}</span>",
+                    "<span data-field=\"author-name\" data-author-key=\"{key}\">{}</span>",
                     esc(mononym)
                 )
             } else {
@@ -58,12 +66,12 @@ pub fn render_authors(authors: &[AuthorName], role: AuthorRole, suppress: bool) 
                 let given = a.given.as_deref().unwrap_or("");
                 if given.is_empty() {
                     format!(
-                        "<span data-field=\"family\" class=\"smallcaps\">{}</span>",
+                        "<span data-field=\"family\" class=\"smallcaps\" data-author-key=\"{key}\">{}</span>",
                         esc(family)
                     )
                 } else {
                     format!(
-                        "<span data-field=\"family\" class=\"smallcaps\">{}</span>, <span data-field=\"given\">{}</span>",
+                        "<span data-field=\"family\" class=\"smallcaps\" data-author-key=\"{key}\">{}</span>, <span data-field=\"given\">{}</span>",
                         esc(family),
                         esc(given)
                     )
@@ -198,18 +206,29 @@ pub fn render_access(doi: Option<&str>, url: Option<&str>) -> String {
 // =============================================================================
 
 /// Render publisher with optional address: `ADDRESS: PUBLISHER`.
-pub fn render_publisher(address: Option<&str>, publisher_name: Option<&str>) -> String {
+pub fn render_publisher(
+    address: Option<&str>,
+    publisher_name: Option<&str>,
+    publisher_key: Option<&str>,
+) -> String {
+    let key_attr = match publisher_key {
+        Some(k) => format!(" data-publisher-key=\"{}\"", esc(k)),
+        None => String::new(),
+    };
     match (
         address.filter(|a| !a.is_empty()),
         publisher_name.filter(|p| !p.is_empty()),
     ) {
         (Some(addr), Some(pub_name)) => format!(
-            "{}: <span data-field=\"publisher\">{}</span>",
+            "{}: <span data-field=\"publisher\"{key_attr}>{}</span>",
             esc(addr),
             esc(pub_name)
         ),
         (None, Some(pub_name)) => {
-            format!("<span data-field=\"publisher\">{}</span>", esc(pub_name))
+            format!(
+                "<span data-field=\"publisher\"{key_attr}>{}</span>",
+                esc(pub_name)
+            )
         }
         (Some(addr), None) => esc(addr),
         (None, None) => String::new(),
@@ -221,9 +240,18 @@ pub fn render_publisher(address: Option<&str>, publisher_name: Option<&str>) -> 
 // =============================================================================
 
 /// Render journal name in italics: `<em>JOURNAL</em>`.
-pub fn render_journal(journal_name: Option<&str>) -> String {
+pub fn render_journal(journal_name: Option<&str>, journal_key: Option<&str>) -> String {
     match journal_name.filter(|j| !j.is_empty()) {
-        Some(name) => format!("<span data-field=\"journal\"><em>{}</em></span>", esc(name)),
+        Some(name) => {
+            let key_attr = match journal_key {
+                Some(k) => format!(" data-journal-key=\"{}\"", esc(k)),
+                None => String::new(),
+            };
+            format!(
+                "<span data-field=\"journal\"><em{key_attr}>{}</em></span>",
+                esc(name)
+            )
+        }
         None => String::new(),
     }
 }
@@ -299,9 +327,54 @@ pub fn render_note(note_unicode: Option<&str>) -> String {
 // =============================================================================
 
 /// Render a series name.
-pub fn render_series(series_name: Option<&str>) -> String {
+pub fn render_series(series_name: Option<&str>, series_key: Option<&str>) -> String {
     match series_name.filter(|s| !s.is_empty()) {
-        Some(name) => format!("<span data-field=\"series\">{}</span>", esc(name)),
+        Some(name) => {
+            let key_attr = match series_key {
+                Some(k) => format!(" data-series-key=\"{}\"", esc(k)),
+                None => String::new(),
+            };
+            format!("<span data-field=\"series\"{key_attr}>{}</span>", esc(name))
+        }
+        None => String::new(),
+    }
+}
+
+// =============================================================================
+// School rendering
+// =============================================================================
+
+/// Render a school name.
+pub fn render_school(school_name: Option<&str>, school_key: Option<&str>) -> String {
+    match school_name.filter(|s| !s.is_empty()) {
+        Some(name) => {
+            let key_attr = match school_key {
+                Some(k) => format!(" data-school-key=\"{}\"", esc(k)),
+                None => String::new(),
+            };
+            format!("<span data-field=\"school\"{key_attr}>{}</span>", esc(name))
+        }
+        None => String::new(),
+    }
+}
+
+// =============================================================================
+// Institution rendering
+// =============================================================================
+
+/// Render an institution name.
+pub fn render_institution(institution_name: Option<&str>, institution_key: Option<&str>) -> String {
+    match institution_name.filter(|s| !s.is_empty()) {
+        Some(name) => {
+            let key_attr = match institution_key {
+                Some(k) => format!(" data-institution-key=\"{}\"", esc(k)),
+                None => String::new(),
+            };
+            format!(
+                "<span data-field=\"institution\"{key_attr}>{}</span>",
+                esc(name)
+            )
+        }
         None => String::new(),
     }
 }
@@ -366,6 +439,174 @@ mod tests {
         assert_eq!(pages_prefix("xi"), "p.");
         assert_eq!(pages_prefix("v"), "p.");
     }
+
+    // =========================================================================
+    // render_journal
+    // =========================================================================
+
+    #[test]
+    fn test_render_journal_with_key() {
+        let html = render_journal(Some("Dialectica"), Some("dialectica"));
+        assert!(html.contains("data-journal-key=\"dialectica\""));
+        assert!(html.contains("<em data-journal-key=\"dialectica\">Dialectica</em>"));
+    }
+
+    #[test]
+    fn test_render_journal_without_key() {
+        let html = render_journal(Some("Dialectica"), None);
+        assert!(!html.contains("data-journal-key"));
+        assert!(html.contains("<em>Dialectica</em>"));
+    }
+
+    #[test]
+    fn test_render_journal_key_escaped() {
+        let html = render_journal(Some("J&J"), Some("j\"key"));
+        assert!(html.contains("data-journal-key=\"j&quot;key\""));
+        assert!(html.contains("J&amp;J"));
+    }
+
+    #[test]
+    fn test_render_journal_empty_name() {
+        assert!(render_journal(Some(""), Some("key")).is_empty());
+        assert!(render_journal(None, Some("key")).is_empty());
+    }
+
+    // =========================================================================
+    // render_publisher
+    // =========================================================================
+
+    #[test]
+    fn test_render_publisher_with_key_and_address() {
+        let html = render_publisher(Some("Oxford"), Some("OUP"), Some("oup"));
+        assert!(html.contains("data-publisher-key=\"oup\""));
+        assert!(html.contains(
+            "Oxford: <span data-field=\"publisher\" data-publisher-key=\"oup\">OUP</span>"
+        ));
+    }
+
+    #[test]
+    fn test_render_publisher_with_key_no_address() {
+        let html = render_publisher(None, Some("OUP"), Some("oup"));
+        assert!(html.contains("data-publisher-key=\"oup\""));
+        assert!(
+            html.contains("<span data-field=\"publisher\" data-publisher-key=\"oup\">OUP</span>")
+        );
+    }
+
+    #[test]
+    fn test_render_publisher_without_key() {
+        let html = render_publisher(Some("Oxford"), Some("OUP"), None);
+        assert!(!html.contains("data-publisher-key"));
+        assert!(html.contains("Oxford: <span data-field=\"publisher\">OUP</span>"));
+    }
+
+    #[test]
+    fn test_render_publisher_key_escaped() {
+        let html = render_publisher(None, Some("P&P"), Some("p\"k"));
+        assert!(html.contains("data-publisher-key=\"p&quot;k\""));
+        assert!(html.contains("P&amp;P"));
+    }
+
+    // =========================================================================
+    // render_series
+    // =========================================================================
+
+    #[test]
+    fn test_render_series_with_key() {
+        let html = render_series(Some("Cambridge Studies"), Some("cambridge_studies"));
+        assert!(html.contains("data-series-key=\"cambridge_studies\""));
+        assert!(html.contains(
+            "data-field=\"series\" data-series-key=\"cambridge_studies\">Cambridge Studies</span>"
+        ));
+    }
+
+    #[test]
+    fn test_render_series_without_key() {
+        let html = render_series(Some("Cambridge Studies"), None);
+        assert!(!html.contains("data-series-key"));
+        assert!(html.contains("<span data-field=\"series\">Cambridge Studies</span>"));
+    }
+
+    #[test]
+    fn test_render_series_key_escaped() {
+        let html = render_series(Some("S&S"), Some("s<k"));
+        assert!(html.contains("data-series-key=\"s&lt;k\""));
+        assert!(html.contains("S&amp;S"));
+    }
+
+    #[test]
+    fn test_render_series_empty_name() {
+        assert!(render_series(Some(""), Some("key")).is_empty());
+        assert!(render_series(None, Some("key")).is_empty());
+    }
+
+    // =========================================================================
+    // render_school
+    // =========================================================================
+
+    #[test]
+    fn test_render_school_with_key() {
+        let html = render_school(Some("MIT"), Some("mit"));
+        assert!(html.contains("data-school-key=\"mit\""));
+        assert!(html.contains("data-field=\"school\" data-school-key=\"mit\">MIT</span>"));
+    }
+
+    #[test]
+    fn test_render_school_without_key() {
+        let html = render_school(Some("MIT"), None);
+        assert!(!html.contains("data-school-key"));
+        assert!(html.contains("<span data-field=\"school\">MIT</span>"));
+    }
+
+    #[test]
+    fn test_render_school_key_escaped() {
+        let html = render_school(Some("U&T"), Some("u\"t"));
+        assert!(html.contains("data-school-key=\"u&quot;t\""));
+        assert!(html.contains("U&amp;T"));
+    }
+
+    #[test]
+    fn test_render_school_empty_name() {
+        assert!(render_school(Some(""), Some("key")).is_empty());
+        assert!(render_school(None, Some("key")).is_empty());
+    }
+
+    // =========================================================================
+    // render_institution
+    // =========================================================================
+
+    #[test]
+    fn test_render_institution_with_key() {
+        let html = render_institution(Some("CERN"), Some("cern"));
+        assert!(html.contains("data-institution-key=\"cern\""));
+        assert!(
+            html.contains("data-field=\"institution\" data-institution-key=\"cern\">CERN</span>")
+        );
+    }
+
+    #[test]
+    fn test_render_institution_without_key() {
+        let html = render_institution(Some("CERN"), None);
+        assert!(!html.contains("data-institution-key"));
+        assert!(html.contains("<span data-field=\"institution\">CERN</span>"));
+    }
+
+    #[test]
+    fn test_render_institution_key_escaped() {
+        let html = render_institution(Some("I&I"), Some("i<k"));
+        assert!(html.contains("data-institution-key=\"i&lt;k\""));
+        assert!(html.contains("I&amp;I"));
+    }
+
+    #[test]
+    fn test_render_institution_empty_name() {
+        assert!(render_institution(Some(""), Some("key")).is_empty());
+        assert!(render_institution(None, Some("key")).is_empty());
+    }
+
+    // =========================================================================
+    // pages_prefix
+    // =========================================================================
 
     #[test]
     fn test_pages_prefix_article_only_values() {

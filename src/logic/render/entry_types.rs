@@ -8,8 +8,8 @@ use crate::domain::{AuthorRole, BibItem};
 use super::RenderContext;
 use super::components::{
     pages_prefix, render_access, render_authors, render_booktitle, render_date, render_edition,
-    render_eid, render_journal, render_note, render_pages, render_publisher, render_series,
-    render_title, render_volume_number,
+    render_eid, render_institution, render_journal, render_note, render_pages, render_publisher,
+    render_school, render_series, render_title, render_volume_number,
 };
 
 // =============================================================================
@@ -58,7 +58,7 @@ pub fn render_article(item: &BibItem, ctx: &RenderContext) -> String {
         item.title_unicode.as_deref().unwrap_or(&item.title_latex),
         true,
     );
-    let journal = render_journal(ctx.journal_name.as_deref());
+    let journal = render_journal(ctx.journal_name.as_deref(), ctx.journal_key.as_deref());
     let vol_num = render_volume_number(item.volume.as_deref(), item.number.as_deref());
 
     let pages_or_eid = if let Some(pages) = item.pages.as_deref() {
@@ -147,11 +147,15 @@ pub fn render_book(item: &BibItem, ctx: &RenderContext) -> String {
     }
 
     // SERIES
-    let series = render_series(ctx.series_name.as_deref());
+    let series = render_series(ctx.series_name.as_deref(), ctx.series_key.as_deref());
     push_segment(&mut parts, series);
 
     // ADDRESS: PUBLISHER
-    let publisher = render_publisher(item.address.as_deref(), ctx.publisher_name.as_deref());
+    let publisher = render_publisher(
+        item.address.as_deref(),
+        ctx.publisher_name.as_deref(),
+        ctx.publisher_key.as_deref(),
+    );
     push_segment(&mut parts, publisher);
 
     // DOI/URL
@@ -231,7 +235,11 @@ pub fn render_chapter(item: &BibItem, ctx: &RenderContext) -> String {
     }
 
     // ADDRESS: PUBLISHER
-    let publisher = render_publisher(item.address.as_deref(), ctx.publisher_name.as_deref());
+    let publisher = render_publisher(
+        item.address.as_deref(),
+        ctx.publisher_name.as_deref(),
+        ctx.publisher_key.as_deref(),
+    );
     if !publisher.is_empty() {
         container_parts.push(publisher);
     }
@@ -316,10 +324,9 @@ pub fn render_thesis(item: &BibItem, ctx: &RenderContext) -> String {
 
     let mut suffix_parts: Vec<String> = Vec::new();
     suffix_parts.push(thesis_type.to_string());
-    if let Some(ref school) = ctx.school_name
-        && !school.is_empty()
-    {
-        suffix_parts.push(super::components::esc(school));
+    let school = render_school(ctx.school_name.as_deref(), ctx.school_key.as_deref());
+    if !school.is_empty() {
+        suffix_parts.push(school);
     }
 
     let suffix = suffix_parts.join(", ");
@@ -397,11 +404,11 @@ pub fn render_generic(item: &BibItem, ctx: &RenderContext) -> String {
     push_segment(&mut parts, note);
 
     // INSTITUTION (for techreports)
-    if let Some(ref inst_name) = ctx.institution_name
-        && !inst_name.is_empty()
-    {
-        push_segment(&mut parts, super::components::esc(inst_name));
-    }
+    let institution = render_institution(
+        ctx.institution_name.as_deref(),
+        ctx.institution_key.as_deref(),
+    );
+    push_segment(&mut parts, institution);
 
     // DOI/URL
     let access = render_access(item.doi.as_deref(), item.url.as_deref());
