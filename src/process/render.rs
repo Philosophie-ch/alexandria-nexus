@@ -316,22 +316,27 @@ async fn fetch_and_render(
                     .journal_key
                     .as_deref()
                     .and_then(|k| journals_map.get(k).cloned()),
+                journal_key: bib.journal_key.clone(),
                 publisher_name: bib
                     .publisher_key
                     .as_deref()
                     .and_then(|k| publishers_map.get(k).cloned()),
+                publisher_key: bib.publisher_key.clone(),
                 series_name: bib
                     .series_key
                     .as_deref()
                     .and_then(|k| series_map.get(k).cloned()),
+                series_key: bib.series_key.clone(),
                 institution_name: bib
                     .institution_key
                     .as_deref()
                     .and_then(|k| institutions_map.get(k).cloned()),
+                institution_key: bib.institution_key.clone(),
                 school_name: bib
                     .school_key
                     .as_deref()
                     .and_then(|k| schools_map.get(k).cloned()),
+                school_key: bib.school_key.clone(),
                 crossref_bibkey: bib
                     .crossref
                     .as_deref()
