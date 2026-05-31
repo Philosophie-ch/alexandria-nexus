@@ -124,8 +124,12 @@ async fn test_render_single_article() {
         "bibkey present"
     );
     assert!(
-        html.contains("class=\"smallcaps\">Smith</span>"),
-        "author in smallcaps"
+        html.contains("class=\"smallcaps\"") && html.contains(">Smith</span>"),
+        "author in smallcaps: {html}"
+    );
+    assert!(
+        html.contains(&format!("data-author-key=\"{author_key}\"")),
+        "author key present: {html}"
     );
     assert!(
         html.contains("data-field=\"date\">2024</span>"),
