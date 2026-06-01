@@ -175,8 +175,12 @@ pub fn render_book(item: &BibItem, ctx: &RenderContext) -> String {
         push_segment(&mut parts, edition);
     }
 
-    // SERIES
-    let series = render_series(ctx.series_name.as_deref(), ctx.series_key.as_deref());
+    // SERIES [n. NUMBER]
+    let series = render_series(
+        ctx.series_name.as_deref(),
+        ctx.series_key.as_deref(),
+        ctx.series_number.as_deref(),
+    );
     push_segment(&mut parts, series);
 
     // ADDRESS: PUBLISHER
@@ -212,7 +216,8 @@ pub fn render_chapter(item: &BibItem, ctx: &RenderContext) -> String {
     // YEAR
     push_segment(&mut parts, render_date(item));
 
-    // "TITLE." In BOOKTITLE, [edited by EDITOR,] p./pp. PAGES. ADDRESS: PUBLISHER
+    // "TITLE." In BOOKTITLE, [volume VOL,] [edited by EDITOR,] p./pp. PAGES.
+    // [SERIES [n. NUMBER].] ADDRESS: PUBLISHER. doi:DOI
     let title = render_title(
         item.title_unicode.as_deref().unwrap_or(&item.title_latex),
         true,
@@ -263,23 +268,29 @@ pub fn render_chapter(item: &BibItem, ctx: &RenderContext) -> String {
         container_parts.push(pages_or_eid);
     }
 
-    // ADDRESS: PUBLISHER
-    let publisher = render_publisher(
-        ctx.address.as_deref(),
-        ctx.publisher_name.as_deref(),
-        ctx.publisher_key.as_deref(),
-    );
-    if !publisher.is_empty() {
-        container_parts.push(publisher);
-    }
-
-    // Join: "TITLE." In BOOKTITLE, edited by EDITOR, p./pp. PAGES. ADDRESS: PUBLISHER
+    // Join container: "TITLE." In BOOKTITLE, edited by EDITOR, p./pp. PAGES
     let container = container_parts.join(", ");
     if !container.is_empty() {
         push_segment(&mut parts, format!("{title}. {container}"));
     } else {
         push_segment(&mut parts, title);
     }
+
+    // SERIES [n. NUMBER]
+    let series = render_series(
+        ctx.series_name.as_deref(),
+        ctx.series_key.as_deref(),
+        ctx.series_number.as_deref(),
+    );
+    push_segment(&mut parts, series);
+
+    // ADDRESS: PUBLISHER
+    let publisher = render_publisher(
+        ctx.address.as_deref(),
+        ctx.publisher_name.as_deref(),
+        ctx.publisher_key.as_deref(),
+    );
+    push_segment(&mut parts, publisher);
 
     // DOI/URL
     let access = render_access(item.doi.as_deref(), item.url.as_deref());
@@ -288,21 +299,26 @@ pub fn render_chapter(item: &BibItem, ctx: &RenderContext) -> String {
     join_with_periods(&parts)
 }
 
-/// Render editors inline for incollection: "Given Family and Given Family" (no small caps).
+/// Render editors inline for incollection: "Given FAMILY and Given FAMILY" (small caps on family).
 fn render_editor_inline(editors: &[super::AuthorName]) -> String {
     let parts: Vec<String> = editors
         .iter()
         .map(|a| {
-            if let Some(ref mononym) = a.mononym {
+            if let Some(ref variant) = a.variant_unicode {
+                super::components::esc(variant)
+            } else if let Some(ref mononym) = a.mononym {
                 super::components::esc(mononym)
             } else {
                 let given = a.given.as_deref().unwrap_or("");
                 let family = a.family.as_deref().unwrap_or("");
                 if given.is_empty() {
-                    super::components::esc(family)
+                    format!(
+                        "<span class=\"smallcaps\">{}</span>",
+                        super::components::esc(family)
+                    )
                 } else {
                     format!(
-                        "{} {}",
+                        "{} <span class=\"smallcaps\">{}</span>",
                         super::components::esc(given),
                         super::components::esc(family)
                     )

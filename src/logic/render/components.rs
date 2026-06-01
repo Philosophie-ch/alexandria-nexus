@@ -326,15 +326,29 @@ pub fn render_note(note_unicode: Option<&str>) -> String {
 // Series rendering
 // =============================================================================
 
-/// Render a series name.
-pub fn render_series(series_name: Option<&str>, series_key: Option<&str>) -> String {
+/// Render a series name with optional series number.
+///
+/// With number: `<span data-field="series">Name</span> n. <span data-field="number">10</span>`
+/// Without: `<span data-field="series">Name</span>`
+pub fn render_series(
+    series_name: Option<&str>,
+    series_key: Option<&str>,
+    series_number: Option<&str>,
+) -> String {
     match series_name.filter(|s| !s.is_empty()) {
         Some(name) => {
             let key_attr = match series_key {
                 Some(k) => format!(" data-series-key=\"{}\"", esc(k)),
                 None => String::new(),
             };
-            format!("<span data-field=\"series\"{key_attr}>{}</span>", esc(name))
+            let name_span = format!("<span data-field=\"series\"{key_attr}>{}</span>", esc(name));
+            match series_number.filter(|n| !n.is_empty()) {
+                Some(n) => format!(
+                    "{name_span} n.\u{00a0}<span data-field=\"number\">{}</span>",
+                    esc(n)
+                ),
+                None => name_span,
+            }
         }
         None => String::new(),
     }
@@ -513,7 +527,7 @@ mod tests {
 
     #[test]
     fn test_render_series_with_key() {
-        let html = render_series(Some("Cambridge Studies"), Some("cambridge_studies"));
+        let html = render_series(Some("Cambridge Studies"), Some("cambridge_studies"), None);
         assert!(html.contains("data-series-key=\"cambridge_studies\""));
         assert!(html.contains(
             "data-field=\"series\" data-series-key=\"cambridge_studies\">Cambridge Studies</span>"
@@ -522,22 +536,51 @@ mod tests {
 
     #[test]
     fn test_render_series_without_key() {
-        let html = render_series(Some("Cambridge Studies"), None);
+        let html = render_series(Some("Cambridge Studies"), None, None);
         assert!(!html.contains("data-series-key"));
         assert!(html.contains("<span data-field=\"series\">Cambridge Studies</span>"));
     }
 
     #[test]
     fn test_render_series_key_escaped() {
-        let html = render_series(Some("S&S"), Some("s<k"));
+        let html = render_series(Some("S&S"), Some("s<k"), None);
         assert!(html.contains("data-series-key=\"s&lt;k\""));
         assert!(html.contains("S&amp;S"));
     }
 
     #[test]
     fn test_render_series_empty_name() {
-        assert!(render_series(Some(""), Some("key")).is_empty());
-        assert!(render_series(None, Some("key")).is_empty());
+        assert!(render_series(Some(""), Some("key"), None).is_empty());
+        assert!(render_series(None, Some("key"), None).is_empty());
+    }
+
+    #[test]
+    fn test_render_series_with_number() {
+        let html = render_series(
+            Some("Contemporary Debates in Philosophy"),
+            Some("cdp"),
+            Some("10"),
+        );
+        assert!(
+            html.contains("Contemporary Debates in Philosophy</span> n.\u{00a0}<span data-field=\"number\">10</span>"),
+            "series name followed by number: {html}"
+        );
+    }
+
+    #[test]
+    fn test_render_series_number_without_name() {
+        let html = render_series(None, None, Some("10"));
+        assert!(html.is_empty(), "no series name means no output");
+    }
+
+    #[test]
+    fn test_render_series_empty_number() {
+        let html = render_series(Some("Oxford Handbooks"), Some("oh"), Some(""));
+        assert!(
+            !html.contains("n.\u{00a0}"),
+            "empty number is not rendered: {html}"
+        );
+        assert!(html.contains("Oxford Handbooks"), "name still rendered");
     }
 
     // =========================================================================

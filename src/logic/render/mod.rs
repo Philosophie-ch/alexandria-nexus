@@ -41,7 +41,7 @@ pub struct AuthorName {
 
 /// Pre-resolved data that the renderer needs but cannot fetch itself (no I/O).
 ///
-/// Built by the adapter layer.
+/// Built by the process layer.
 #[derive(Debug, Clone, Default)]
 pub struct RenderContext {
     /// Authors linked to the bibitem, ordered by position.
@@ -59,6 +59,8 @@ pub struct RenderContext {
     /// Pre-resolved series name (unicode).
     pub series_name: Option<String>,
     pub series_key: Option<String>,
+    /// Series number (from the entry's or parent's `number` field for books/chapters).
+    pub series_number: Option<String>,
     /// Pre-resolved institution name (unicode).
     pub institution_name: Option<String>,
     pub institution_key: Option<String>,
@@ -452,7 +454,10 @@ mod tests {
             html.contains("In <span data-field=\"booktitle\"><em>The Big Book</em></span>"),
             "booktitle"
         );
-        assert!(html.contains("edited by Jane Editor"), "editor inline");
+        assert!(
+            html.contains("edited by Jane <span class=\"smallcaps\">Editor</span>"),
+            "editor inline with smallcaps: {html}"
+        );
         assert!(html.contains("pp. "), "range pages use pp.");
         assert!(html.contains("100\u{2013}120"), "pages with en-dash");
     }
@@ -1076,8 +1081,12 @@ mod tests {
             "booktitle from ctx: {html}"
         );
         assert!(
-            html.contains("edited by Ed Editor"),
-            "editors from ctx: {html}"
+            html.contains("edited by Ed <span class=\"smallcaps\">Editor</span>"),
+            "editors from ctx with smallcaps: {html}"
+        );
+        assert!(
+            html.contains("Great Series"),
+            "series rendered in incollection: {html}"
         );
         assert!(html.contains("New York: "), "address from ctx: {html}");
         assert!(
@@ -1127,5 +1136,190 @@ mod tests {
             "address from ctx in book: {html}"
         );
         assert!(html.contains("Publisher"), "publisher present: {html}");
+    }
+
+    // =========================================================================
+    // Test: series with number in book
+    // =========================================================================
+
+    #[test]
+    fn test_render_book_series_with_number() {
+        let item = make_bibitem(
+            EntryType::Book,
+            "sider:2008",
+            "Contemporary Debates in Metaphysics",
+            Some(2008),
+        );
+
+        let ctx = RenderContext {
+            editors: vec![
+                make_author("Theodore", "Sider"),
+                make_author("John", "Hawthorne"),
+                make_author("Dean W.", "Zimmerman"),
+            ],
+            series_name: Some("Contemporary Debates in Philosophy".to_string()),
+            series_key: Some("contemporary_debates_in_philosophy".to_string()),
+            series_number: Some("10".to_string()),
+            publisher_name: Some("Wiley-Blackwell".to_string()),
+            address: Some("Malden, Massachusetts".to_string()),
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(
+            html.contains("Contemporary Debates in Philosophy</span> n.\u{00a0}<span data-field=\"number\">10</span>"),
+            "series with number rendered: {html}"
+        );
+    }
+
+    // =========================================================================
+    // Test: series without number in incollection
+    // =========================================================================
+
+    #[test]
+    fn test_render_incollection_series_without_number() {
+        let mut item = make_bibitem(
+            EntryType::Incollection,
+            "zimmerman:2011",
+            "Presentism and the Space-Time Manifold",
+            Some(2011),
+        );
+        item.pages = Some("163--245".to_string());
+        item.doi = Some("10.1093/oxfordhb/9780199298204.003.0008".to_string());
+
+        let ctx = RenderContext {
+            authors: vec![make_author("Dean W.", "Zimmerman")],
+            editors: vec![make_author("Craig", "Callender")],
+            booktitle_unicode: Some("The Oxford Handbook of Philosophy of Time".to_string()),
+            series_name: Some("Oxford Handbooks".to_string()),
+            series_key: Some("oxford_handbooks".to_string()),
+            publisher_name: Some("Oxford University Press".to_string()),
+            address: Some("Oxford".to_string()),
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(
+            html.contains("Oxford Handbooks</span>"),
+            "series name rendered: {html}"
+        );
+        assert!(
+            !html.contains("n.\u{00a0}"),
+            "no series number when absent: {html}"
+        );
+        assert!(html.contains("Oxford: "), "address rendered: {html}");
+        assert!(
+            html.contains("Oxford University Press"),
+            "publisher rendered: {html}"
+        );
+    }
+
+    // =========================================================================
+    // Test: series with number in incollection
+    // =========================================================================
+
+    #[test]
+    fn test_render_incollection_series_with_number() {
+        let mut item = make_bibitem(
+            EntryType::Incollection,
+            "zimmerman:2008b",
+            "The Privileged Present",
+            Some(2008),
+        );
+        item.pages = Some("211--225".to_string());
+
+        let ctx = RenderContext {
+            authors: vec![make_author("Dean W.", "Zimmerman")],
+            editors: vec![
+                make_author("Theodore", "Sider"),
+                make_author("John", "Hawthorne"),
+                make_author("Dean W.", "Zimmerman"),
+            ],
+            booktitle_unicode: Some("Contemporary Debates in Metaphysics".to_string()),
+            series_name: Some("Contemporary Debates in Philosophy".to_string()),
+            series_key: Some("contemporary_debates_in_philosophy".to_string()),
+            series_number: Some("10".to_string()),
+            publisher_name: Some("Wiley-Blackwell".to_string()),
+            address: Some("Malden, Massachusetts".to_string()),
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(
+            html.contains("Contemporary Debates in Philosophy</span> n.\u{00a0}<span data-field=\"number\">10</span>"),
+            "series with number in incollection: {html}"
+        );
+        assert!(
+            html.contains("Malden, Massachusetts: "),
+            "address after series: {html}"
+        );
+    }
+
+    // =========================================================================
+    // Test: incollection editor small caps with multiple editors
+    // =========================================================================
+
+    #[test]
+    fn test_render_incollection_editor_smallcaps() {
+        let mut item = make_bibitem(EntryType::Incollection, "ch:2020", "A Chapter", Some(2020));
+        item.pages = Some("1-10".to_string());
+
+        let ctx = RenderContext {
+            authors: vec![make_author("Jane", "Author")],
+            editors: vec![
+                make_author("Theodore", "Sider"),
+                make_author("John", "Hawthorne"),
+                make_author("Dean W.", "Zimmerman"),
+            ],
+            booktitle_unicode: Some("Some Book".to_string()),
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(
+            html.contains("Theodore <span class=\"smallcaps\">Sider</span>"),
+            "first editor family in smallcaps: {html}"
+        );
+        assert!(
+            html.contains("John <span class=\"smallcaps\">Hawthorne</span>"),
+            "second editor family in smallcaps: {html}"
+        );
+        assert!(
+            html.contains("Dean W. <span class=\"smallcaps\">Zimmerman</span>"),
+            "third editor family in smallcaps: {html}"
+        );
+    }
+
+    // =========================================================================
+    // Test: incollection publisher is period-separated from container
+    // =========================================================================
+
+    #[test]
+    fn test_render_incollection_publisher_period_separated() {
+        let mut item = make_bibitem(EntryType::Incollection, "ch:2020", "A Chapter", Some(2020));
+        item.pages = Some("100-120".to_string());
+
+        let ctx = RenderContext {
+            authors: vec![make_author("Jane", "Author")],
+            booktitle_unicode: Some("The Book".to_string()),
+            publisher_name: Some("Publisher".to_string()),
+            address: Some("City".to_string()),
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(
+            !html.contains("100\u{2013}120, City"),
+            "publisher should NOT be comma-joined with pages: {html}"
+        );
+        assert!(
+            html.contains("100\u{2013}120</span>. City: "),
+            "publisher is period-separated from pages: {html}"
+        );
     }
 }
