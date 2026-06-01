@@ -24,6 +24,7 @@ use crate::logic::full_import::{
     KeywordJunctionRow, LookupMaps, NamedEntityKind, ParsedBibRow, ResolutionCtx, RowError,
     ValidationReport, assemble_validation_report, build_bibitem_dto, collect_author_junction_rows,
     collect_keyword_junction_rows, collect_ref_rows, filter_importable_rows, generate_key,
+    null_invalid_crossrefs,
 };
 use crate::process::import::{BibitemNotesData, BibitemNotesStore};
 use crate::validation::{
@@ -211,10 +212,16 @@ pub async fn validate_import(
     bibkey_lookup: &impl BibkeyLookup,
     rows: &[ParsedBibRow],
     row_errors: Vec<RowError>,
+    delete_stale: bool,
 ) -> Result<ValidationReport, HexforgeError> {
     let maps =
         build_lookup_maps(author_lookup, entity_lookup, keyword_lookup, bibkey_lookup).await?;
-    Ok(assemble_validation_report(rows, row_errors, &maps))
+    Ok(assemble_validation_report(
+        rows,
+        row_errors,
+        &maps,
+        delete_stale,
+    ))
 }
 
 // =============================================================================
@@ -458,7 +465,7 @@ pub async fn import_bibitems(
         build_lookup_maps(author_lookup, entity_lookup, keyword_lookup, bibkey_lookup).await?;
 
     // 2. Assemble validation report; block only on hard errors (duplicate bibkeys)
-    let report = assemble_validation_report(&rows, row_errors, &maps);
+    let report = assemble_validation_report(&rows, row_errors, &maps, delete_stale);
     if report.has_hard_errors() {
         return Ok(FullImportResult::ValidationFailed(Box::new(report)));
     }
@@ -509,11 +516,21 @@ pub async fn import_bibitems(
             .await?;
     }
 
-    // 8. Bulk insert all bibitems
-    let entities: Vec<BibItem> = entities_with_flags.into_iter().map(|(_, e)| e).collect();
+    // 8. Null crossrefs pointing to bibkeys absent from the final set
+    let mut entities: Vec<BibItem> = entities_with_flags.into_iter().map(|(_, e)| e).collect();
+    let insert_bibkeys: HashSet<String> = entities.iter().map(|e| e.bibkey.clone()).collect();
+    let nulled_crossrefs = null_invalid_crossrefs(
+        &mut entities,
+        &insert_bibkeys,
+        &ctx.existing_bibkeys,
+        &file_bibkeys,
+        delete_stale,
+    );
+
+    // 9. Bulk insert all bibitems
     let _inserted_ids = bulk_inserter.bulk_insert_bibitems(&entities).await?;
 
-    // 9. Collect junction rows and bulk insert
+    // 10. Collect junction rows and bulk insert
     let author_rows = collect_author_junction_rows(&parsed_rows, &ctx);
     let keyword_rows = collect_keyword_junction_rows(&parsed_rows, &ctx);
     let ref_rows = collect_ref_rows(&parsed_rows);
@@ -564,6 +581,7 @@ pub async fn import_bibitems(
         failed,
         skipped,
         errors: all_errors,
+        nulled_crossrefs,
     }))
 }
 
