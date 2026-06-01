@@ -10,7 +10,7 @@ use std::future::Future;
 use hexforge::HexforgeError;
 
 use crate::domain::junctions::BibitemAuthorsRow;
-use crate::domain::{Author, AuthorRole, BibItem};
+use crate::domain::{Author, AuthorRole, BibItem, EntryType};
 use crate::logic::render::{
     RenderContext, author_sort_key, extract_role_authors, render_bibliography,
 };
@@ -390,6 +390,18 @@ async fn fetch_and_render(
                 .clone()
                 .or_else(|| parent.and_then(|p| p.address.clone()));
 
+            // Series number: for non-article types with a resolved series,
+            // use the entry's `number` field (or parent's) as the series number.
+            // For articles, `number` is the journal issue number, not series.
+            let series_number =
+                if series_name.is_some() && !matches!(bib.entry_type, EntryType::Article) {
+                    bib.number
+                        .clone()
+                        .or_else(|| parent.and_then(|p| p.number.clone()))
+                } else {
+                    None
+                };
+
             let ctx = RenderContext {
                 authors,
                 editors,
@@ -400,6 +412,7 @@ async fn fetch_and_render(
                 publisher_key,
                 series_name,
                 series_key,
+                series_number,
                 institution_name,
                 institution_key,
                 school_name,
