@@ -125,6 +125,13 @@ impl_to_schema! {
 // =============================================================================
 
 impl_to_schema! {
+    struct crate::logic::full_import::NulledCrossref => "NulledCrossref" {
+        bibkey: String,
+        crossref: String,
+    }
+}
+
+impl_to_schema! {
     struct crate::logic::full_import::FullImportReport => "FullImportReport" {
         imported: usize,
         updated: usize,
@@ -132,6 +139,7 @@ impl_to_schema! {
         failed: usize,
         skipped: usize,
         errors: Vec<crate::logic::full_import::RowError>,
+        nulled_crossrefs: Vec<crate::logic::full_import::NulledCrossref>,
     }
 }
 

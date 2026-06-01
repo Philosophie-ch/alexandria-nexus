@@ -21,16 +21,28 @@ pub struct ImportFullCsvParams {
 }
 
 /// Validate a human-readable CSV without importing.
-/// `POST /api/v1/admin/validate-full-csv`
+/// `POST /api/v1/admin/validate-full-csv?delete_stale=true`
+///
+/// When `delete_stale=true`, crossrefs are checked against only the file's bibkeys
+/// (stale DB bibkeys would be removed). Default: checks against DB + file bibkeys.
 pub async fn validate_full_csv(
     State(state): State<AppState>,
+    Query(params): Query<ImportFullCsvParams>,
     multipart: Multipart,
 ) -> Result<Json<ValidationReport>, HexforgeError> {
     let data = extract_csv_bytes(multipart).await?;
     let (rows, row_errors) = parse_all_rows(&data)?;
     let store = state.full_import_store();
-    let report =
-        full_import::validate_import(&store, &store, &store, &store, &rows, row_errors).await?;
+    let report = full_import::validate_import(
+        &store,
+        &store,
+        &store,
+        &store,
+        &rows,
+        row_errors,
+        params.delete_stale,
+    )
+    .await?;
     Ok(Json(report))
 }
 

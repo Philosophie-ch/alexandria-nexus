@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use serde::Serialize;
 
 use crate::domain::{
-    AuthorRole, CreateBibItem, EntryType, Epoch, LangId, License, PubState, RefType,
+    AuthorRole, BibItem, CreateBibItem, EntryType, Epoch, LangId, License, PubState, RefType,
 };
 use crate::logic::latex_citations::extract_cite_keys;
 use crate::logic::pages::compute_start_page;
@@ -240,6 +240,16 @@ impl ValidationReport {
 }
 
 // =============================================================================
+// Crossref nulling types
+// =============================================================================
+
+#[derive(Debug, Serialize)]
+pub struct NulledCrossref {
+    pub bibkey: String,
+    pub crossref: String,
+}
+
+// =============================================================================
 // Entity import report types
 // =============================================================================
 
@@ -310,6 +320,8 @@ pub struct FullImportReport {
     /// Rows skipped because one or more entity references (author, journal, etc.) could not be resolved.
     pub skipped: usize,
     pub errors: Vec<RowError>,
+    /// Crossrefs that were nulled because they point to bibkeys not in the final set.
+    pub nulled_crossrefs: Vec<NulledCrossref>,
 }
 
 pub enum FullImportResult {
@@ -766,10 +778,15 @@ pub fn apply_date_to_dto(date: &ParsedDate, dto: &mut CreateBibItem) {
 
 /// Assemble a ValidationReport from parsed rows and lookup maps.
 /// This is pure: no I/O, just data transformation.
+///
+/// When `delete_stale` is true, stale DB bibkeys (present in DB but absent from
+/// the CSV) will be removed during import, so crossrefs are checked only against
+/// the file's bibkeys. When false, both DB and file bibkeys are valid targets.
 pub fn assemble_validation_report(
     parsed_rows: &[ParsedBibRow],
     row_errors: Vec<RowError>,
     maps: &LookupMaps,
+    delete_stale: bool,
 ) -> ValidationReport {
     let total_rows = parsed_rows.len() + row_errors.len();
 
@@ -823,8 +840,12 @@ pub fn assemble_validation_report(
         level_3: find_missing_keywords(&collected.keywords_l3, 3, &maps.keywords),
     };
 
-    // Classify bibkey references (check against DB + input bibkeys)
-    let all_known_bibkeys: HashSet<String> = maps.bibkeys.union(&file_bibkeys).cloned().collect();
+    // Classify bibkey references against the final bibkey set
+    let all_known_bibkeys: HashSet<String> = if delete_stale {
+        file_bibkeys.clone()
+    } else {
+        maps.bibkeys.union(&file_bibkeys).cloned().collect()
+    };
     let missing_crossrefs = find_missing_bibkeys(&collected.crossref_bibkeys, &all_known_bibkeys);
     let missing_further_refs =
         find_missing_bibkeys(&collected.further_ref_bibkeys, &all_known_bibkeys);
@@ -853,6 +874,47 @@ pub fn assemble_validation_report(
         missing_depends_on,
         stale_bibitems,
     }
+}
+
+// =============================================================================
+// Crossref nulling (pure)
+// =============================================================================
+
+/// Null crossrefs that point to bibkeys absent from the final set.
+///
+/// The final bibkey set depends on `delete_stale`:
+/// - `true`:  `(existing & file) | insert` (stale DB bibkeys are removed)
+/// - `false`: `existing | insert`
+///
+/// `insert_bibkeys` is the set of bibkeys actually being inserted (rows that
+/// passed entity resolution). `file_bibkeys` is the full set from the CSV.
+pub fn null_invalid_crossrefs(
+    entities: &mut [BibItem],
+    insert_bibkeys: &HashSet<String>,
+    existing_bibkeys: &HashSet<String>,
+    file_bibkeys: &HashSet<String>,
+    delete_stale: bool,
+) -> Vec<NulledCrossref> {
+    let final_bibkeys: HashSet<&String> = if delete_stale {
+        let surviving = existing_bibkeys.intersection(file_bibkeys);
+        surviving.chain(insert_bibkeys.iter()).collect()
+    } else {
+        existing_bibkeys.union(insert_bibkeys).collect()
+    };
+
+    let mut nulled = Vec::new();
+    for entity in entities.iter_mut() {
+        if let Some(ref cr) = entity.crossref
+            && !final_bibkeys.contains(cr)
+        {
+            nulled.push(NulledCrossref {
+                bibkey: entity.bibkey.clone(),
+                crossref: cr.clone(),
+            });
+            entity.crossref = None;
+        }
+    }
+    nulled
 }
 
 // =============================================================================
@@ -1198,5 +1260,273 @@ mod tests {
     #[test]
     fn multiple_consecutive_separators_collapsed() {
         assert_eq!(generate_key("A  --  B"), "a_b");
+    }
+
+    // -------------------------------------------------------------------------
+    // null_invalid_crossrefs
+    // -------------------------------------------------------------------------
+
+    fn make_test_bibitem(bibkey: &str, crossref: Option<&str>) -> BibItem {
+        BibItem {
+            id: 0,
+            bibkey: bibkey.to_string(),
+            entry_type: EntryType::Article,
+            title_latex: "Test".to_string(),
+            crossref: crossref.map(String::from),
+            address: None,
+            booktitle_latex: None,
+            booktitle_unicode: None,
+            date_day: None,
+            date_is_no_date: false,
+            date_month: None,
+            date_year: None,
+            date_year_2_hyphen: None,
+            date_year_2_slash: None,
+            doi: None,
+            edition: None,
+            eid: None,
+            epoch: None,
+            eprint: None,
+            extra_note_latex: None,
+            extra_note_unicode: None,
+            fulltext_path: None,
+            has_fulltext: false,
+            institution_key: None,
+            is_translation: false,
+            issuetitle_latex: None,
+            issuetitle_unicode: None,
+            journal_key: None,
+            langid: None,
+            license: None,
+            note_latex: None,
+            note_unicode: None,
+            number: None,
+            number_numeric: None,
+            options: None,
+            pages: None,
+            person_key: None,
+            publisher_key: None,
+            pubstate: None,
+            school_key: None,
+            series_key: None,
+            shorthand: None,
+            start_page: None,
+            title_unicode: None,
+            type_field: None,
+            url: None,
+            urn: None,
+            volume: None,
+            volume_numeric: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
+    }
+
+    #[test]
+    fn null_crossrefs_valid_crossref_preserved() {
+        let mut entities = vec![make_test_bibitem("a", Some("b"))];
+        let insert = HashSet::from(["a".to_string(), "b".to_string()]);
+        let existing = HashSet::new();
+        let file = HashSet::from(["a".to_string(), "b".to_string()]);
+
+        let nulled = null_invalid_crossrefs(&mut entities, &insert, &existing, &file, false);
+
+        assert!(nulled.is_empty());
+        assert_eq!(entities[0].crossref.as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn null_crossrefs_invalid_crossref_nulled() {
+        let mut entities = vec![make_test_bibitem("a", Some("nonexistent"))];
+        let insert = HashSet::from(["a".to_string()]);
+        let existing = HashSet::new();
+        let file = HashSet::from(["a".to_string()]);
+
+        let nulled = null_invalid_crossrefs(&mut entities, &insert, &existing, &file, false);
+
+        assert_eq!(nulled.len(), 1);
+        assert_eq!(nulled[0].bibkey, "a");
+        assert_eq!(nulled[0].crossref, "nonexistent");
+        assert!(entities[0].crossref.is_none());
+    }
+
+    #[test]
+    fn null_crossrefs_no_crossref_untouched() {
+        let mut entities = vec![make_test_bibitem("a", None)];
+        let insert = HashSet::from(["a".to_string()]);
+        let existing = HashSet::new();
+        let file = HashSet::from(["a".to_string()]);
+
+        let nulled = null_invalid_crossrefs(&mut entities, &insert, &existing, &file, false);
+
+        assert!(nulled.is_empty());
+        assert!(entities[0].crossref.is_none());
+    }
+
+    #[test]
+    fn null_crossrefs_delete_stale_removes_stale_target() {
+        let mut entities = vec![make_test_bibitem("a", Some("stale_bib"))];
+        let insert = HashSet::from(["a".to_string()]);
+        let existing = HashSet::from(["stale_bib".to_string()]);
+        let file = HashSet::from(["a".to_string()]);
+
+        let nulled = null_invalid_crossrefs(&mut entities, &insert, &existing, &file, true);
+
+        assert_eq!(nulled.len(), 1);
+        assert_eq!(nulled[0].crossref, "stale_bib");
+        assert!(entities[0].crossref.is_none());
+    }
+
+    #[test]
+    fn null_crossrefs_no_delete_stale_keeps_existing_target() {
+        let mut entities = vec![make_test_bibitem("a", Some("db_only"))];
+        let insert = HashSet::from(["a".to_string()]);
+        let existing = HashSet::from(["db_only".to_string()]);
+        let file = HashSet::from(["a".to_string()]);
+
+        let nulled = null_invalid_crossrefs(&mut entities, &insert, &existing, &file, false);
+
+        assert!(nulled.is_empty());
+        assert_eq!(entities[0].crossref.as_deref(), Some("db_only"));
+    }
+
+    #[test]
+    fn null_crossrefs_delete_stale_surviving_db_bibkey_valid() {
+        let mut entities = vec![make_test_bibitem("a", Some("survives"))];
+        let insert = HashSet::from(["a".to_string()]);
+        // "survives" is in both existing and file, so it survives stale deletion
+        let existing = HashSet::from(["survives".to_string()]);
+        let file = HashSet::from(["a".to_string(), "survives".to_string()]);
+
+        let nulled = null_invalid_crossrefs(&mut entities, &insert, &existing, &file, true);
+
+        assert!(nulled.is_empty());
+        assert_eq!(entities[0].crossref.as_deref(), Some("survives"));
+    }
+
+    #[test]
+    fn null_crossrefs_mixed_valid_and_invalid() {
+        let mut entities = vec![
+            make_test_bibitem("a", Some("b")),
+            make_test_bibitem("b", Some("ghost")),
+            make_test_bibitem("c", None),
+        ];
+        let insert = HashSet::from(["a".to_string(), "b".to_string(), "c".to_string()]);
+        let existing = HashSet::new();
+        let file = HashSet::from(["a".to_string(), "b".to_string(), "c".to_string()]);
+
+        let nulled = null_invalid_crossrefs(&mut entities, &insert, &existing, &file, true);
+
+        assert_eq!(nulled.len(), 1);
+        assert_eq!(nulled[0].bibkey, "b");
+        assert_eq!(nulled[0].crossref, "ghost");
+        assert_eq!(entities[0].crossref.as_deref(), Some("b"));
+        assert!(entities[1].crossref.is_none());
+        assert!(entities[2].crossref.is_none());
+    }
+
+    // -------------------------------------------------------------------------
+    // assemble_validation_report with delete_stale
+    // -------------------------------------------------------------------------
+
+    fn make_minimal_parsed_row(bibkey: &str, crossref: Option<&str>) -> ParsedBibRow {
+        ParsedBibRow {
+            bibkey: bibkey.to_string(),
+            entry_type: EntryType::Article,
+            authors: Vec::new(),
+            editors: Vec::new(),
+            guesteditors: Vec::new(),
+            person: None,
+            date: ParsedDate::Year(2024),
+            pubstate: None,
+            title: "Test".to_string(),
+            booktitle: None,
+            journal_name: None,
+            publisher_name: None,
+            institution_name: None,
+            school_name: None,
+            series_name: None,
+            crossref_bibkey: crossref.map(String::from),
+            keywords: ParsedKeywords::default(),
+            volume: None,
+            number: None,
+            pages: None,
+            eid: None,
+            address: None,
+            type_field: None,
+            edition: None,
+            note: None,
+            issuetitle: None,
+            extra_note: None,
+            shorthand: None,
+            note_perso: None,
+            note_stock: None,
+            note_missing: None,
+            change_request: None,
+            dltc_copyediting_note: None,
+            todo_general: None,
+            options: None,
+            doi: None,
+            url: None,
+            eprint: None,
+            urn: None,
+            epoch: None,
+            langid: None,
+            is_translation: false,
+            has_fulltext: false,
+            license: None,
+        }
+    }
+
+    fn make_empty_lookup_maps(db_bibkeys: HashSet<String>) -> LookupMaps {
+        LookupMaps {
+            authors: AuthorLookupResult {
+                id_map: HashMap::new(),
+                key_map: HashMap::new(),
+                variant_map: HashMap::new(),
+                famous_person_map: HashMap::new(),
+                famous_person_key_map: HashMap::new(),
+            },
+            journals: HashMap::new(),
+            publishers: HashMap::new(),
+            institutions: HashMap::new(),
+            schools: HashMap::new(),
+            series: HashMap::new(),
+            keywords: HashMap::new(),
+            bibkeys: db_bibkeys,
+        }
+    }
+
+    #[test]
+    fn validation_delete_stale_false_crossref_to_db_only_valid() {
+        let rows = vec![make_minimal_parsed_row("a", Some("db_only"))];
+        let maps = make_empty_lookup_maps(HashSet::from(["db_only".to_string()]));
+
+        let report = assemble_validation_report(&rows, Vec::new(), &maps, false);
+
+        assert!(report.missing_crossrefs.is_empty());
+    }
+
+    #[test]
+    fn validation_delete_stale_true_crossref_to_db_only_missing() {
+        let rows = vec![make_minimal_parsed_row("a", Some("db_only"))];
+        let maps = make_empty_lookup_maps(HashSet::from(["db_only".to_string()]));
+
+        let report = assemble_validation_report(&rows, Vec::new(), &maps, true);
+
+        assert_eq!(report.missing_crossrefs, vec!["db_only".to_string()]);
+    }
+
+    #[test]
+    fn validation_delete_stale_true_crossref_to_file_bibkey_valid() {
+        let rows = vec![
+            make_minimal_parsed_row("a", Some("b")),
+            make_minimal_parsed_row("b", None),
+        ];
+        let maps = make_empty_lookup_maps(HashSet::new());
+
+        let report = assemble_validation_report(&rows, Vec::new(), &maps, true);
+
+        assert!(report.missing_crossrefs.is_empty());
     }
 }
