@@ -35,7 +35,6 @@ pub trait BibitemResolver: Send + Sync {
 /// Contract for batch-fetching related entity names for rendering.
 ///
 /// Each method returns a map of entity key → display name (unicode).
-/// The crossref method returns crossref key → bibkey instead.
 pub trait RenderEntityFetcher: Send + Sync {
     fn fetch_journal_names(
         &self,
@@ -58,11 +57,6 @@ pub trait RenderEntityFetcher: Send + Sync {
     ) -> impl Future<Output = Result<HashMap<String, String>, HexforgeError>> + Send;
 
     fn fetch_series_names(
-        &self,
-        keys: &[String],
-    ) -> impl Future<Output = Result<HashMap<String, String>, HexforgeError>> + Send;
-
-    fn fetch_crossref_bibkeys(
         &self,
         keys: &[String],
     ) -> impl Future<Output = Result<HashMap<String, String>, HexforgeError>> + Send;
@@ -192,7 +186,7 @@ pub async fn render_pipeline(
     };
 
     let main_ids: Vec<i64> = bibitems.iter().map(|b| b.id).collect();
-    let main_html = fetch_and_render(entity_fetcher, author_fetcher, bibitems).await?;
+    let main_html = fetch_and_render(resolver, entity_fetcher, author_fetcher, bibitems).await?;
 
     let further_refs_html = if include_further_refs {
         let main_id_set: HashSet<i64> = main_ids.iter().copied().collect();
@@ -205,7 +199,7 @@ pub async fn render_pipeline(
             None
         } else {
             let dep_bibitems = resolver.find_by_ids(&novel_dep_ids).await?;
-            Some(fetch_and_render(entity_fetcher, author_fetcher, dep_bibitems).await?)
+            Some(fetch_and_render(resolver, entity_fetcher, author_fetcher, dep_bibitems).await?)
         }
     } else {
         None
@@ -221,23 +215,61 @@ pub async fn render_pipeline(
 // Internal helpers
 // =============================================================================
 
+/// Resolve an optional FK key to a name from the lookup map,
+/// falling back to the parent bibitem's FK key if the child has none.
+fn resolve_name(
+    child_key: Option<&str>,
+    parent: Option<&&BibItem>,
+    parent_key_fn: fn(&BibItem) -> Option<&str>,
+    names_map: &HashMap<String, String>,
+) -> (Option<String>, Option<String>) {
+    if let Some(k) = child_key {
+        return (names_map.get(k).cloned(), Some(k.to_string()));
+    }
+    if let Some(p) = parent
+        && let Some(pk) = parent_key_fn(p)
+    {
+        return (names_map.get(pk).cloned(), Some(pk.to_string()));
+    }
+    (None, None)
+}
+
 /// Fetch all related data, build RenderContexts, sort, and render to HTML.
+///
+/// Resolves BibTeX-style crossref inheritance: when an incollection/inproceedings
+/// entry has a `crossref` pointing to a parent entry, missing fields (booktitle,
+/// editors, publisher, address, series) are inherited from the parent.
 async fn fetch_and_render(
+    resolver: &impl BibitemResolver,
     entity_fetcher: &impl RenderEntityFetcher,
     author_fetcher: &impl RenderAuthorFetcher,
     bibitems: Vec<BibItem>,
 ) -> Result<String, HexforgeError> {
-    let bibitem_ids: Vec<i64> = bibitems.iter().map(|b| b.id).collect();
+    // Fetch crossref parent bibitems
+    let crossref_bibkeys: Vec<String> = bibitems
+        .iter()
+        .filter_map(|b| b.crossref.clone())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let parent_bibitems = if !crossref_bibkeys.is_empty() {
+        resolver.find_by_bibkeys(&crossref_bibkeys).await?
+    } else {
+        Vec::new()
+    };
+    let parent_map: HashMap<&str, &BibItem> = parent_bibitems
+        .iter()
+        .map(|b| (b.bibkey.as_str(), b))
+        .collect();
 
-    // Collect unique FK keys
+    // Collect FK keys from children AND parents
     let mut journal_keys: Vec<String> = Vec::new();
     let mut publisher_keys: Vec<String> = Vec::new();
     let mut institution_keys: Vec<String> = Vec::new();
     let mut school_keys: Vec<String> = Vec::new();
     let mut series_keys: Vec<String> = Vec::new();
-    let mut crossref_keys: Vec<String> = Vec::new();
 
-    for bib in &bibitems {
+    for bib in bibitems.iter().chain(parent_bibitems.iter()) {
         if let Some(ref k) = bib.journal_key {
             journal_keys.push(k.clone());
         }
@@ -253,28 +285,23 @@ async fn fetch_and_render(
         if let Some(ref k) = bib.series_key {
             series_keys.push(k.clone());
         }
-        if let Some(ref k) = bib.crossref {
-            crossref_keys.push(k.clone());
-        }
     }
 
-    // Batch-fetch entity names and author junction data concurrently (all independent).
-    let (
-        journals_map,
-        publishers_map,
-        institutions_map,
-        schools_map,
-        series_map,
-        crossrefs_map,
-        author_rows,
-    ) = tokio::try_join!(
+    // Fetch author junction data for children AND parents
+    let all_bibitem_ids: Vec<i64> = bibitems
+        .iter()
+        .chain(parent_bibitems.iter())
+        .map(|b| b.id)
+        .collect();
+
+    // Batch-fetch entity names and author junction data concurrently
+    let (journals_map, publishers_map, institutions_map, schools_map, series_map, author_rows) = tokio::try_join!(
         entity_fetcher.fetch_journal_names(&journal_keys),
         entity_fetcher.fetch_publisher_names(&publisher_keys),
         entity_fetcher.fetch_institution_names(&institution_keys),
         entity_fetcher.fetch_school_names(&school_keys),
         entity_fetcher.fetch_series_names(&series_keys),
-        entity_fetcher.fetch_crossref_bibkeys(&crossref_keys),
-        author_fetcher.fetch_bibitem_authors(&bibitem_ids),
+        author_fetcher.fetch_bibitem_authors(&all_bibitem_ids),
     )?;
 
     // Batch-fetch author entities
@@ -297,50 +324,89 @@ async fn fetch_and_render(
             .push(row);
     }
 
-    // Build RenderContext for each bibitem
+    // Build RenderContext for each bibitem (with crossref fallback)
     let mut items_with_ctx: Vec<(BibItem, RenderContext)> = bibitems
         .into_iter()
         .map(|bib| {
             let bib_authors = authors_by_bibitem.get(&bib.bibkey);
+            let parent = bib.crossref.as_deref().and_then(|k| parent_map.get(k));
 
             let authors = extract_role_authors(bib_authors, AuthorRole::Author, &authors_map);
-            let editors = extract_role_authors(bib_authors, AuthorRole::Editor, &authors_map);
+
+            let mut editors = extract_role_authors(bib_authors, AuthorRole::Editor, &authors_map);
+            if editors.is_empty()
+                && let Some(p) = parent
+            {
+                let parent_authors = authors_by_bibitem.get(&p.bibkey);
+                editors = extract_role_authors(parent_authors, AuthorRole::Editor, &authors_map);
+            }
+
             let guesteditors =
                 extract_role_authors(bib_authors, AuthorRole::Guesteditor, &authors_map);
+
+            let (journal_name, journal_key) = resolve_name(
+                bib.journal_key.as_deref(),
+                parent,
+                |p| p.journal_key.as_deref(),
+                &journals_map,
+            );
+            let (publisher_name, publisher_key) = resolve_name(
+                bib.publisher_key.as_deref(),
+                parent,
+                |p| p.publisher_key.as_deref(),
+                &publishers_map,
+            );
+            let (series_name, series_key) = resolve_name(
+                bib.series_key.as_deref(),
+                parent,
+                |p| p.series_key.as_deref(),
+                &series_map,
+            );
+            let (institution_name, institution_key) = resolve_name(
+                bib.institution_key.as_deref(),
+                parent,
+                |p| p.institution_key.as_deref(),
+                &institutions_map,
+            );
+            let (school_name, school_key) = resolve_name(
+                bib.school_key.as_deref(),
+                parent,
+                |p| p.school_key.as_deref(),
+                &schools_map,
+            );
+
+            // Booktitle: child's booktitle, or parent's title
+            let booktitle_unicode = bib.booktitle_unicode.clone().or_else(|| {
+                parent.and_then(|p| {
+                    p.title_unicode
+                        .clone()
+                        .or_else(|| Some(p.title_latex.clone()))
+                })
+            });
+
+            // Address: child's, or parent's
+            let address = bib
+                .address
+                .clone()
+                .or_else(|| parent.and_then(|p| p.address.clone()));
 
             let ctx = RenderContext {
                 authors,
                 editors,
                 guesteditors,
-                journal_name: bib
-                    .journal_key
-                    .as_deref()
-                    .and_then(|k| journals_map.get(k).cloned()),
-                journal_key: bib.journal_key.clone(),
-                publisher_name: bib
-                    .publisher_key
-                    .as_deref()
-                    .and_then(|k| publishers_map.get(k).cloned()),
-                publisher_key: bib.publisher_key.clone(),
-                series_name: bib
-                    .series_key
-                    .as_deref()
-                    .and_then(|k| series_map.get(k).cloned()),
-                series_key: bib.series_key.clone(),
-                institution_name: bib
-                    .institution_key
-                    .as_deref()
-                    .and_then(|k| institutions_map.get(k).cloned()),
-                institution_key: bib.institution_key.clone(),
-                school_name: bib
-                    .school_key
-                    .as_deref()
-                    .and_then(|k| schools_map.get(k).cloned()),
-                school_key: bib.school_key.clone(),
-                crossref_bibkey: bib
-                    .crossref
-                    .as_deref()
-                    .and_then(|k| crossrefs_map.get(k).cloned()),
+                journal_name,
+                journal_key,
+                publisher_name,
+                publisher_key,
+                series_name,
+                series_key,
+                institution_name,
+                institution_key,
+                school_name,
+                school_key,
+                booktitle_unicode,
+                address,
+                crossref_bibkey: bib.crossref.clone(),
                 suppress_author: false,
             };
             (bib, ctx)

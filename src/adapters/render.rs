@@ -149,13 +149,6 @@ impl RenderEntityFetcher for PgRenderEntityFetcher<'_> {
     ) -> Result<HashMap<String, String>, HexforgeError> {
         batch_fetch_names_by_key(self.pool, "series", "series_key", "name_unicode", keys).await
     }
-
-    async fn fetch_crossref_bibkeys(
-        &self,
-        keys: &[String],
-    ) -> Result<HashMap<String, String>, HexforgeError> {
-        batch_fetch_names_by_key(self.pool, "bibitems", "bibkey", "bibkey", keys).await
-    }
 }
 
 // =============================================================================

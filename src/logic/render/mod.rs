@@ -65,6 +65,10 @@ pub struct RenderContext {
     /// Pre-resolved school name (unicode).
     pub school_name: Option<String>,
     pub school_key: Option<String>,
+    /// Pre-resolved booktitle (unicode) for incollection/inproceedings.
+    pub booktitle_unicode: Option<String>,
+    /// Pre-resolved address (for publisher rendering).
+    pub address: Option<String>,
     /// Crossref bibkey (pre-resolved).
     pub crossref_bibkey: Option<String>,
     /// If true, the author is replaced with an em-dash (consecutive same-author).
@@ -349,17 +353,17 @@ mod tests {
 
     #[test]
     fn test_render_book() {
-        let mut item = make_bibitem(
+        let item = make_bibitem(
             EntryType::Book,
             "kant:1781",
             "Critique of Pure Reason",
             Some(1781),
         );
-        item.address = Some("Riga".to_string());
 
         let ctx = RenderContext {
             authors: vec![make_author("Immanuel", "Kant")],
             publisher_name: Some("Johann Friedrich Hartknoch".to_string()),
+            address: Some("Riga".to_string()),
             ..Default::default()
         };
 
@@ -387,13 +391,12 @@ mod tests {
 
     #[test]
     fn test_render_book_edited() {
-        let mut item = make_bibitem(
+        let item = make_bibitem(
             EntryType::Book,
             "wellman-frey:2003",
             "A Companion to Applied Ethics",
             Some(2003),
         );
-        item.address = Some("Oxford".to_string());
 
         let ctx = RenderContext {
             editors: vec![
@@ -401,6 +404,7 @@ mod tests {
                 make_author("Christopher Heath", "Frey"),
             ],
             publisher_name: Some("Blackwell".to_string()),
+            address: Some("Oxford".to_string()),
             ..Default::default()
         };
 
@@ -426,13 +430,13 @@ mod tests {
             "A Chapter Title",
             Some(2020),
         );
-        item.booktitle_unicode = Some("The Big Book".to_string());
         item.pages = Some("100-120".to_string());
-        item.address = Some("New York".to_string());
 
         let ctx = RenderContext {
             authors: vec![make_author("John", "Doe")],
             editors: vec![make_author("Jane", "Editor")],
+            booktitle_unicode: Some("The Big Book".to_string()),
+            address: Some("New York".to_string()),
             publisher_name: Some("Academic Press".to_string()),
             ..Default::default()
         };
@@ -461,11 +465,11 @@ mod tests {
             "A Chapter Title",
             Some(2020),
         );
-        item.booktitle_unicode = Some("The Big Book".to_string());
         item.pages = Some("42".to_string());
 
         let ctx = RenderContext {
             authors: vec![make_author("John", "Doe")],
+            booktitle_unicode: Some("The Big Book".to_string()),
             ..Default::default()
         };
 
@@ -485,11 +489,11 @@ mod tests {
             "Introduction",
             Some(2020),
         );
-        item.booktitle_unicode = Some("Collected Essays".to_string());
         item.pages = Some("ix".to_string());
 
         let ctx = RenderContext {
             authors: vec![make_author("John", "Doe")],
+            booktitle_unicode: Some("Collected Essays".to_string()),
             ..Default::default()
         };
 
@@ -846,13 +850,13 @@ mod tests {
 
     #[test]
     fn test_data_publisher_key() {
-        let mut item = make_bibitem(EntryType::Book, "test:pk", "Test Book", Some(2024));
-        item.address = Some("Oxford".to_string());
+        let item = make_bibitem(EntryType::Book, "test:pk", "Test Book", Some(2024));
 
         let ctx = RenderContext {
             authors: vec![make_author("Test", "Author")],
             publisher_name: Some("Oxford University Press".to_string()),
             publisher_key: Some("oup".to_string()),
+            address: Some("Oxford".to_string()),
             ..Default::default()
         };
 
@@ -1001,5 +1005,127 @@ mod tests {
             !html.contains("data-journal-key"),
             "no journal key attribute when key is None: {html}"
         );
+    }
+
+    // =========================================================================
+    // Test: no double period when given name ends with "."
+    // =========================================================================
+
+    #[test]
+    fn test_no_double_period_abbreviated_given_name() {
+        let item = make_article("zimmerman:2005", "Some Title", Some(2005));
+
+        let ctx = RenderContext {
+            authors: vec![make_author("Dean W.", "Zimmerman")],
+            journal_name: Some("Dialectica".to_string()),
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(
+            !html.contains(".."),
+            "no double period in rendered output: {html}"
+        );
+        assert!(
+            html.contains("Dean W.</span></span>"),
+            "given name period preserved: {html}"
+        );
+    }
+
+    #[test]
+    fn test_no_double_period_single_initial() {
+        let item = make_article("doe:2024", "Test", Some(2024));
+
+        let ctx = RenderContext {
+            authors: vec![make_author("J.", "Doe")],
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(
+            !html.contains(".."),
+            "no double period with single initial: {html}"
+        );
+    }
+
+    // =========================================================================
+    // Test: incollection with booktitle and address from RenderContext
+    // =========================================================================
+
+    #[test]
+    fn test_render_incollection_with_full_context() {
+        let mut item = make_bibitem(EntryType::Incollection, "ch:2020", "A Chapter", Some(2020));
+        item.pages = Some("100-120".to_string());
+
+        let ctx = RenderContext {
+            authors: vec![make_author("Jane", "Author")],
+            editors: vec![make_author("Ed", "Editor")],
+            booktitle_unicode: Some("The Big Book".to_string()),
+            address: Some("New York".to_string()),
+            publisher_name: Some("Academic Press".to_string()),
+            series_name: Some("Great Series".to_string()),
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(
+            html.contains("In <span data-field=\"booktitle\"><em>The Big Book</em></span>"),
+            "booktitle from ctx: {html}"
+        );
+        assert!(
+            html.contains("edited by Ed Editor"),
+            "editors from ctx: {html}"
+        );
+        assert!(html.contains("New York: "), "address from ctx: {html}");
+        assert!(
+            html.contains("Academic Press"),
+            "publisher from ctx: {html}"
+        );
+    }
+
+    #[test]
+    fn test_render_incollection_no_container_data() {
+        let mut item = make_bibitem(EntryType::Incollection, "ch:2020", "A Chapter", Some(2020));
+        item.pages = Some("42".to_string());
+
+        let ctx = RenderContext {
+            authors: vec![make_author("Jane", "Author")],
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(!html.contains("In "), "no booktitle when absent: {html}");
+        assert!(
+            html.contains("p. "),
+            "pages still render without container: {html}"
+        );
+    }
+
+    // =========================================================================
+    // Test: book with address from RenderContext
+    // =========================================================================
+
+    #[test]
+    fn test_render_book_address_from_ctx() {
+        let item = make_bibitem(EntryType::Book, "book:2024", "A Book", Some(2024));
+
+        let ctx = RenderContext {
+            authors: vec![make_author("Test", "Author")],
+            publisher_name: Some("Publisher".to_string()),
+            address: Some("London".to_string()),
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(
+            html.contains("London: "),
+            "address from ctx in book: {html}"
+        );
+        assert!(html.contains("Publisher"), "publisher present: {html}");
     }
 }

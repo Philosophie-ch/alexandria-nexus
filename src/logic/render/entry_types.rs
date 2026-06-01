@@ -24,16 +24,45 @@ fn push_segment(parts: &mut Vec<String>, segment: String) {
 }
 
 /// Join parts with ". " and ensure trailing period.
+///
+/// When the visible text of a segment already ends with a period
+/// (e.g. author "Dean W." or edition "2nd ed."), uses a space
+/// instead of ". " to avoid a double period.
 fn join_with_periods(parts: &[String]) -> String {
     if parts.is_empty() {
         return String::new();
     }
-    let mut result = parts.join(". ");
-    // Ensure trailing period
-    if !result.ends_with('.') {
+    let mut result = String::new();
+    for (i, part) in parts.iter().enumerate() {
+        if i > 0 {
+            if visible_text_ends_with_period(&result) {
+                result.push(' ');
+            } else {
+                result.push_str(". ");
+            }
+        }
+        result.push_str(part);
+    }
+    if !visible_text_ends_with_period(&result) {
         result.push('.');
     }
     result
+}
+
+/// Check whether the visible text of an HTML string ends with a period.
+///
+/// Strips trailing HTML closing tags (`</...>`) to find the last
+/// character of rendered text content.
+fn visible_text_ends_with_period(s: &str) -> bool {
+    let mut remaining = s.trim_end();
+    while let Some(stripped) = remaining.strip_suffix('>') {
+        if let Some(tag_start) = stripped.rfind('<') {
+            remaining = stripped[..tag_start].trim_end();
+        } else {
+            break;
+        }
+    }
+    remaining.ends_with('.')
 }
 
 // =============================================================================
@@ -152,7 +181,7 @@ pub fn render_book(item: &BibItem, ctx: &RenderContext) -> String {
 
     // ADDRESS: PUBLISHER
     let publisher = render_publisher(
-        item.address.as_deref(),
+        ctx.address.as_deref(),
         ctx.publisher_name.as_deref(),
         ctx.publisher_key.as_deref(),
     );
@@ -188,7 +217,7 @@ pub fn render_chapter(item: &BibItem, ctx: &RenderContext) -> String {
         item.title_unicode.as_deref().unwrap_or(&item.title_latex),
         true,
     );
-    let booktitle = render_booktitle(item.booktitle_unicode.as_deref());
+    let booktitle = render_booktitle(ctx.booktitle_unicode.as_deref());
 
     let mut container_parts: Vec<String> = Vec::new();
 
@@ -236,7 +265,7 @@ pub fn render_chapter(item: &BibItem, ctx: &RenderContext) -> String {
 
     // ADDRESS: PUBLISHER
     let publisher = render_publisher(
-        item.address.as_deref(),
+        ctx.address.as_deref(),
         ctx.publisher_name.as_deref(),
         ctx.publisher_key.as_deref(),
     );

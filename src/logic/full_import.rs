@@ -710,7 +710,7 @@ pub fn build_bibitem_dto(row: &ParsedBibRow, ctx: &ResolutionCtx) -> Result<Crea
         url: row.url.clone(),
         eprint: row.eprint.clone(),
         urn: row.urn.clone(),
-        crossref: None, // resolved after all bibitems inserted -- skip for now
+        crossref: row.crossref_bibkey.clone(),
         issuetitle_latex: row.issuetitle.clone(),
         issuetitle_unicode: None,
         note_latex: row.note.clone(),
