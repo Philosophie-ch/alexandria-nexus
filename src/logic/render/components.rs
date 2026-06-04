@@ -115,15 +115,17 @@ fn join_names(parts: &[String]) -> String {
 // Date rendering
 // =============================================================================
 
-/// Render the year as `<span data-field="date">YEAR</span>`.
+/// Render the year as `<span data-field="date">YEAR[suffix]</span>`.
 ///
-/// Returns "n.d." if no year is present.
-pub fn render_date(item: &BibItem) -> String {
+/// Returns "n.d." if no year is present. Appends the disambiguation suffix
+/// (e.g. "a", "b") when the same author has multiple works in the same year.
+pub fn render_date(item: &BibItem, year_suffix: Option<&str>) -> String {
     let year_str = match item.date_year {
         Some(y) => y.to_string(),
         None => "n.d.".to_string(),
     };
-    format!("<span data-field=\"date\">{year_str}</span>")
+    let suffix = year_suffix.unwrap_or("");
+    format!("<span data-field=\"date\">{year_str}{suffix}</span>")
 }
 
 // =============================================================================

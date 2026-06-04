@@ -12,7 +12,8 @@ use hexforge::HexforgeError;
 use crate::domain::junctions::BibitemAuthorsRow;
 use crate::domain::{Author, AuthorRole, BibItem, EntryType};
 use crate::logic::render::{
-    RenderContext, author_sort_key, extract_role_authors, render_bibliography,
+    RenderContext, assign_year_suffixes, author_sort_key, build_citation_map, extract_role_authors,
+    render_bibliography, resolve_citations_in_fields,
 };
 
 // =============================================================================
@@ -186,9 +187,11 @@ pub async fn render_pipeline(
     };
 
     let main_ids: Vec<i64> = bibitems.iter().map(|b| b.id).collect();
-    let main_html = fetch_and_render(resolver, entity_fetcher, author_fetcher, bibitems).await?;
+    let mut main_items =
+        fetch_and_build_contexts(resolver, entity_fetcher, author_fetcher, bibitems).await?;
 
-    let further_refs_html = if include_further_refs {
+    // Fetch further refs if requested
+    let mut further_items = if include_further_refs {
         let main_id_set: HashSet<i64> = main_ids.iter().copied().collect();
         let dep_ids = deps_resolver.fetch_further_ref_ids(&main_ids).await?;
         let novel_dep_ids: Vec<i64> = dep_ids
@@ -196,13 +199,27 @@ pub async fn render_pipeline(
             .filter(|id| !main_id_set.contains(id))
             .collect();
         if novel_dep_ids.is_empty() {
-            None
+            Vec::new()
         } else {
             let dep_bibitems = resolver.find_by_ids(&novel_dep_ids).await?;
-            Some(fetch_and_render(resolver, entity_fetcher, author_fetcher, dep_bibitems).await?)
+            fetch_and_build_contexts(resolver, entity_fetcher, author_fetcher, dep_bibitems).await?
         }
     } else {
+        Vec::new()
+    };
+
+    // Year suffixes + citation resolution (single pass for both sets)
+    assign_year_suffixes(&mut main_items, &mut further_items);
+    let mut citation_map = build_citation_map(&main_items);
+    citation_map.extend(build_citation_map(&further_items));
+    resolve_citations_in_fields(&mut main_items, &citation_map);
+    resolve_citations_in_fields(&mut further_items, &citation_map);
+
+    let main_html = render_bibliography(&main_items);
+    let further_refs_html = if further_items.is_empty() {
         None
+    } else {
+        Some(render_bibliography(&further_items))
     };
 
     Ok(RenderResponse {
@@ -234,17 +251,17 @@ fn resolve_name(
     (None, None)
 }
 
-/// Fetch all related data, build RenderContexts, sort, and render to HTML.
+/// Fetch all related data, build RenderContexts, and sort by author/year/bibkey.
 ///
 /// Resolves BibTeX-style crossref inheritance: when an incollection/inproceedings
 /// entry has a `crossref` pointing to a parent entry, missing fields (booktitle,
 /// editors, publisher, address, series) are inherited from the parent.
-async fn fetch_and_render(
+async fn fetch_and_build_contexts(
     resolver: &impl BibitemResolver,
     entity_fetcher: &impl RenderEntityFetcher,
     author_fetcher: &impl RenderAuthorFetcher,
     bibitems: Vec<BibItem>,
-) -> Result<String, HexforgeError> {
+) -> Result<Vec<(BibItem, RenderContext)>, HexforgeError> {
     // Fetch crossref parent bibitems
     let crossref_bibkeys: Vec<String> = bibitems
         .iter()
@@ -421,6 +438,9 @@ async fn fetch_and_render(
                 address,
                 crossref_bibkey: bib.crossref.clone(),
                 suppress_author: false,
+                year_suffix: None,
+                resolved_title: None,
+                resolved_note: None,
             };
             (bib, ctx)
         })
@@ -436,5 +456,5 @@ async fn fetch_and_render(
             .then_with(|| a.bibkey.cmp(&b.bibkey))
     });
 
-    Ok(render_bibliography(&items_with_ctx))
+    Ok(items_with_ctx)
 }

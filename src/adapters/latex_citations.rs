@@ -97,7 +97,14 @@ impl CitationResolver for PgCitationResolver<'_> {
                     editors
                 };
                 let author = format_name_list(&names);
-                (bibkey, CitationData { author, year })
+                (
+                    bibkey,
+                    CitationData {
+                        author,
+                        year,
+                        year_suffix: None,
+                    },
+                )
             })
             .collect())
     }

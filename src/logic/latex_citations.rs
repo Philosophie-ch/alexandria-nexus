@@ -5,6 +5,8 @@ pub struct CitationData {
     /// Display name (family name or mononym of first author; editor as fallback).
     pub author: Option<String>,
     pub year: Option<i16>,
+    /// Year disambiguation suffix (e.g. "a", "b") when multiple works share author+year.
+    pub year_suffix: Option<String>,
 }
 
 // =============================================================================
@@ -19,6 +21,20 @@ pub struct CitationData {
 /// - `\citeyear{key}` → `Year`
 /// - Any unresolvable or incomplete cite → empty string (nothing rendered)
 pub fn substitute_citations(latex: &str, resolved: &HashMap<String, CitationData>) -> String {
+    scan_and_substitute(latex, resolved, false)
+}
+
+/// Like [`substitute_citations`], but wraps each resolved citation in
+/// `<span data-bibkey="key">...</span>` for HTML parseability.
+pub fn substitute_citations_html(latex: &str, resolved: &HashMap<String, CitationData>) -> String {
+    scan_and_substitute(latex, resolved, true)
+}
+
+fn scan_and_substitute(
+    latex: &str,
+    resolved: &HashMap<String, CitationData>,
+    wrap_html: bool,
+) -> String {
     let mut result = String::with_capacity(latex.len());
     let mut rest = latex;
 
@@ -78,7 +94,7 @@ pub fn substitute_citations(latex: &str, resolved: &HashMap<String, CitationData
         if keys.is_empty() {
             result.push_str(&cmd_start[..cmd_len]);
         } else {
-            let substituted = format_cite(cmd_name, &keys, resolved);
+            let substituted = format_cite(cmd_name, &keys, resolved, wrap_html);
             result.push_str(&substituted);
         }
 
@@ -88,17 +104,29 @@ pub fn substitute_citations(latex: &str, resolved: &HashMap<String, CitationData
     result
 }
 
-fn format_cite(cmd_name: &str, keys: &[&str], resolved: &HashMap<String, CitationData>) -> String {
+fn format_cite(
+    cmd_name: &str,
+    keys: &[&str],
+    resolved: &HashMap<String, CitationData>,
+    wrap_html: bool,
+) -> String {
+    let empty = CitationData {
+        author: None,
+        year: None,
+        year_suffix: None,
+    };
+    let wrap = |k: &str, s: String| -> String {
+        if wrap_html && !s.is_empty() {
+            format!("<span data-bibkey=\"{k}\">{s}</span>")
+        } else {
+            s
+        }
+    };
     match cmd_name {
         "citep" | "cite" => {
             let items: Vec<String> = keys
                 .iter()
-                .map(|&k| {
-                    fmt_author_comma_year(resolved.get(k).unwrap_or(&CitationData {
-                        author: None,
-                        year: None,
-                    }))
-                })
+                .map(|&k| wrap(k, fmt_author_comma_year(resolved.get(k).unwrap_or(&empty))))
                 .collect();
             if items.iter().any(|s| s.is_empty()) {
                 String::new()
@@ -109,7 +137,12 @@ fn format_cite(cmd_name: &str, keys: &[&str], resolved: &HashMap<String, Citatio
         "citeauthor" => {
             let items: Vec<Option<String>> = keys
                 .iter()
-                .map(|&k| resolved.get(k).and_then(|d| d.author.clone()))
+                .map(|&k| {
+                    resolved
+                        .get(k)
+                        .and_then(|d| d.author.clone())
+                        .map(|a| wrap(k, a))
+                })
                 .collect();
             if items.iter().any(|s| s.is_none()) {
                 String::new()
@@ -120,7 +153,14 @@ fn format_cite(cmd_name: &str, keys: &[&str], resolved: &HashMap<String, Citatio
         "citeyear" => {
             let items: Vec<Option<String>> = keys
                 .iter()
-                .map(|&k| resolved.get(k).and_then(|d| d.year.map(|y| y.to_string())))
+                .map(|&k| {
+                    resolved.get(k).and_then(|d| {
+                        d.year.map(|y| {
+                            let suffix = d.year_suffix.as_deref().unwrap_or("");
+                            wrap(k, format!("{y}{suffix}"))
+                        })
+                    })
+                })
                 .collect();
             if items.iter().any(|s| s.is_none()) {
                 String::new()
@@ -132,12 +172,7 @@ fn format_cite(cmd_name: &str, keys: &[&str], resolved: &HashMap<String, Citatio
         _ => {
             let items: Vec<String> = keys
                 .iter()
-                .map(|&k| {
-                    fmt_author_year(resolved.get(k).unwrap_or(&CitationData {
-                        author: None,
-                        year: None,
-                    }))
-                })
+                .map(|&k| wrap(k, fmt_author_year(resolved.get(k).unwrap_or(&empty))))
                 .collect();
             if items.iter().any(|s| s.is_empty()) {
                 String::new()
@@ -150,14 +185,20 @@ fn format_cite(cmd_name: &str, keys: &[&str], resolved: &HashMap<String, Citatio
 
 fn fmt_author_year(d: &CitationData) -> String {
     match (&d.author, d.year) {
-        (Some(a), Some(y)) => format!("{a} ({y})"),
+        (Some(a), Some(y)) => {
+            let suffix = d.year_suffix.as_deref().unwrap_or("");
+            format!("{a} ({y}{suffix})")
+        }
         _ => String::new(),
     }
 }
 
 fn fmt_author_comma_year(d: &CitationData) -> String {
     match (&d.author, d.year) {
-        (Some(a), Some(y)) => format!("{a}, {y}"),
+        (Some(a), Some(y)) => {
+            let suffix = d.year_suffix.as_deref().unwrap_or("");
+            format!("{a}, {y}{suffix}")
+        }
         _ => String::new(),
     }
 }
@@ -418,6 +459,7 @@ mod tests {
         CitationData {
             author: author.map(str::to_string),
             year,
+            year_suffix: None,
         }
     }
 
@@ -430,6 +472,7 @@ mod tests {
                     CitationData {
                         author: v.author.clone(),
                         year: v.year,
+                        year_suffix: v.year_suffix.clone(),
                     },
                 )
             })
@@ -714,5 +757,98 @@ mod tests {
         let text = r"\citet{} \citet[no-close \citet{real:1}";
         let result = substitute_citations(text, &m);
         assert!(result.contains("Real (2001)"));
+    }
+
+    // =========================================================================
+    // Year suffix tests
+    // =========================================================================
+
+    fn cd_with_suffix(author: Option<&str>, year: Option<i16>, suffix: &str) -> CitationData {
+        CitationData {
+            author: author.map(str::to_string),
+            year,
+            year_suffix: Some(suffix.to_string()),
+        }
+    }
+
+    #[test]
+    fn substitute_citet_with_year_suffix() {
+        let m = map(&[(
+            "smith:2020a",
+            cd_with_suffix(Some("Smith"), Some(2020), "a"),
+        )]);
+        assert_eq!(
+            substitute_citations(r"\citet{smith:2020a}", &m),
+            "Smith (2020a)"
+        );
+    }
+
+    #[test]
+    fn substitute_citet_html_wraps_bibkey() {
+        let m = map(&[(
+            "smith:2020a",
+            cd_with_suffix(Some("Smith"), Some(2020), "a"),
+        )]);
+        assert_eq!(
+            substitute_citations_html(r"\citet{smith:2020a}", &m),
+            "<span data-bibkey=\"smith:2020a\">Smith (2020a)</span>"
+        );
+    }
+
+    #[test]
+    fn substitute_citep_html_wraps_bibkey() {
+        let m = map(&[("jones:2010", cd(Some("Jones"), Some(2010)))]);
+        assert_eq!(
+            substitute_citations_html(r"\citep{jones:2010}", &m),
+            "(<span data-bibkey=\"jones:2010\">Jones, 2010</span>)"
+        );
+    }
+
+    #[test]
+    fn substitute_html_no_wrap_on_failure() {
+        assert_eq!(
+            substitute_citations_html(r"\citet{missing:key}", &HashMap::new()),
+            ""
+        );
+    }
+
+    #[test]
+    fn substitute_html_prose_preserves_surrounding_text() {
+        let m = map(&[("r:1958", cd(Some("Reichenbach"), Some(1958)))]);
+        let result = substitute_citations_html(r"English translation: \citet{r:1958}", &m);
+        assert_eq!(
+            result,
+            "English translation: <span data-bibkey=\"r:1958\">Reichenbach (1958)</span>"
+        );
+    }
+
+    #[test]
+    fn substitute_citep_with_year_suffix() {
+        let m = map(&[(
+            "smith:2020a",
+            cd_with_suffix(Some("Smith"), Some(2020), "a"),
+        )]);
+        assert_eq!(
+            substitute_citations(r"\citep{smith:2020a}", &m),
+            "(Smith, 2020a)"
+        );
+    }
+
+    #[test]
+    fn substitute_citeyear_with_suffix() {
+        let m = map(&[(
+            "smith:2020b",
+            cd_with_suffix(Some("Smith"), Some(2020), "b"),
+        )]);
+        assert_eq!(substitute_citations(r"\citeyear{smith:2020b}", &m), "2020b");
+    }
+
+    #[test]
+    fn substitute_no_suffix_when_none() {
+        let m = map(&[("smith:2020", cd(Some("Smith"), Some(2020)))]);
+        assert_eq!(
+            substitute_citations(r"\citet{smith:2020}", &m),
+            "Smith (2020)"
+        );
     }
 }
