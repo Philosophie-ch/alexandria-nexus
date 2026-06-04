@@ -136,12 +136,16 @@ pub fn render_date(item: &BibItem, year_suffix: Option<&str>) -> String {
 ///
 /// - `quoted = true`: wraps in quotation marks `"Title"` (articles, chapters, unpublished)
 /// - `quoted = false`: wraps in `<em>Title</em>` (books, theses)
-pub fn render_title(title_unicode: &str, quoted: bool) -> String {
-    let escaped = esc(title_unicode);
-    let formatted = if quoted {
-        format!("\u{201c}{escaped}\u{201d}")
+pub fn render_title(title_unicode: &str, quoted: bool, contains_html: bool) -> String {
+    let inner = if contains_html {
+        title_unicode.to_string()
     } else {
-        format!("<em>{escaped}</em>")
+        esc(title_unicode)
+    };
+    let formatted = if quoted {
+        format!("\u{201c}{inner}\u{201d}")
+    } else {
+        format!("<em>{inner}</em>")
     };
     format!("<span data-field=\"title\">{formatted}</span>")
 }
@@ -317,8 +321,9 @@ fn ordinal_suffix(n: u32) -> &'static str {
 // =============================================================================
 
 /// Render a note field.
-pub fn render_note(note_unicode: Option<&str>) -> String {
+pub fn render_note(note_unicode: Option<&str>, contains_html: bool) -> String {
     match note_unicode.filter(|n| !n.is_empty()) {
+        Some(note) if contains_html => note.to_string(),
         Some(note) => esc(note),
         None => String::new(),
     }
@@ -671,5 +676,67 @@ mod tests {
         // Dirty data seen in incollection (Mar 16, ad loc.)
         assert_eq!(pages_prefix("Mar 16"), "p.");
         assert_eq!(pages_prefix("ad loc."), "p.");
+    }
+
+    // =========================================================================
+    // render_title: contains_html flag
+    // =========================================================================
+
+    #[test]
+    fn test_render_title_escapes_plain_text() {
+        let html = render_title("Logic & Language", true, false);
+        assert!(
+            html.contains("Logic &amp; Language"),
+            "plain text should be escaped: {html}"
+        );
+    }
+
+    #[test]
+    fn test_render_title_preserves_html_when_flagged() {
+        let input = "See <span data-bibkey=\"fine:2005\">Fine (2005b)</span> for details";
+        let html = render_title(input, true, true);
+        assert!(
+            html.contains("<span data-bibkey=\"fine:2005\">Fine (2005b)</span>"),
+            "pre-rendered HTML should pass through unescaped: {html}"
+        );
+    }
+
+    #[test]
+    fn test_render_title_quoted_wrapping() {
+        let html = render_title("Title", true, false);
+        assert!(html.contains("\u{201c}Title\u{201d}"), "quoted: {html}");
+    }
+
+    #[test]
+    fn test_render_title_italic_wrapping() {
+        let html = render_title("Title", false, false);
+        assert!(html.contains("<em>Title</em>"), "italic: {html}");
+    }
+
+    // =========================================================================
+    // render_note: contains_html flag
+    // =========================================================================
+
+    #[test]
+    fn test_render_note_escapes_plain_text() {
+        let html = render_note(Some("A & B"), false);
+        assert_eq!(html, "A &amp; B");
+    }
+
+    #[test]
+    fn test_render_note_preserves_html_when_flagged() {
+        let input = "Translation: <span data-bibkey=\"r:1958\">Reichenbach (1958)</span>";
+        let html = render_note(Some(input), true);
+        assert!(
+            html.contains("<span data-bibkey=\"r:1958\">Reichenbach (1958)</span>"),
+            "pre-rendered HTML should pass through: {html}"
+        );
+    }
+
+    #[test]
+    fn test_render_note_empty() {
+        assert!(render_note(None, false).is_empty());
+        assert!(render_note(Some(""), false).is_empty());
+        assert!(render_note(None, true).is_empty());
     }
 }

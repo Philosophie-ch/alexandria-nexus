@@ -83,7 +83,11 @@ pub fn render_article(item: &BibItem, ctx: &RenderContext) -> String {
     push_segment(&mut parts, render_date(item, ctx.year_suffix.as_deref()));
 
     // "TITLE." + JOURNAL VOLUME(NUMBER): PAGES
-    let title = render_title(ctx.effective_title(item), true);
+    let title = render_title(
+        ctx.effective_title(item),
+        true,
+        ctx.resolved_title.is_some(),
+    );
     let journal = render_journal(ctx.journal_name.as_deref(), ctx.journal_key.as_deref());
     let vol_num = render_volume_number(item.volume.as_deref(), item.number.as_deref());
 
@@ -125,7 +129,7 @@ pub fn render_article(item: &BibItem, ctx: &RenderContext) -> String {
     }
 
     // NOTE
-    let note = render_note(ctx.effective_note(item));
+    let note = render_note(ctx.effective_note(item), ctx.resolved_note.is_some());
     push_segment(&mut parts, note);
 
     // DOI/URL
@@ -162,7 +166,14 @@ pub fn render_book(item: &BibItem, ctx: &RenderContext) -> String {
     push_segment(&mut parts, render_date(item, ctx.year_suffix.as_deref()));
 
     // TITLE (italicized for books)
-    push_segment(&mut parts, render_title(ctx.effective_title(item), false));
+    push_segment(
+        &mut parts,
+        render_title(
+            ctx.effective_title(item),
+            false,
+            ctx.resolved_title.is_some(),
+        ),
+    );
 
     // EDITION (only for authored books per spec)
     if has_authors {
@@ -187,7 +198,7 @@ pub fn render_book(item: &BibItem, ctx: &RenderContext) -> String {
     push_segment(&mut parts, publisher);
 
     // NOTE
-    let note = render_note(ctx.effective_note(item));
+    let note = render_note(ctx.effective_note(item), ctx.resolved_note.is_some());
     push_segment(&mut parts, note);
 
     // DOI/URL
@@ -217,7 +228,11 @@ pub fn render_chapter(item: &BibItem, ctx: &RenderContext) -> String {
 
     // "TITLE." In BOOKTITLE, [volume VOL,] [edited by EDITOR,] p./pp. PAGES.
     // [SERIES [n. NUMBER].] ADDRESS: PUBLISHER. doi:DOI
-    let title = render_title(ctx.effective_title(item), true);
+    let title = render_title(
+        ctx.effective_title(item),
+        true,
+        ctx.resolved_title.is_some(),
+    );
     let booktitle = render_booktitle(ctx.booktitle_unicode.as_deref());
 
     let mut container_parts: Vec<String> = Vec::new();
@@ -289,7 +304,7 @@ pub fn render_chapter(item: &BibItem, ctx: &RenderContext) -> String {
     push_segment(&mut parts, publisher);
 
     // NOTE
-    let note = render_note(ctx.effective_note(item));
+    let note = render_note(ctx.effective_note(item), ctx.resolved_note.is_some());
     push_segment(&mut parts, note);
 
     // DOI/URL
@@ -356,7 +371,11 @@ pub fn render_thesis(item: &BibItem, ctx: &RenderContext) -> String {
     push_segment(&mut parts, render_date(item, ctx.year_suffix.as_deref()));
 
     // "TITLE." TYPE, SCHOOL
-    let title = render_title(ctx.effective_title(item), true);
+    let title = render_title(
+        ctx.effective_title(item),
+        true,
+        ctx.resolved_title.is_some(),
+    );
 
     let thesis_type = item.type_field.as_deref().unwrap_or(match item.entry_type {
         crate::domain::EntryType::Phdthesis => "PhD thesis",
@@ -379,7 +398,7 @@ pub fn render_thesis(item: &BibItem, ctx: &RenderContext) -> String {
     }
 
     // NOTE
-    let note = render_note(ctx.effective_note(item));
+    let note = render_note(ctx.effective_note(item), ctx.resolved_note.is_some());
     push_segment(&mut parts, note);
 
     join_with_periods(&parts)
@@ -403,10 +422,14 @@ pub fn render_unpublished(item: &BibItem, ctx: &RenderContext) -> String {
     push_segment(&mut parts, render_date(item, ctx.year_suffix.as_deref()));
 
     // "TITLE."
-    let title = render_title(ctx.effective_title(item), true);
+    let title = render_title(
+        ctx.effective_title(item),
+        true,
+        ctx.resolved_title.is_some(),
+    );
 
     // NOTE
-    let note = render_note(ctx.effective_note(item));
+    let note = render_note(ctx.effective_note(item), ctx.resolved_note.is_some());
     if !note.is_empty() {
         push_segment(&mut parts, format!("{title}. {note}"));
     } else {
@@ -434,10 +457,17 @@ pub fn render_generic(item: &BibItem, ctx: &RenderContext) -> String {
     push_segment(&mut parts, render_date(item, ctx.year_suffix.as_deref()));
 
     // TITLE (not quoted for generic types)
-    push_segment(&mut parts, render_title(ctx.effective_title(item), false));
+    push_segment(
+        &mut parts,
+        render_title(
+            ctx.effective_title(item),
+            false,
+            ctx.resolved_title.is_some(),
+        ),
+    );
 
     // NOTE
-    let note = render_note(ctx.effective_note(item));
+    let note = render_note(ctx.effective_note(item), ctx.resolved_note.is_some());
     push_segment(&mut parts, note);
 
     // INSTITUTION (for techreports)
