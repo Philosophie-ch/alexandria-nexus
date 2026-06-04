@@ -1878,4 +1878,67 @@ mod tests {
             "unicode note not used when resolved present"
         );
     }
+
+    #[test]
+    fn test_resolved_title_html_spans_not_escaped() {
+        let mut item = make_bibitem(
+            EntryType::Book,
+            "fine_k:2005g",
+            r"Tense and Reality, see also \citet{fine_k:2005a}",
+            Some(2005),
+        );
+        item.title_unicode = None;
+
+        let ctx = RenderContext {
+            authors: vec![make_author("Kit", "Fine")],
+            resolved_title: Some(
+                "Tense and Reality, see also <span data-bibkey=\"fine_k:2005a\">Fine (2005a)</span>"
+                    .to_string(),
+            ),
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(
+            html.contains("<span data-bibkey=\"fine_k:2005a\">Fine (2005a)</span>"),
+            "HTML spans in resolved title must not be escaped: {html}"
+        );
+        assert!(
+            !html.contains("&lt;span"),
+            "no escaped angle brackets: {html}"
+        );
+    }
+
+    #[test]
+    fn test_resolved_note_html_spans_not_escaped() {
+        let mut item = make_bibitem(
+            EntryType::Book,
+            "reichenbach_h:1928",
+            "Philosophie der Raum-Zeit-Lehre",
+            Some(1928),
+        );
+        item.note_latex = Some(r"English translation: \citet{reichenbach_h:1958}".to_string());
+        item.note_unicode = None;
+
+        let ctx = RenderContext {
+            authors: vec![make_author("Hans", "Reichenbach")],
+            resolved_note: Some(
+                "English translation: <span data-bibkey=\"reichenbach_h:1958\">Reichenbach (1958)</span>"
+                    .to_string(),
+            ),
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(
+            html.contains("<span data-bibkey=\"reichenbach_h:1958\">Reichenbach (1958)</span>"),
+            "HTML spans in resolved note must not be escaped: {html}"
+        );
+        assert!(
+            !html.contains("&lt;span"),
+            "no escaped angle brackets: {html}"
+        );
+    }
 }
