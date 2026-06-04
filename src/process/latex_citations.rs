@@ -83,6 +83,7 @@ mod tests {
                             CitationData {
                                 author: d.author.clone(),
                                 year: d.year,
+                                year_suffix: None,
                             },
                         )
                     })
@@ -96,6 +97,7 @@ mod tests {
         CitationData {
             author: Some(author.to_string()),
             year: Some(year),
+            year_suffix: None,
         }
     }
 

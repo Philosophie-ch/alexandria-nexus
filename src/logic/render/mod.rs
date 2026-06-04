@@ -15,6 +15,7 @@ use std::collections::HashMap;
 
 use crate::domain::junctions::BibitemAuthorsRow;
 use crate::domain::{Author, AuthorRole, BibItem, EntryType};
+use crate::logic::latex_citations::{CitationData, substitute_citations_html};
 
 // =============================================================================
 // AuthorName — lightweight name struct for the renderer
@@ -75,6 +76,14 @@ pub struct RenderContext {
     pub crossref_bibkey: Option<String>,
     /// If true, the author is replaced with an em-dash (consecutive same-author).
     pub suppress_author: bool,
+    /// Year disambiguation suffix (e.g. "a", "b") for repeated author+year.
+    pub year_suffix: Option<String>,
+    /// Title with `\cite*{}` commands resolved using suffix-aware citation data.
+    /// When present, the renderer uses this instead of `title_unicode`.
+    pub resolved_title: Option<String>,
+    /// Note with `\cite*{}` commands resolved using suffix-aware citation data.
+    /// When present, the renderer uses this instead of `note_unicode`.
+    pub resolved_note: Option<String>,
 }
 
 impl RenderContext {
@@ -83,6 +92,21 @@ impl RenderContext {
         let mut copy = self.clone();
         copy.suppress_author = true;
         copy
+    }
+
+    /// Effective title for rendering: resolved (suffix-aware) if available, else unicode, else latex.
+    pub fn effective_title<'a>(&'a self, item: &'a BibItem) -> &'a str {
+        self.resolved_title
+            .as_deref()
+            .or(item.title_unicode.as_deref())
+            .unwrap_or(&item.title_latex)
+    }
+
+    /// Effective note for rendering: resolved (suffix-aware) if available, else unicode.
+    pub fn effective_note<'a>(&'a self, item: &'a BibItem) -> Option<&'a str> {
+        self.resolved_note
+            .as_deref()
+            .or(item.note_unicode.as_deref())
     }
 }
 
@@ -186,6 +210,152 @@ pub fn extract_role_authors(
                 .collect()
         })
         .unwrap_or_default()
+}
+
+// =============================================================================
+// Year suffix disambiguation
+// =============================================================================
+
+/// Parse the bibkey suffix: the alphabetic part after the year digits in `stem:year<suffix>`.
+fn parse_bibkey_suffix(bibkey: &str) -> &str {
+    let after_colon = bibkey.rsplit(':').next().unwrap_or("");
+    let suffix_start = after_colon
+        .find(|c: char| c.is_ascii_alphabetic())
+        .unwrap_or(after_colon.len());
+    &after_colon[suffix_start..]
+}
+
+/// Assign year disambiguation suffixes across main and further-ref entries.
+///
+/// For each (author, year) group with more than one entry, assigns rendered
+/// suffixes: the first entry gets no suffix, the second gets "a", third "b", etc.
+/// Ordering: main refs first, then further refs; within each group, ordered by
+/// bibkey suffix.
+pub fn assign_year_suffixes(
+    main: &mut [(BibItem, RenderContext)],
+    further: &mut [(BibItem, RenderContext)],
+) {
+    use std::collections::HashMap;
+
+    #[derive(PartialEq, Eq, Clone, Copy)]
+    enum Group {
+        Main,
+        Further,
+    }
+
+    type SuffixEntry = (Group, String, usize);
+    let mut groups: HashMap<(String, Option<i16>), Vec<SuffixEntry>> = HashMap::new();
+
+    for (i, (bib, ctx)) in main.iter().enumerate() {
+        let key = (author_sort_key(&ctx.authors), bib.date_year);
+        let suffix = parse_bibkey_suffix(&bib.bibkey).to_string();
+        groups
+            .entry(key)
+            .or_default()
+            .push((Group::Main, suffix, i));
+    }
+    for (i, (bib, ctx)) in further.iter().enumerate() {
+        let key = (author_sort_key(&ctx.authors), bib.date_year);
+        let suffix = parse_bibkey_suffix(&bib.bibkey).to_string();
+        groups
+            .entry(key)
+            .or_default()
+            .push((Group::Further, suffix, i));
+    }
+
+    // Collect all assignments, then apply them
+    let mut assignments: Vec<(Group, usize, Option<String>)> = Vec::new();
+
+    for (_key, mut entries) in groups {
+        if entries.len() <= 1 {
+            continue;
+        }
+
+        // Sort: main before further, then by bibkey suffix alphabetically
+        entries.sort_by(|a, b| {
+            let group_ord = match (a.0, b.0) {
+                (Group::Main, Group::Further) => std::cmp::Ordering::Less,
+                (Group::Further, Group::Main) => std::cmp::Ordering::Greater,
+                _ => std::cmp::Ordering::Equal,
+            };
+            group_ord.then_with(|| a.1.cmp(&b.1))
+        });
+
+        for (pos, (group, _suffix, idx)) in entries.iter().enumerate() {
+            let rendered_suffix = Some(suffix_letter(pos));
+            assignments.push((*group, *idx, rendered_suffix));
+        }
+    }
+
+    for (group, idx, rendered_suffix) in assignments {
+        match group {
+            Group::Main => main[idx].1.year_suffix = rendered_suffix,
+            Group::Further => further[idx].1.year_suffix = rendered_suffix,
+        }
+    }
+}
+
+/// Convert a zero-based index to a letter suffix: 0→"a", 1→"b", ..., 25→"z", 26→"aa", etc.
+fn suffix_letter(index: usize) -> String {
+    if index < 26 {
+        let c = b'a' + u8::try_from(index).unwrap_or(0);
+        String::from(char::from(c))
+    } else {
+        let first = b'a' + u8::try_from((index / 26) - 1).unwrap_or(0);
+        let second = b'a' + u8::try_from(index % 26).unwrap_or(0);
+        format!("{}{}", char::from(first), char::from(second))
+    }
+}
+
+// =============================================================================
+// Citation resolution for rendering
+// =============================================================================
+
+/// Pick the display name for the first author of a bibitem (for citation text).
+///
+/// Priority: variant_unicode > mononym > family name.
+pub fn citation_display_name(authors: &[AuthorName]) -> Option<String> {
+    authors.first().and_then(|a| {
+        a.variant_unicode
+            .clone()
+            .or_else(|| a.mononym.clone())
+            .or_else(|| a.family.clone())
+    })
+}
+
+/// Build a citation data map from rendered items for suffix-aware `\cite*{}` resolution.
+pub fn build_citation_map(items: &[(BibItem, RenderContext)]) -> HashMap<String, CitationData> {
+    items
+        .iter()
+        .map(|(bib, ctx)| {
+            let data = CitationData {
+                author: citation_display_name(&ctx.authors),
+                year: bib.date_year,
+                year_suffix: ctx.year_suffix.clone(),
+            };
+            (bib.bibkey.clone(), data)
+        })
+        .collect()
+}
+
+/// Resolve `\cite*{}` commands in title_latex and note_latex using suffix-aware citation data.
+///
+/// Only resolves fields that actually contain `\cite` commands. Stores results in
+/// `resolved_title` / `resolved_note` on the RenderContext.
+pub fn resolve_citations_in_fields(
+    items: &mut [(BibItem, RenderContext)],
+    citation_map: &HashMap<String, CitationData>,
+) {
+    for (bib, ctx) in items.iter_mut() {
+        if bib.title_latex.contains("\\cite") {
+            ctx.resolved_title = Some(substitute_citations_html(&bib.title_latex, citation_map));
+        }
+        if let Some(ref note) = bib.note_latex
+            && note.contains("\\cite")
+        {
+            ctx.resolved_note = Some(substitute_citations_html(note, citation_map));
+        }
+    }
 }
 
 // =============================================================================
@@ -1320,6 +1490,392 @@ mod tests {
         assert!(
             html.contains("100\u{2013}120</span>. City: "),
             "publisher is period-separated from pages: {html}"
+        );
+    }
+
+    // =========================================================================
+    // Test: note rendering in book
+    // =========================================================================
+
+    #[test]
+    fn test_render_book_with_note() {
+        let mut item = make_bibitem(
+            EntryType::Book,
+            "reichenbach_h:1928",
+            "Philosophie der Raum-Zeit-Lehre",
+            Some(1928),
+        );
+        item.note_unicode = Some("English translation: Reichenbach (1958)".to_string());
+        item.doi = Some("10.1515/9783111485676".to_string());
+
+        let ctx = RenderContext {
+            authors: vec![make_author("Hans", "Reichenbach")],
+            publisher_name: Some("de Gruyter".to_string()),
+            address: Some("Berlin".to_string()),
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(
+            html.contains("English translation: Reichenbach (1958)"),
+            "note rendered in book: {html}"
+        );
+        assert!(
+            html.contains("de Gruyter"),
+            "publisher still present: {html}"
+        );
+        assert!(html.contains("doi:"), "DOI still present: {html}");
+    }
+
+    #[test]
+    fn test_render_book_no_note() {
+        let item = make_bibitem(EntryType::Book, "kant:1781", "Critique", Some(1781));
+
+        let ctx = RenderContext {
+            authors: vec![make_author("Immanuel", "Kant")],
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(!html.contains("note"), "no note field when absent: {html}");
+    }
+
+    // =========================================================================
+    // Test: note rendering in article
+    // =========================================================================
+
+    #[test]
+    fn test_render_article_with_note() {
+        let mut item = make_article("smith:2020", "Some Article", Some(2020));
+        item.note_unicode = Some("Reprinted in Jones (2021)".to_string());
+
+        let ctx = RenderContext {
+            authors: vec![make_author("Jane", "Smith")],
+            journal_name: Some("Dialectica".to_string()),
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(
+            html.contains("Reprinted in Jones (2021)"),
+            "note rendered in article: {html}"
+        );
+    }
+
+    // =========================================================================
+    // Test: note rendering in incollection
+    // =========================================================================
+
+    #[test]
+    fn test_render_incollection_with_note() {
+        let mut item = make_bibitem(EntryType::Incollection, "ch:2020", "A Chapter", Some(2020));
+        item.pages = Some("100-120".to_string());
+        item.note_unicode = Some("Originally published in 2015".to_string());
+
+        let ctx = RenderContext {
+            authors: vec![make_author("John", "Doe")],
+            booktitle_unicode: Some("The Book".to_string()),
+            publisher_name: Some("Publisher".to_string()),
+            address: Some("City".to_string()),
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(
+            html.contains("Originally published in 2015"),
+            "note rendered in incollection: {html}"
+        );
+    }
+
+    // =========================================================================
+    // Test: note rendering in thesis
+    // =========================================================================
+
+    #[test]
+    fn test_render_thesis_with_note() {
+        let mut item = make_bibitem(
+            EntryType::Phdthesis,
+            "student:2023",
+            "My Dissertation",
+            Some(2023),
+        );
+        item.note_unicode = Some("Forthcoming as a book".to_string());
+
+        let ctx = RenderContext {
+            authors: vec![make_author("Alice", "Student")],
+            school_name: Some("University of Somewhere".to_string()),
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(
+            html.contains("Forthcoming as a book"),
+            "note rendered in thesis: {html}"
+        );
+    }
+
+    // =========================================================================
+    // Test: year suffix in date rendering
+    // =========================================================================
+
+    #[test]
+    fn test_render_date_with_suffix() {
+        let item = make_article("smith:2020a", "First Paper", Some(2020));
+
+        let ctx = RenderContext {
+            authors: vec![make_author("Jane", "Smith")],
+            year_suffix: Some("a".to_string()),
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(
+            html.contains("data-field=\"date\">2020a</span>"),
+            "year suffix rendered: {html}"
+        );
+    }
+
+    #[test]
+    fn test_render_date_without_suffix() {
+        let item = make_article("smith:2020", "Only Paper", Some(2020));
+
+        let ctx = RenderContext {
+            authors: vec![make_author("Jane", "Smith")],
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(
+            html.contains("data-field=\"date\">2020</span>"),
+            "no suffix when None: {html}"
+        );
+    }
+
+    // =========================================================================
+    // Test: parse_bibkey_suffix
+    // =========================================================================
+
+    #[test]
+    fn test_parse_bibkey_suffix() {
+        assert_eq!(super::parse_bibkey_suffix("smith:2020a"), "a");
+        assert_eq!(super::parse_bibkey_suffix("smith:2020b"), "b");
+        assert_eq!(super::parse_bibkey_suffix("smith:2020"), "");
+        assert_eq!(super::parse_bibkey_suffix("smith:2020abc"), "abc");
+        assert_eq!(super::parse_bibkey_suffix("jones_a:1999"), "");
+        assert_eq!(super::parse_bibkey_suffix("jones_a:1999a"), "a");
+    }
+
+    // =========================================================================
+    // Test: suffix_letter
+    // =========================================================================
+
+    #[test]
+    fn test_suffix_letter() {
+        assert_eq!(super::suffix_letter(0), "a");
+        assert_eq!(super::suffix_letter(1), "b");
+        assert_eq!(super::suffix_letter(25), "z");
+        assert_eq!(super::suffix_letter(26), "aa");
+        assert_eq!(super::suffix_letter(27), "ab");
+    }
+
+    // =========================================================================
+    // Test: assign_year_suffixes
+    // =========================================================================
+
+    #[test]
+    fn test_assign_year_suffixes_no_collision() {
+        let mut main = vec![
+            (
+                make_article("smith:2020", "Paper A", Some(2020)),
+                RenderContext {
+                    authors: vec![make_author("Jane", "Smith")],
+                    ..Default::default()
+                },
+            ),
+            (
+                make_article("jones:2021", "Paper B", Some(2021)),
+                RenderContext {
+                    authors: vec![make_author("Bob", "Jones")],
+                    ..Default::default()
+                },
+            ),
+        ];
+
+        assign_year_suffixes(&mut main, &mut []);
+
+        assert_eq!(main[0].1.year_suffix, None, "no collision, no suffix");
+        assert_eq!(main[1].1.year_suffix, None, "no collision, no suffix");
+    }
+
+    #[test]
+    fn test_assign_year_suffixes_main_only() {
+        let mut main = vec![
+            (
+                make_article("smith:2020a", "First", Some(2020)),
+                RenderContext {
+                    authors: vec![make_author("Jane", "Smith")],
+                    ..Default::default()
+                },
+            ),
+            (
+                make_article("smith:2020b", "Second", Some(2020)),
+                RenderContext {
+                    authors: vec![make_author("Jane", "Smith")],
+                    ..Default::default()
+                },
+            ),
+        ];
+
+        assign_year_suffixes(&mut main, &mut []);
+
+        assert_eq!(
+            main[0].1.year_suffix,
+            Some("a".to_string()),
+            "first gets 'a'"
+        );
+        assert_eq!(
+            main[1].1.year_suffix,
+            Some("b".to_string()),
+            "second gets 'b'"
+        );
+    }
+
+    #[test]
+    fn test_assign_year_suffixes_main_before_further() {
+        let mut main = vec![
+            (
+                make_article("jones:2020b", "Main 1", Some(2020)),
+                RenderContext {
+                    authors: vec![make_author("Bob", "Jones")],
+                    ..Default::default()
+                },
+            ),
+            (
+                make_article("jones:2020c", "Main 2", Some(2020)),
+                RenderContext {
+                    authors: vec![make_author("Bob", "Jones")],
+                    ..Default::default()
+                },
+            ),
+        ];
+        let mut further = vec![(
+            make_article("jones:2020a", "Further 1", Some(2020)),
+            RenderContext {
+                authors: vec![make_author("Bob", "Jones")],
+                ..Default::default()
+            },
+        )];
+
+        assign_year_suffixes(&mut main, &mut further);
+
+        assert_eq!(
+            main[0].1.year_suffix,
+            Some("a".to_string()),
+            "jones:2020b (main, first by suffix) gets 'a'"
+        );
+        assert_eq!(
+            main[1].1.year_suffix,
+            Some("b".to_string()),
+            "jones:2020c (main, second by suffix) gets 'b'"
+        );
+        assert_eq!(
+            further[0].1.year_suffix,
+            Some("c".to_string()),
+            "jones:2020a (further) gets 'c'"
+        );
+    }
+
+    #[test]
+    fn test_assign_year_suffixes_three_in_main() {
+        let mut main = vec![
+            (
+                make_article("smith:2020a", "First", Some(2020)),
+                RenderContext {
+                    authors: vec![make_author("Jane", "Smith")],
+                    ..Default::default()
+                },
+            ),
+            (
+                make_article("smith:2020b", "Second", Some(2020)),
+                RenderContext {
+                    authors: vec![make_author("Jane", "Smith")],
+                    ..Default::default()
+                },
+            ),
+            (
+                make_article("smith:2020c", "Third", Some(2020)),
+                RenderContext {
+                    authors: vec![make_author("Jane", "Smith")],
+                    ..Default::default()
+                },
+            ),
+        ];
+
+        assign_year_suffixes(&mut main, &mut []);
+
+        assert_eq!(main[0].1.year_suffix, Some("a".to_string()));
+        assert_eq!(main[1].1.year_suffix, Some("b".to_string()));
+        assert_eq!(main[2].1.year_suffix, Some("c".to_string()));
+    }
+
+    // =========================================================================
+    // Test: resolved_title overrides title_unicode
+    // =========================================================================
+
+    #[test]
+    fn test_resolved_title_used_over_unicode() {
+        let mut item = make_article("test:2020", "Unicode Title", Some(2020));
+        item.title_latex = "Latex Title".to_string();
+
+        let ctx = RenderContext {
+            authors: vec![make_author("Test", "Author")],
+            resolved_title: Some("Resolved Title with Smith (2020a)".to_string()),
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(
+            html.contains("Resolved Title with Smith (2020a)"),
+            "resolved title used: {html}"
+        );
+        assert!(
+            !html.contains("Unicode Title"),
+            "unicode title not used: {html}"
+        );
+    }
+
+    // =========================================================================
+    // Test: resolved_note overrides note_unicode
+    // =========================================================================
+
+    #[test]
+    fn test_resolved_note_used_over_unicode() {
+        let mut item = make_bibitem(EntryType::Book, "test:2020", "A Book", Some(2020));
+        item.note_unicode = Some("Translation: Jones (2021)".to_string());
+
+        let ctx = RenderContext {
+            authors: vec![make_author("Test", "Author")],
+            resolved_note: Some("Translation: Jones (2021a)".to_string()),
+            ..Default::default()
+        };
+
+        let html = render_bibitem(&item, &ctx);
+
+        assert!(
+            html.contains("Translation: Jones (2021a)"),
+            "resolved note used: {html}"
+        );
+        assert!(
+            !html.contains("Translation: Jones (2021)\""),
+            "unicode note not used when resolved present"
         );
     }
 }
