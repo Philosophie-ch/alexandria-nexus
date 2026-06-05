@@ -75,7 +75,7 @@ pub trait BibkeyLookup: Send + Sync {
     ) -> impl Future<Output = Result<HashSet<String>, HexforgeError>> + Send;
 }
 
-/// Contract for deleting bibitems by bibkeys (stale removal + pre-update cleanup).
+/// Contract for deleting bibitems by bibkeys (stale removal).
 pub trait BibitemDeleter: Send + Sync {
     fn delete_bibitems_by_bibkeys(
         &self,
@@ -83,7 +83,24 @@ pub trait BibitemDeleter: Send + Sync {
     ) -> impl Future<Output = Result<usize, HexforgeError>> + Send;
 }
 
-/// Contract for bulk-inserting bibitems.
+/// Contract for bulk-updating existing bibitems by bibkey, preserving id and created_at.
+pub trait BulkBibitemUpdate: Send + Sync {
+    fn bulk_update_bibitems(
+        &self,
+        entities: &[BibItem],
+    ) -> impl Future<Output = Result<usize, HexforgeError>> + Send;
+}
+
+/// Contract for deleting junction rows by bibkeys before re-inserting updated junctions.
+/// UPDATE does not cascade to junction tables, so cleanup must be explicit.
+pub trait JunctionCleaner: Send + Sync {
+    fn clean_junctions_by_bibkeys(
+        &self,
+        bibkeys: &[String],
+    ) -> impl Future<Output = Result<(), HexforgeError>> + Send;
+}
+
+/// Contract for bulk-inserting new bibitems.
 /// Returns (id, bibkey) pairs for all inserted rows.
 pub trait BulkBibitemInsert: Send + Sync {
     fn bulk_insert_bibitems(
@@ -117,6 +134,16 @@ pub trait TransitiveDepsComputer: Send + Sync {
     fn compute_transitive_deps(
         &self,
     ) -> impl Future<Output = Result<(usize, usize), HexforgeError>> + Send;
+}
+
+/// Contract for scoping mutations so that referential integrity checks
+/// are evaluated atomically after all writes complete.
+///
+/// `begin` opens an atomic scope; `commit` finalizes it.
+/// If neither is called, each write is validated independently.
+pub trait ImportScope: Send + Sync {
+    fn begin(&self) -> impl Future<Output = Result<(), HexforgeError>> + Send;
+    fn commit(&self) -> impl Future<Output = Result<(), HexforgeError>> + Send;
 }
 
 /// Contract for fetching all bibitems (for export).
@@ -451,8 +478,11 @@ pub async fn import_bibitems(
     entity_lookup: &impl EntityLookup,
     keyword_lookup: &impl KeywordLookup,
     bibkey_lookup: &impl BibkeyLookup,
+    scope: &impl ImportScope,
     bibitem_deleter: &impl BibitemDeleter,
     bulk_inserter: &impl BulkBibitemInsert,
+    bulk_updater: &impl BulkBibitemUpdate,
+    junction_cleaner: &impl JunctionCleaner,
     bulk_junction: &impl BulkJunctionInsert,
     transitive_deps: &impl TransitiveDepsComputer,
     notes_store: &impl BibitemNotesStore,
@@ -476,6 +506,8 @@ pub async fn import_bibitems(
     // 4. Build resolution context; filter to rows where all entity refs resolve
     let ctx = ResolutionCtx::from_lookup_maps(maps);
     let (parsed_rows, filtered_errors) = filter_importable_rows(rows, &ctx);
+
+    scope.begin().await?;
 
     // 5. Delete stale bibitems (in DB but absent from the source file entirely)
     let deleted = if delete_stale {
@@ -504,31 +536,41 @@ pub async fn import_bibitems(
         .filter(|(was_update, _)| !was_update)
         .count();
 
-    // 7. Batch-delete all bibkeys that will be re-inserted (cascade clears junctions)
+    // 7. Clean junctions for updated bibkeys (UPDATE preserves the bibitem row;
+    //    junctions must be deleted explicitly since there is no CASCADE from UPDATE)
     let update_bibkeys: Vec<String> = entities_with_flags
         .iter()
         .filter(|(was_update, _)| *was_update)
         .map(|(_, e)| e.bibkey.clone())
         .collect();
+    let update_bibkeys_set: HashSet<String> = update_bibkeys.iter().cloned().collect();
     if !update_bibkeys.is_empty() {
-        bibitem_deleter
-            .delete_bibitems_by_bibkeys(&update_bibkeys)
+        junction_cleaner
+            .clean_junctions_by_bibkeys(&update_bibkeys)
             .await?;
     }
 
     // 8. Null crossrefs pointing to bibkeys absent from the final set
     let mut entities: Vec<BibItem> = entities_with_flags.into_iter().map(|(_, e)| e).collect();
-    let insert_bibkeys: HashSet<String> = entities.iter().map(|e| e.bibkey.clone()).collect();
+    let all_bibkeys: HashSet<String> = entities.iter().map(|e| e.bibkey.clone()).collect();
     let nulled_crossrefs = null_invalid_crossrefs(
         &mut entities,
-        &insert_bibkeys,
+        &all_bibkeys,
         &ctx.existing_bibkeys,
         &file_bibkeys,
         delete_stale,
     );
 
-    // 9. Bulk insert all bibitems
-    let _inserted_ids = bulk_inserter.bulk_insert_bibitems(&entities).await?;
+    // 9. Partition into updates and inserts; UPDATE existing in place, INSERT new
+    let (update_entities, insert_entities): (Vec<BibItem>, Vec<BibItem>) = entities
+        .into_iter()
+        .partition(|e| update_bibkeys_set.contains(&e.bibkey));
+    if !update_entities.is_empty() {
+        bulk_updater.bulk_update_bibitems(&update_entities).await?;
+    }
+    if !insert_entities.is_empty() {
+        bulk_inserter.bulk_insert_bibitems(&insert_entities).await?;
+    }
 
     // 10. Collect junction rows and bulk insert
     let author_rows = collect_author_junction_rows(&parsed_rows, &ctx);
@@ -568,6 +610,8 @@ pub async fn import_bibitems(
                 .await?;
         }
     }
+
+    scope.commit().await?;
 
     let skipped = filtered_errors.len();
     let failed = build_errors.len();
