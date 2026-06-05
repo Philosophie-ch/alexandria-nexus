@@ -464,6 +464,14 @@ async fn test_import_full_csv_updates_existing() {
     let resp1 = upload_csv(&app, "/api/v1/admin/import-full-csv", &csv1).await;
     assert_eq!(resp1.status(), 200);
 
+    // Record the ID after first import
+    let bib_resp1 = app
+        .get(&format!("/api/v1/bibitems/by-key/update{s}:2024"))
+        .await;
+    assert_eq!(bib_resp1.status(), 200);
+    let bib1: serde_json::Value = bib_resp1.json().await.unwrap();
+    let id_after_first_import = bib1["id"].as_i64().unwrap();
+
     // Second import with updated title
     let csv2 = format!(
         "entry_type,bibkey,title,date\n\
@@ -476,13 +484,78 @@ async fn test_import_full_csv_updates_existing() {
     assert_eq!(body["updated"], 1);
     assert_eq!(body["imported"], 0);
 
-    // Verify title was updated
-    let bib_resp = app
+    // Verify title was updated and ID is preserved
+    let bib_resp2 = app
         .get(&format!("/api/v1/bibitems/by-key/update{s}:2024"))
         .await;
-    assert_eq!(bib_resp.status(), 200);
-    let bib: serde_json::Value = bib_resp.json().await.unwrap();
-    assert_eq!(bib["title_latex"], "Updated Title");
+    assert_eq!(bib_resp2.status(), 200);
+    let bib2: serde_json::Value = bib_resp2.json().await.unwrap();
+    assert_eq!(bib2["title_latex"], "Updated Title");
+    assert_eq!(
+        bib2["id"].as_i64().unwrap(),
+        id_after_first_import,
+        "ID must remain stable across import updates"
+    );
+}
+
+#[tokio::test]
+async fn test_import_preserves_id_and_timestamps() {
+    let app = TestApp::spawn().await;
+    let s = unique_suffix();
+
+    // First import
+    let csv1 = format!(
+        "entry_type,bibkey,title,date\n\
+         book,ts{s}:2024,Original Title,2024"
+    );
+    let resp1 = upload_csv(&app, "/api/v1/admin/import-full-csv", &csv1).await;
+    assert_eq!(resp1.status(), 200);
+
+    // Record id and created_at
+    let bib_resp1 = app
+        .get(&format!("/api/v1/bibitems/by-key/ts{s}:2024"))
+        .await;
+    assert_eq!(bib_resp1.status(), 200);
+    let bib1: serde_json::Value = bib_resp1.json().await.unwrap();
+    let original_id = bib1["id"].as_i64().unwrap();
+    let original_created_at = bib1["created_at"].as_str().unwrap().to_string();
+    let original_updated_at = bib1["updated_at"].as_str().unwrap().to_string();
+
+    // Brief pause so updated_at will differ
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    // Re-import with changed title
+    let csv2 = format!(
+        "entry_type,bibkey,title,date\n\
+         book,ts{s}:2024,Changed Title,2024"
+    );
+    let resp2 = upload_csv(&app, "/api/v1/admin/import-full-csv", &csv2).await;
+    assert_eq!(resp2.status(), 200);
+    let body: serde_json::Value = resp2.json().await.unwrap();
+    assert_eq!(body["updated"], 1);
+
+    let bib_resp2 = app
+        .get(&format!("/api/v1/bibitems/by-key/ts{s}:2024"))
+        .await;
+    assert_eq!(bib_resp2.status(), 200);
+    let bib2: serde_json::Value = bib_resp2.json().await.unwrap();
+
+    assert_eq!(
+        bib2["id"].as_i64().unwrap(),
+        original_id,
+        "id must be preserved"
+    );
+    assert_eq!(
+        bib2["created_at"].as_str().unwrap(),
+        original_created_at,
+        "created_at must be preserved"
+    );
+    assert_ne!(
+        bib2["updated_at"].as_str().unwrap(),
+        original_updated_at,
+        "updated_at must change on update"
+    );
+    assert_eq!(bib2["title_latex"], "Changed Title");
 }
 
 #[tokio::test]
@@ -801,6 +874,14 @@ async fn test_export_import_round_trip() {
         .unwrap();
     let exported_csv = export_resp.text().await.unwrap();
 
+    // Record ID before re-import
+    let bib_before = app
+        .get(&format!("/api/v1/bibitems/by-key/round{s}:2024"))
+        .await;
+    assert_eq!(bib_before.status(), 200);
+    let bib_before: serde_json::Value = bib_before.json().await.unwrap();
+    let id_before = bib_before["id"].as_i64().unwrap();
+
     // Re-import the exported CSV (should update, not create new)
     let reimport_resp = upload_csv(&app, "/api/v1/admin/import-full-csv", &exported_csv).await;
     assert_eq!(reimport_resp.status(), 200);
@@ -808,4 +889,93 @@ async fn test_export_import_round_trip() {
     assert_eq!(body["failed"], 0, "Round-trip re-import should not fail");
     assert_eq!(body["updated"], 1, "Should update the existing bibitem");
     assert_eq!(body["imported"], 0, "Should not create new bibitems");
+
+    // Verify ID stability across round-trip
+    let bib_after = app
+        .get(&format!("/api/v1/bibitems/by-key/round{s}:2024"))
+        .await;
+    assert_eq!(bib_after.status(), 200);
+    let bib_after: serde_json::Value = bib_after.json().await.unwrap();
+    assert_eq!(
+        bib_after["id"].as_i64().unwrap(),
+        id_before,
+        "Round-trip re-import must preserve bibitem ID"
+    );
+}
+
+// ============================================================================
+// CROSSREF DEFERRED CONSTRAINTS
+// ============================================================================
+
+#[tokio::test]
+async fn test_import_crossref_within_same_batch() {
+    let app = TestApp::spawn().await;
+    let s = unique_suffix();
+
+    seed_author(&app, &format!("auth-{s}"), "Xref", "Author").await;
+
+    // The chapter crossrefs the collection; the chapter row appears FIRST in the CSV,
+    // so its crossref target does not exist yet when the INSERT is executed.
+    // Without deferred FK constraints this would fail.
+    let csv = format!(
+        "entry_type,bibkey,title,author,crossref,date\n\
+         incollection,chapter{s}:2024,A Chapter,\"Xref, Author\",coll{s}:2024,2024\n\
+         collection,coll{s}:2024,The Collection,\"Xref, Author\",,2024"
+    );
+
+    let resp = upload_csv(&app, "/api/v1/admin/import-full-csv", &csv).await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["imported"], 2);
+    assert_eq!(body["failed"], 0);
+    assert_eq!(body["nulled_crossrefs"].as_array().unwrap().len(), 0);
+
+    // Verify the crossref resolved correctly
+    let chapter = app
+        .get(&format!("/api/v1/bibitems/by-key/chapter{s}:2024"))
+        .await;
+    assert_eq!(chapter.status(), 200);
+    let chapter: serde_json::Value = chapter.json().await.unwrap();
+    assert_eq!(chapter["crossref"], format!("coll{s}:2024"));
+}
+
+#[tokio::test]
+async fn test_import_crossref_update_to_new_bibitem() {
+    let app = TestApp::spawn().await;
+    let s = unique_suffix();
+
+    seed_author(&app, &format!("auth-{s}"), "Xref", "Author").await;
+
+    // First import: a standalone book with no crossref
+    let csv1 = format!(
+        "entry_type,bibkey,title,author,date\n\
+         book,existing{s}:2024,Old Book,\"Xref, Author\",2024"
+    );
+    let resp1 = upload_csv(&app, "/api/v1/admin/import-full-csv", &csv1).await;
+    assert_eq!(resp1.status(), 200);
+
+    // Second import: the existing book now crossrefs a new collection.
+    // The UPDATE of the existing book sets crossref to a bibkey that
+    // only gets INSERTed later in the same batch.
+    let csv2 = format!(
+        "entry_type,bibkey,title,author,crossref,date\n\
+         incollection,existing{s}:2024,Old Book,\"Xref, Author\",newcoll{s}:2024,2024\n\
+         collection,newcoll{s}:2024,New Collection,\"Xref, Author\",,2024"
+    );
+    let resp2 = upload_csv(&app, "/api/v1/admin/import-full-csv", &csv2).await;
+    assert_eq!(resp2.status(), 200);
+
+    let body: serde_json::Value = resp2.json().await.unwrap();
+    assert_eq!(body["updated"], 1);
+    assert_eq!(body["imported"], 1);
+    assert_eq!(body["failed"], 0);
+    assert_eq!(body["nulled_crossrefs"].as_array().unwrap().len(), 0);
+
+    let existing = app
+        .get(&format!("/api/v1/bibitems/by-key/existing{s}:2024"))
+        .await;
+    assert_eq!(existing.status(), 200);
+    let existing: serde_json::Value = existing.json().await.unwrap();
+    assert_eq!(existing["crossref"], format!("newcoll{s}:2024"));
 }
