@@ -1,4 +1,4 @@
-//! Render handler — thin HTTP wrapper for bibliography rendering.
+//! Render handler: thin HTTP wrapper for bibliography rendering.
 //!
 //! `POST /api/v1/render`
 //!
@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::AppState;
-use crate::process::render::{RenderPipelineError, RenderSelection, render_pipeline};
+use crate::process::render::{MissingItems, RenderPipelineError, RenderSelection, render_pipeline};
 
 // =============================================================================
 // Request / response types
@@ -34,6 +34,10 @@ pub struct RenderResponseBody {
     pub main_html: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub further_refs_html: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub missing_ids: Option<Vec<i64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub missing_bibkeys: Option<Vec<String>>,
 }
 
 /// Error response body.
@@ -41,10 +45,6 @@ pub struct RenderResponseBody {
 struct ErrorBody {
     error: &'static str,
     message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    missing_ids: Option<Vec<i64>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    missing_bibkeys: Option<Vec<String>>,
 }
 
 // =============================================================================
@@ -62,13 +62,14 @@ pub async fn render_bibitems(
     } else if let Some(bibkeys) = req.bibkeys {
         RenderSelection::ByBibkeys(bibkeys)
     } else {
-        return error_response(
+        return (
             StatusCode::BAD_REQUEST,
-            "bad_request",
-            "Request must specify \"ids\" or \"bibkeys\"".to_string(),
-            None,
-            None,
-        );
+            Json(ErrorBody {
+                error: "bad_request",
+                message: "Request must specify \"ids\" or \"bibkeys\"".to_string(),
+            }),
+        )
+            .into_response();
     };
 
     let resolver = state.bibitem_resolver();
@@ -86,60 +87,36 @@ pub async fn render_bibitems(
     )
     .await
     {
-        Ok(resp) => (
-            StatusCode::OK,
-            Json(RenderResponseBody {
-                main_html: resp.main_html,
-                further_refs_html: resp.further_refs_html,
-            }),
-        )
-            .into_response(),
+        Ok(resp) => {
+            let (missing_ids, missing_bibkeys) = match resp.missing {
+                MissingItems::Ids(ids) => (Some(ids), None),
+                MissingItems::Bibkeys(keys) => (None, Some(keys)),
+            };
+            (
+                StatusCode::OK,
+                Json(RenderResponseBody {
+                    main_html: resp.main_html,
+                    further_refs_html: resp.further_refs_html,
+                    missing_ids,
+                    missing_bibkeys,
+                }),
+            )
+                .into_response()
+        }
         Err(e) => pipeline_error_to_response(e),
     }
 }
 
 fn pipeline_error_to_response(err: RenderPipelineError) -> Response {
     match err {
-        RenderPipelineError::TooManyItems { requested, max } => error_response(
+        RenderPipelineError::TooManyItems { requested, max } => (
             StatusCode::UNPROCESSABLE_ENTITY,
-            "too_many_items",
-            format!("Requested {requested} items, maximum is {max}"),
-            None,
-            None,
-        ),
-        RenderPipelineError::MissingIds(missing) => error_response(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "not_found",
-            format!("{} requested ID(s) not found", missing.len()),
-            Some(missing),
-            None,
-        ),
-        RenderPipelineError::MissingBibkeys(missing) => error_response(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "not_found",
-            format!("{} requested bibkey(s) not found", missing.len()),
-            None,
-            Some(missing),
-        ),
+            Json(ErrorBody {
+                error: "too_many_items",
+                message: format!("Requested {requested} items, maximum is {max}"),
+            }),
+        )
+            .into_response(),
         RenderPipelineError::Internal(e) => e.into_response(),
     }
-}
-
-fn error_response(
-    status: StatusCode,
-    error: &'static str,
-    message: String,
-    missing_ids: Option<Vec<i64>>,
-    missing_bibkeys: Option<Vec<String>>,
-) -> Response {
-    (
-        status,
-        Json(ErrorBody {
-            error,
-            message,
-            missing_ids,
-            missing_bibkeys,
-        }),
-    )
-        .into_response()
 }
