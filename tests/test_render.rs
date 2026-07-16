@@ -264,7 +264,7 @@ async fn test_render_include_further_refs_flag_omitted() {
         .await
         .unwrap();
 
-    // Render WITHOUT include_further_refs — further_refs_html must be null.
+    // Render without include_further_refs: further_refs_html must be null.
     let bibkey_a = format!("omit-a-{s}");
     let resp = app
         .post_json("/api/v1/render", &json!({ "bibkeys": [bibkey_a] }))
@@ -280,11 +280,11 @@ async fn test_render_include_further_refs_flag_omitted() {
 }
 
 // =============================================================================
-// Test: missing bibkeys returns 422 with all missing
+// Test: all bibkeys missing returns 200 with empty HTML
 // =============================================================================
 
 #[tokio::test]
-async fn test_render_missing_bibkeys() {
+async fn test_render_all_bibkeys_missing_returns_empty_html() {
     let app = TestApp::spawn().await;
 
     let resp = app
@@ -293,10 +293,94 @@ async fn test_render_missing_bibkeys() {
             &json!({ "bibkeys": ["nonexistent:2024", "also-missing:2025"] }),
         )
         .await;
-    assert_eq!(resp.status(), 422, "Should return 422 for missing bibkeys");
+    assert_eq!(
+        resp.status(),
+        200,
+        "Should return 200 even when all bibkeys missing"
+    );
 
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(body["error"], "not_found");
+    assert_eq!(body["main_html"], "", "main_html should be empty");
+    assert!(
+        body["further_refs_html"].is_null(),
+        "further_refs_html should be absent"
+    );
+
     let missing = body["missing_bibkeys"].as_array().unwrap();
     assert_eq!(missing.len(), 2, "Should report all missing bibkeys");
+    assert!(
+        body["missing_ids"].is_null(),
+        "missing_ids should be absent for bibkey selection"
+    );
+}
+
+// =============================================================================
+// Test: partial bibkeys: renders found, reports missing
+// =============================================================================
+
+#[tokio::test]
+async fn test_render_partial_bibkeys_returns_found_with_missing() {
+    let app = TestApp::spawn().await;
+    let suffix = unique_suffix();
+
+    let (_, author_key) = create_author(&app, &suffix, "partial-author", "Alice", "Walker").await;
+    let bibitem_id = create_bibitem_with_details(
+        &app,
+        &suffix,
+        "partial-found",
+        "article",
+        "Found Article",
+        Some(2024),
+    )
+    .await;
+    link_author(&app, bibitem_id, &author_key, "author", 1).await;
+
+    let found_key = format!("partial-found-{suffix}");
+    let missing_key = "does-not-exist:2099";
+
+    let resp = app
+        .post_json(
+            "/api/v1/render",
+            &json!({ "bibkeys": [found_key, missing_key] }),
+        )
+        .await;
+    assert_eq!(resp.status(), 200, "Should return 200 for partial results");
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let html = body["main_html"].as_str().unwrap();
+    assert!(
+        html.contains(&format!("data-bibkey=\"{found_key}\"")),
+        "HTML should contain the found bibitem"
+    );
+
+    let missing = body["missing_bibkeys"].as_array().unwrap();
+    assert_eq!(missing.len(), 1);
+    assert_eq!(missing[0], missing_key);
+}
+
+// =============================================================================
+// Test: all bibkeys found: missing_bibkeys is empty
+// =============================================================================
+
+#[tokio::test]
+async fn test_render_all_bibkeys_found_has_empty_missing() {
+    let app = TestApp::spawn().await;
+    let suffix = unique_suffix();
+
+    create_bibitem_with_details(&app, &suffix, "all-found", "book", "A Book", Some(2024)).await;
+    let bibkey = format!("all-found-{suffix}");
+
+    let resp = app
+        .post_json("/api/v1/render", &json!({ "bibkeys": [bibkey] }))
+        .await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(body["main_html"].as_str().unwrap().contains("A Book"));
+
+    let missing = body["missing_bibkeys"].as_array().unwrap();
+    assert!(
+        missing.is_empty(),
+        "missing_bibkeys should be empty when all found"
+    );
 }

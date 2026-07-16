@@ -1,8 +1,8 @@
-//! Render process — orchestrates bibitem resolution, data fetching, and context building.
+//! Render process: orchestrates bibitem resolution, data fetching, and context building.
 //!
 //! Defines traits for I/O operations and coordinates between data fetching
 //! (via traits) and pure logic functions (from `crate::logic::render`).
-//! Orchestration only — no I/O, no framework dependencies.
+//! Orchestration only: no I/O, no framework dependencies.
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -17,7 +17,7 @@ use crate::logic::render::{
 };
 
 // =============================================================================
-// Traits — contracts for I/O operations that adapters implement
+// Traits: contracts for I/O operations that adapters implement
 // =============================================================================
 
 /// Contract for resolving bibitems by IDs or bibkeys.
@@ -85,7 +85,7 @@ pub trait RenderAuthorFetcher: Send + Sync {
 }
 
 // =============================================================================
-// Render request — what the process layer receives
+// Render request: what the process layer receives
 // =============================================================================
 
 /// Selection criteria for bibitems to render.
@@ -94,17 +94,24 @@ pub enum RenderSelection {
     ByBibkeys(Vec<String>),
 }
 
+/// Items that were requested but not found in the database.
+pub enum MissingItems {
+    Ids(Vec<i64>),
+    Bibkeys(Vec<String>),
+}
+
 /// Rendered output from the render pipeline.
 pub struct RenderResponse {
     pub main_html: String,
     pub further_refs_html: Option<String>,
+    pub missing: MissingItems,
 }
 
 /// Maximum number of items per render request.
 pub const MAX_RENDER_ITEMS: usize = 1000;
 
 // =============================================================================
-// Render errors — typed errors for the handler to map to HTTP
+// Render errors: typed errors for the handler to map to HTTP
 // =============================================================================
 
 /// Errors from the render pipeline.
@@ -112,8 +119,6 @@ pub const MAX_RENDER_ITEMS: usize = 1000;
 /// The handler maps these to HTTP status codes and response bodies.
 pub enum RenderPipelineError {
     TooManyItems { requested: usize, max: usize },
-    MissingIds(Vec<i64>),
-    MissingBibkeys(Vec<String>),
     Internal(HexforgeError),
 }
 
@@ -150,41 +155,48 @@ pub async fn render_pipeline(
         });
     }
     if count == 0 {
+        let missing = match selection {
+            RenderSelection::ByIds(_) => MissingItems::Ids(Vec::new()),
+            RenderSelection::ByBibkeys(_) => MissingItems::Bibkeys(Vec::new()),
+        };
         return Ok(RenderResponse {
             main_html: String::new(),
             further_refs_html: None,
+            missing,
         });
     }
 
-    // Resolve bibitems
-    let bibitems = match selection {
+    // Resolve bibitems: continue with found items, track missing
+    let (bibitems, missing) = match selection {
         RenderSelection::ByIds(ids) => {
             let found = resolver.find_by_ids(&ids).await?;
             let found_ids: HashSet<i64> = found.iter().map(|b| b.id).collect();
-            let missing: Vec<i64> = ids
+            let missing_ids: Vec<i64> = ids
                 .iter()
                 .filter(|id| !found_ids.contains(id))
                 .copied()
                 .collect();
-            if !missing.is_empty() {
-                return Err(RenderPipelineError::MissingIds(missing));
-            }
-            found
+            (found, MissingItems::Ids(missing_ids))
         }
         RenderSelection::ByBibkeys(bibkeys) => {
             let found = resolver.find_by_bibkeys(&bibkeys).await?;
             let found_keys: HashSet<&str> = found.iter().map(|b| b.bibkey.as_str()).collect();
-            let missing: Vec<String> = bibkeys
+            let missing_keys: Vec<String> = bibkeys
                 .iter()
                 .filter(|k| !found_keys.contains(k.as_str()))
                 .cloned()
                 .collect();
-            if !missing.is_empty() {
-                return Err(RenderPipelineError::MissingBibkeys(missing));
-            }
-            found
+            (found, MissingItems::Bibkeys(missing_keys))
         }
     };
+
+    if bibitems.is_empty() {
+        return Ok(RenderResponse {
+            main_html: String::new(),
+            further_refs_html: None,
+            missing,
+        });
+    }
 
     let main_ids: Vec<i64> = bibitems.iter().map(|b| b.id).collect();
     let mut main_items =
@@ -225,6 +237,7 @@ pub async fn render_pipeline(
     Ok(RenderResponse {
         main_html,
         further_refs_html,
+        missing,
     })
 }
 
