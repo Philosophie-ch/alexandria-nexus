@@ -60,9 +60,11 @@ fn scan_and_substitute(
             scan = s;
         }
 
-        // skip optional [...] args
+        // Parse optional [...] args (BibLaTeX: one = postnote, two = prenote + postnote)
+        let mut opt_args: Vec<&str> = Vec::new();
         while let Some(s) = scan.strip_prefix('[') {
             if let Some(i) = s.find(']') {
+                opt_args.push(&s[..i]);
                 scan = &s[i + 1..];
             } else {
                 break;
@@ -94,7 +96,13 @@ fn scan_and_substitute(
         if keys.is_empty() {
             result.push_str(&cmd_start[..cmd_len]);
         } else {
-            let substituted = format_cite(cmd_name, &keys, resolved, wrap_html);
+            let postnote = match opt_args.as_slice() {
+                [single] if !single.trim().is_empty() => Some(normalize_postnote(single.trim())),
+                [_, post] if !post.trim().is_empty() => Some(normalize_postnote(post.trim())),
+                _ => None,
+            };
+            let substituted =
+                format_cite(cmd_name, &keys, resolved, wrap_html, postnote.as_deref());
             result.push_str(&substituted);
         }
 
@@ -109,6 +117,7 @@ fn format_cite(
     keys: &[&str],
     resolved: &HashMap<String, CitationData>,
     wrap_html: bool,
+    postnote: Option<&str>,
 ) -> String {
     let empty = CitationData {
         author: None,
@@ -122,11 +131,19 @@ fn format_cite(
             s
         }
     };
+    let last_idx = keys.len().saturating_sub(1);
     match cmd_name {
         "citep" | "cite" => {
             let items: Vec<String> = keys
                 .iter()
-                .map(|&k| wrap(k, fmt_author_comma_year(resolved.get(k).unwrap_or(&empty))))
+                .enumerate()
+                .map(|(i, &k)| {
+                    let pn = if i == last_idx { postnote } else { None };
+                    wrap(
+                        k,
+                        fmt_author_comma_year(resolved.get(k).unwrap_or(&empty), pn),
+                    )
+                })
                 .collect();
             if items.iter().any(|s| s.is_empty()) {
                 String::new()
@@ -172,7 +189,11 @@ fn format_cite(
         _ => {
             let items: Vec<String> = keys
                 .iter()
-                .map(|&k| wrap(k, fmt_author_year(resolved.get(k).unwrap_or(&empty))))
+                .enumerate()
+                .map(|(i, &k)| {
+                    let pn = if i == last_idx { postnote } else { None };
+                    wrap(k, fmt_author_year(resolved.get(k).unwrap_or(&empty), pn))
+                })
                 .collect();
             if items.iter().any(|s| s.is_empty()) {
                 String::new()
@@ -183,24 +204,36 @@ fn format_cite(
     }
 }
 
-fn fmt_author_year(d: &CitationData) -> String {
+fn fmt_author_year(d: &CitationData, postnote: Option<&str>) -> String {
     match (&d.author, d.year) {
         (Some(a), Some(y)) => {
             let suffix = d.year_suffix.as_deref().unwrap_or("");
-            format!("{a} ({y}{suffix})")
+            match postnote {
+                Some(pn) => format!("{a} ({y}{suffix}, {pn})"),
+                None => format!("{a} ({y}{suffix})"),
+            }
         }
         _ => String::new(),
     }
 }
 
-fn fmt_author_comma_year(d: &CitationData) -> String {
+fn fmt_author_comma_year(d: &CitationData, postnote: Option<&str>) -> String {
     match (&d.author, d.year) {
         (Some(a), Some(y)) => {
             let suffix = d.year_suffix.as_deref().unwrap_or("");
-            format!("{a}, {y}{suffix}")
+            match postnote {
+                Some(pn) => format!("{a}, {y}{suffix}, {pn}"),
+                None => format!("{a}, {y}{suffix}"),
+            }
         }
         _ => String::new(),
     }
+}
+
+fn normalize_postnote(s: &str) -> String {
+    s.replace("---", "\u{2014}")
+        .replace("--", "\u{2013}")
+        .replace('~', "\u{00a0}")
 }
 
 /// Join a list of strings using Oxford-"and" format (matching the old Python behaviour).
@@ -576,11 +609,11 @@ mod tests {
     }
 
     #[test]
-    fn substitute_optional_args_skipped() {
+    fn substitute_two_optional_args_postnote_included() {
         let m = map(&[("f:1", cd(Some("Foo"), Some(2005)))]);
         assert_eq!(
             substitute_citations(r"\citep[see][p.5]{f:1}", &m),
-            "(Foo, 2005)"
+            "(Foo, 2005, p.5)"
         );
     }
 
@@ -850,5 +883,79 @@ mod tests {
             substitute_citations(r"\citet{smith:2020}", &m),
             "Smith (2020)"
         );
+    }
+
+    // =========================================================================
+    // Postnote tests
+    // =========================================================================
+
+    #[test]
+    fn substitute_citet_with_postnote_pages() {
+        let m = map(&[(
+            "lewis:1986a",
+            cd_with_suffix(Some("Lewis"), Some(1986), "a"),
+        )]);
+        assert_eq!(
+            substitute_citations(r"\citet[32--51]{lewis:1986a}", &m),
+            "Lewis (1986a, 32\u{2013}51)"
+        );
+    }
+
+    #[test]
+    fn substitute_citep_with_postnote() {
+        let m = map(&[(
+            "lewis:1986b",
+            cd_with_suffix(Some("Lewis"), Some(1986), "b"),
+        )]);
+        assert_eq!(
+            substitute_citations(r"\citep[159--172]{lewis:1986b}", &m),
+            "(Lewis, 1986b, 159\u{2013}172)"
+        );
+    }
+
+    #[test]
+    fn substitute_citet_postnote_html_wrapped() {
+        let m = map(&[(
+            "lewis:1986a",
+            cd_with_suffix(Some("Lewis"), Some(1986), "a"),
+        )]);
+        assert_eq!(
+            substitute_citations_html(r"\citet[32--51]{lewis:1986a}", &m),
+            "<span data-bibkey=\"lewis:1986a\">Lewis (1986a, 32\u{2013}51)</span>"
+        );
+    }
+
+    #[test]
+    fn substitute_two_optional_args_postnote_is_second() {
+        let m = map(&[("f:1", cd(Some("Foo"), Some(2005)))]);
+        assert_eq!(
+            substitute_citations(r"\citep[see][p.~5]{f:1}", &m),
+            "(Foo, 2005, p.\u{00a0}5)"
+        );
+    }
+
+    #[test]
+    fn substitute_postnote_empty_bracket_ignored() {
+        let m = map(&[("f:1", cd(Some("Foo"), Some(2005)))]);
+        assert_eq!(substitute_citations(r"\citet[]{f:1}", &m), "Foo (2005)");
+    }
+
+    #[test]
+    fn substitute_postnote_only_last_key_in_multikey() {
+        let m = map(&[
+            ("a:1", cd(Some("Alpha"), Some(2000))),
+            ("b:2", cd(Some("Beta"), Some(2001))),
+        ]);
+        assert_eq!(
+            substitute_citations(r"\citet[99]{a:1,b:2}", &m),
+            "Alpha (2000) and Beta (2001, 99)"
+        );
+    }
+
+    #[test]
+    fn normalize_postnote_converts_dashes() {
+        assert_eq!(super::normalize_postnote("32--51"), "32\u{2013}51");
+        assert_eq!(super::normalize_postnote("p.~5"), "p.\u{00a0}5");
+        assert_eq!(super::normalize_postnote("a---b"), "a\u{2014}b");
     }
 }
