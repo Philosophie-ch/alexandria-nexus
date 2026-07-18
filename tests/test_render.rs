@@ -384,3 +384,534 @@ async fn test_render_all_bibkeys_found_has_empty_missing() {
         "missing_bibkeys should be empty when all found"
     );
 }
+
+// =============================================================================
+// Test: note citations to external bibkeys resolve (not in render set)
+// =============================================================================
+
+#[tokio::test]
+async fn test_render_note_cites_external_bibkey_resolves() {
+    let app = TestApp::spawn().await;
+    let suffix = unique_suffix();
+
+    // Create bibitem B (the cited target, NOT in the render request)
+    let (_, author_b_key) =
+        create_author(&app, &suffix, "ext-cited-author", "David", "Lewis").await;
+    let b_id = create_bibitem_with_details(
+        &app,
+        &suffix,
+        "ext-cited",
+        "book",
+        "Philosophical Papers",
+        Some(1986),
+    )
+    .await;
+    link_author(&app, b_id, &author_b_key, "author", 1).await;
+
+    // Create bibitem A whose note_latex cites B
+    let b_key = format!("ext-cited-{suffix}");
+    let (_, author_a_key) =
+        create_author(&app, &suffix, "ext-source-author", "Jane", "Smith").await;
+    let a_payload = json!({
+        "bibkey": format!("ext-source-{suffix}"),
+        "entry_type": "article",
+        "title_latex": "Some Article",
+        "title_unicode": "Some Article",
+        "title_simplified": "some article",
+        "note_latex": format!("Reprinted in \\citet{{{b_key}}}"),
+        "date_year": 2020
+    });
+    let resp = app.post_json("/api/v1/bibitems", &a_payload).await;
+    assert_eq!(resp.status(), 200);
+    let a_id = resp.json::<serde_json::Value>().await.unwrap()["id"]
+        .as_i64()
+        .unwrap();
+    link_author(&app, a_id, &author_a_key, "author", 1).await;
+
+    // Render ONLY A (B is not in the render request)
+    let a_key = format!("ext-source-{suffix}");
+    let resp = app
+        .post_json("/api/v1/render", &json!({ "bibkeys": [a_key] }))
+        .await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let html = body["main_html"].as_str().unwrap();
+
+    assert!(
+        html.contains("Lewis (1986)"),
+        "external citation should resolve to author+year: {html}"
+    );
+    assert!(
+        html.contains(&format!("data-bibkey=\"{b_key}\"")),
+        "resolved citation should be wrapped with data-bibkey: {html}"
+    );
+
+    // B should appear as a further ref (externally-cited items are added to further refs)
+    let further = body["further_refs_html"]
+        .as_str()
+        .expect("further_refs_html should be present for externally-cited items");
+    assert!(
+        further.contains(&format!("data-bibkey=\"{b_key}\"")),
+        "further refs should contain the externally-cited bibitem: {further}"
+    );
+}
+
+// =============================================================================
+// Test: include_further_refs=false suppresses junction deps, inline cites still resolve
+// =============================================================================
+
+#[tokio::test]
+async fn test_render_further_refs_false_suppresses_junction_but_allows_inline_cites() {
+    let app = TestApp::spawn().await;
+    let s = unique_suffix();
+
+    // Create three bibitems:
+    //   A (main) — has junction dep → B, and note_latex cites C
+    //   B (junction dep only)
+    //   C (inline-cited only)
+    let (_, author_key) = create_author(&app, &s, "contract-author", "Alice", "Tester").await;
+
+    let b_id = create_bibitem_with_details(
+        &app,
+        &s,
+        "contract-b",
+        "book",
+        "Junction Target",
+        Some(2010),
+    )
+    .await;
+    link_author(&app, b_id, &author_key, "author", 1).await;
+
+    let c_id =
+        create_bibitem_with_details(&app, &s, "contract-c", "book", "Cited Target", Some(2015))
+            .await;
+    link_author(&app, c_id, &author_key, "author", 1).await;
+
+    let c_key = format!("contract-c-{s}");
+    let a_payload = json!({
+        "bibkey": format!("contract-a-{s}"),
+        "entry_type": "article",
+        "title_latex": "Main Article",
+        "title_unicode": "Main Article",
+        "title_simplified": "main article",
+        "note_latex": format!("See \\citet{{{c_key}}}"),
+        "date_year": 2020
+    });
+    let resp = app.post_json("/api/v1/bibitems", &a_payload).await;
+    assert_eq!(resp.status(), 200);
+    let a_id = resp.json::<serde_json::Value>().await.unwrap()["id"]
+        .as_i64()
+        .unwrap();
+    link_author(&app, a_id, &author_key, "author", 1).await;
+
+    // Set up junction dep A→B
+    let a_key = format!("contract-a-{s}");
+    let b_key = format!("contract-b-{s}");
+    let refs_csv = format!("source_key,target_key,ref_type\n{a_key},{b_key},further_ref");
+    let refs_resp = upload_csv(&app, "/api/v1/admin/import/bibitem-refs", &refs_csv).await;
+    assert_eq!(refs_resp.status(), 200);
+
+    let rc_resp = app
+        .client
+        .post(app.url("/api/v1/admin/recompute-deps"))
+        .header("Authorization", format!("Bearer {}", app.api_key))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(rc_resp.status(), 200);
+
+    // Render with include_further_refs: false (the default)
+    let resp = app
+        .post_json(
+            "/api/v1/render",
+            &json!({ "bibkeys": [a_key], "include_further_refs": false }),
+        )
+        .await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let further = body["further_refs_html"]
+        .as_str()
+        .expect("further_refs_html should be present from inline citation");
+
+    // C (inline-cited) SHOULD appear
+    assert!(
+        further.contains(&format!("data-bibkey=\"{c_key}\"")),
+        "inline-cited item C should appear in further_refs_html: {further}"
+    );
+
+    // B (junction dep) should NOT appear
+    assert!(
+        !further.contains(&format!("data-bibkey=\"{b_key}\"")),
+        "junction dep B should be suppressed when include_further_refs=false: {further}"
+    );
+}
+
+// =============================================================================
+// Test: include_further_refs=true includes both junction deps and inline cites
+// =============================================================================
+
+#[tokio::test]
+async fn test_render_further_refs_true_includes_junction_and_inline_cites() {
+    let app = TestApp::spawn().await;
+    let s = unique_suffix();
+
+    // Same setup: A has junction dep → B, and note_latex cites C
+    let (_, author_key) = create_author(&app, &s, "both-author", "Alice", "Tester").await;
+
+    let b_id =
+        create_bibitem_with_details(&app, &s, "both-b", "book", "Junction Target", Some(2010))
+            .await;
+    link_author(&app, b_id, &author_key, "author", 1).await;
+
+    let c_id =
+        create_bibitem_with_details(&app, &s, "both-c", "book", "Cited Target", Some(2015)).await;
+    link_author(&app, c_id, &author_key, "author", 1).await;
+
+    let c_key = format!("both-c-{s}");
+    let a_payload = json!({
+        "bibkey": format!("both-a-{s}"),
+        "entry_type": "article",
+        "title_latex": "Main Article",
+        "title_unicode": "Main Article",
+        "title_simplified": "main article",
+        "note_latex": format!("See \\citet{{{c_key}}}"),
+        "date_year": 2020
+    });
+    let resp = app.post_json("/api/v1/bibitems", &a_payload).await;
+    assert_eq!(resp.status(), 200);
+    let a_id = resp.json::<serde_json::Value>().await.unwrap()["id"]
+        .as_i64()
+        .unwrap();
+    link_author(&app, a_id, &author_key, "author", 1).await;
+
+    // Junction dep A→B
+    let a_key = format!("both-a-{s}");
+    let b_key = format!("both-b-{s}");
+    let refs_csv = format!("source_key,target_key,ref_type\n{a_key},{b_key},further_ref");
+    let refs_resp = upload_csv(&app, "/api/v1/admin/import/bibitem-refs", &refs_csv).await;
+    assert_eq!(refs_resp.status(), 200);
+
+    let rc_resp = app
+        .client
+        .post(app.url("/api/v1/admin/recompute-deps"))
+        .header("Authorization", format!("Bearer {}", app.api_key))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(rc_resp.status(), 200);
+
+    // Render with include_further_refs: true
+    let resp = app
+        .post_json(
+            "/api/v1/render",
+            &json!({ "bibkeys": [a_key], "include_further_refs": true }),
+        )
+        .await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let further = body["further_refs_html"]
+        .as_str()
+        .expect("further_refs_html should be present");
+
+    // Both B (junction dep) and C (inline-cited) should appear
+    assert!(
+        further.contains(&format!("data-bibkey=\"{b_key}\"")),
+        "junction dep B should appear when include_further_refs=true: {further}"
+    );
+    assert!(
+        further.contains(&format!("data-bibkey=\"{c_key}\"")),
+        "inline-cited item C should also appear: {further}"
+    );
+}
+
+// =============================================================================
+// Test: further-ref inline citations also resolve when include_further_refs=true
+// =============================================================================
+
+#[tokio::test]
+async fn test_render_further_ref_inline_cites_also_resolve() {
+    let app = TestApp::spawn().await;
+    let s = unique_suffix();
+
+    // A (main) → junction dep B → B's note cites C
+    // With include_further_refs=true, C should also appear
+    let (_, author_key) = create_author(&app, &s, "chain-author", "Bob", "Chainer").await;
+
+    let c_id =
+        create_bibitem_with_details(&app, &s, "chain-c", "book", "Deep Target", Some(2005)).await;
+    link_author(&app, c_id, &author_key, "author", 1).await;
+
+    let c_key = format!("chain-c-{s}");
+    let b_payload = json!({
+        "bibkey": format!("chain-b-{s}"),
+        "entry_type": "incollection",
+        "title_latex": "Middle Entry",
+        "title_unicode": "Middle Entry",
+        "title_simplified": "middle entry",
+        "note_latex": format!("Reprinted in \\citet{{{c_key}}}"),
+        "date_year": 2010
+    });
+    let resp = app.post_json("/api/v1/bibitems", &b_payload).await;
+    assert_eq!(resp.status(), 200);
+    let b_id = resp.json::<serde_json::Value>().await.unwrap()["id"]
+        .as_i64()
+        .unwrap();
+    link_author(&app, b_id, &author_key, "author", 1).await;
+
+    let a_id =
+        create_bibitem_with_details(&app, &s, "chain-a", "article", "Top Article", Some(2020))
+            .await;
+    link_author(&app, a_id, &author_key, "author", 1).await;
+
+    // Junction dep A→B
+    let a_key = format!("chain-a-{s}");
+    let b_key = format!("chain-b-{s}");
+    let refs_csv = format!("source_key,target_key,ref_type\n{a_key},{b_key},further_ref");
+    let refs_resp = upload_csv(&app, "/api/v1/admin/import/bibitem-refs", &refs_csv).await;
+    assert_eq!(refs_resp.status(), 200);
+
+    let rc_resp = app
+        .client
+        .post(app.url("/api/v1/admin/recompute-deps"))
+        .header("Authorization", format!("Bearer {}", app.api_key))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(rc_resp.status(), 200);
+
+    // Render A with include_further_refs: true
+    let resp = app
+        .post_json(
+            "/api/v1/render",
+            &json!({ "bibkeys": [a_key], "include_further_refs": true }),
+        )
+        .await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let further = body["further_refs_html"]
+        .as_str()
+        .expect("further_refs_html should be present");
+
+    // B (junction dep) should appear
+    assert!(
+        further.contains(&format!("data-bibkey=\"{b_key}\"")),
+        "junction dep B should be in further refs: {further}"
+    );
+
+    // C (cited inside B's note) should also appear because further_items are scanned
+    assert!(
+        further.contains(&format!("data-bibkey=\"{c_key}\"")),
+        "C cited in B's note should also resolve via further-ref scanning: {further}"
+    );
+
+    // B's rendered note should contain the resolved citation to C
+    assert!(
+        further.contains("Chainer (2005)"),
+        "B's note should show resolved citation to C: {further}"
+    );
+}
+
+// =============================================================================
+// Test: further refs are sorted by author/year/bibkey after external merge
+// =============================================================================
+
+#[tokio::test]
+async fn test_render_further_refs_sorted_after_external_merge() {
+    let app = TestApp::spawn().await;
+    let s = unique_suffix();
+
+    // Create two authors (Z and A alphabetically) to verify sort order
+    let (_, author_z_key) = create_author(&app, &s, "sort-z-author", "Zara", "Zulu").await;
+    let (_, author_a_key) = create_author(&app, &s, "sort-a-author", "Adam", "Alpha").await;
+
+    // B (junction dep, author=Zulu)
+    let b_id =
+        create_bibitem_with_details(&app, &s, "sort-b", "book", "Zulu Book", Some(2010)).await;
+    link_author(&app, b_id, &author_z_key, "author", 1).await;
+
+    // C (inline-cited, author=Alpha — should sort BEFORE Zulu)
+    let c_id =
+        create_bibitem_with_details(&app, &s, "sort-c", "book", "Alpha Book", Some(2015)).await;
+    link_author(&app, c_id, &author_a_key, "author", 1).await;
+
+    let c_key = format!("sort-c-{s}");
+    let (_, author_main_key) = create_author(&app, &s, "sort-main-author", "Main", "Author").await;
+    let a_payload = json!({
+        "bibkey": format!("sort-a-{s}"),
+        "entry_type": "article",
+        "title_latex": "Main Article",
+        "title_unicode": "Main Article",
+        "title_simplified": "main article",
+        "note_latex": format!("See \\citet{{{c_key}}}"),
+        "date_year": 2020
+    });
+    let resp = app.post_json("/api/v1/bibitems", &a_payload).await;
+    assert_eq!(resp.status(), 200);
+    let a_id = resp.json::<serde_json::Value>().await.unwrap()["id"]
+        .as_i64()
+        .unwrap();
+    link_author(&app, a_id, &author_main_key, "author", 1).await;
+
+    // Junction dep A→B
+    let a_key = format!("sort-a-{s}");
+    let b_key = format!("sort-b-{s}");
+    let refs_csv = format!("source_key,target_key,ref_type\n{a_key},{b_key},further_ref");
+    let refs_resp = upload_csv(&app, "/api/v1/admin/import/bibitem-refs", &refs_csv).await;
+    assert_eq!(refs_resp.status(), 200);
+
+    let rc_resp = app
+        .client
+        .post(app.url("/api/v1/admin/recompute-deps"))
+        .header("Authorization", format!("Bearer {}", app.api_key))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(rc_resp.status(), 200);
+
+    // Render with include_further_refs: true (both junction + inline in further refs)
+    let resp = app
+        .post_json(
+            "/api/v1/render",
+            &json!({ "bibkeys": [a_key], "include_further_refs": true }),
+        )
+        .await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let further = body["further_refs_html"]
+        .as_str()
+        .expect("further_refs_html should contain both items");
+
+    // Alpha (C) should appear before Zulu (B) in the HTML
+    let pos_alpha = further
+        .find(&format!("data-bibkey=\"{c_key}\""))
+        .expect("C (Alpha) should be in further refs");
+    let pos_zulu = further
+        .find(&format!("data-bibkey=\"{b_key}\""))
+        .expect("B (Zulu) should be in further refs");
+    assert!(
+        pos_alpha < pos_zulu,
+        "Alpha should sort before Zulu in further refs: {further}"
+    );
+}
+
+// =============================================================================
+// Test: external citations get year suffixes + postnotes preserved
+// =============================================================================
+
+#[tokio::test]
+async fn test_render_external_citations_year_suffix_and_postnote() {
+    let app = TestApp::spawn().await;
+    let suffix = unique_suffix();
+
+    // Create author (shared by all Lewis entries)
+    let (_, author_key) = create_author(&app, &suffix, "suffix-author", "David", "Lewis").await;
+
+    // Create three Lewis 1986 entries:
+    //   A (incollection, in the render request) — lewis:1986i (postscript to 1973)
+    //   B (book, NOT in render request) — lewis:1986a (Philosophical Papers)
+    //   C (incollection, NOT in render request) — lewis:1986j (postscript to 1979)
+    let a_bibkey = format!("lewis:1986i-{suffix}");
+    let a_payload = json!({
+        "bibkey": &a_bibkey,
+        "entry_type": "incollection",
+        "title_latex": "Postscript",
+        "title_unicode": "Postscript",
+        "title_simplified": "postscript",
+        "date_year": 1986
+    });
+    let resp = app.post_json("/api/v1/bibitems", &a_payload).await;
+    assert_eq!(resp.status(), 200);
+    let a_id = resp.json::<serde_json::Value>().await.unwrap()["id"]
+        .as_i64()
+        .unwrap();
+    link_author(&app, a_id, &author_key, "author", 1).await;
+
+    let b_bibkey = format!("lewis:1986a-{suffix}");
+    let b_payload = json!({
+        "bibkey": &b_bibkey,
+        "entry_type": "book",
+        "title_latex": "Philosophical Papers",
+        "title_unicode": "Philosophical Papers",
+        "title_simplified": "philosophical papers",
+        "date_year": 1986
+    });
+    let resp = app.post_json("/api/v1/bibitems", &b_payload).await;
+    assert_eq!(resp.status(), 200);
+    let b_id = resp.json::<serde_json::Value>().await.unwrap()["id"]
+        .as_i64()
+        .unwrap();
+    link_author(&app, b_id, &author_key, "author", 1).await;
+
+    let c_bibkey = format!("lewis:1986j-{suffix}");
+    let c_payload = json!({
+        "bibkey": &c_bibkey,
+        "entry_type": "incollection",
+        "title_latex": "Postscript to 1979",
+        "title_unicode": "Postscript to 1979",
+        "title_simplified": "postscript to 1979",
+        "date_year": 1986
+    });
+    let resp = app.post_json("/api/v1/bibitems", &c_payload).await;
+    assert_eq!(resp.status(), 200);
+    let c_id = resp.json::<serde_json::Value>().await.unwrap()["id"]
+        .as_i64()
+        .unwrap();
+    link_author(&app, c_id, &author_key, "author", 1).await;
+
+    // Create the citing article whose note_latex references B and C with postnotes
+    let citing_bibkey = format!("lewis:1973b-{suffix}");
+    let citing_payload = json!({
+        "bibkey": &citing_bibkey,
+        "entry_type": "article",
+        "title_latex": "Causation",
+        "title_unicode": "Causation",
+        "title_simplified": "causation",
+        "note_latex": format!("Reprinted in \\citep{{{a_bibkey}}}, \\citet[32--51]{{{b_bibkey}}}"),
+        "date_year": 1973
+    });
+    let resp = app.post_json("/api/v1/bibitems", &citing_payload).await;
+    assert_eq!(resp.status(), 200);
+    let citing_id = resp.json::<serde_json::Value>().await.unwrap()["id"]
+        .as_i64()
+        .unwrap();
+    link_author(&app, citing_id, &author_key, "author", 1).await;
+
+    // Render citing article + A (two Lewis entries in main, B is external)
+    let resp = app
+        .post_json(
+            "/api/v1/render",
+            &json!({ "bibkeys": [citing_bibkey, a_bibkey] }),
+        )
+        .await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let html = body["main_html"].as_str().unwrap();
+
+    // A (main, bibkey suffix "i") gets rendered suffix "a" (main items first)
+    assert!(
+        html.contains("1986a"),
+        "main item lewis:1986i should get year suffix 'a': {html}"
+    );
+
+    // B (external, bibkey suffix "a") gets rendered suffix "b"
+    // Citation with postnote: Lewis (1986b, 32–51)
+    assert!(
+        html.contains("1986b, 32\u{2013}51"),
+        "external citation should have suffix 'b' and postnote pages: {html}"
+    );
+
+    // B should appear in further refs
+    let further = body["further_refs_html"]
+        .as_str()
+        .expect("further_refs_html should contain externally-cited items");
+    assert!(
+        further.contains(&format!("data-bibkey=\"{b_bibkey}\"")),
+        "B should be in further refs: {further}"
+    );
+}

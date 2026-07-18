@@ -11,6 +11,7 @@ use hexforge::HexforgeError;
 
 use crate::domain::junctions::BibitemAuthorsRow;
 use crate::domain::{Author, AuthorRole, BibItem, EntryType};
+use crate::logic::latex_citations::extract_cite_keys;
 use crate::logic::render::{
     RenderContext, assign_year_suffixes, author_sort_key, build_citation_map, extract_role_authors,
     render_bibliography, resolve_citations_in_fields,
@@ -220,6 +221,24 @@ pub async fn render_pipeline(
         Vec::new()
     };
 
+    // Fetch externally-cited items (bibkeys in notes/titles not in the render set)
+    // and add them to further_items so they participate in year-suffix assignment.
+    let external_keys = collect_unresolved_cite_keys(&main_items, &further_items);
+    if !external_keys.is_empty() {
+        let external_bibitems = resolver.find_by_bibkeys(&external_keys).await?;
+        if !external_bibitems.is_empty() {
+            let mut external_items = fetch_and_build_contexts(
+                resolver,
+                entity_fetcher,
+                author_fetcher,
+                external_bibitems,
+            )
+            .await?;
+            further_items.append(&mut external_items);
+            sort_by_author_year_bibkey(&mut further_items);
+        }
+    }
+
     // Year suffixes + citation resolution (single pass for both sets)
     assign_year_suffixes(&mut main_items, &mut further_items);
     let mut citation_map = build_citation_map(&main_items);
@@ -239,6 +258,51 @@ pub async fn render_pipeline(
         further_refs_html,
         missing,
     })
+}
+
+// =============================================================================
+// External citation resolution
+// =============================================================================
+
+/// Sort items by author family name, then year, then bibkey.
+fn sort_by_author_year_bibkey(items: &mut [(BibItem, RenderContext)]) {
+    items.sort_by(|(a, ctx_a), (b, ctx_b)| {
+        let key_a = author_sort_key(&ctx_a.authors);
+        let key_b = author_sort_key(&ctx_b.authors);
+        key_a
+            .cmp(&key_b)
+            .then_with(|| a.date_year.cmp(&b.date_year))
+            .then_with(|| a.bibkey.cmp(&b.bibkey))
+    });
+}
+
+/// Collect cite keys from titles and notes not already in the render set.
+fn collect_unresolved_cite_keys(
+    main: &[(BibItem, RenderContext)],
+    further: &[(BibItem, RenderContext)],
+) -> Vec<String> {
+    let mut known: HashSet<String> = main
+        .iter()
+        .chain(further.iter())
+        .map(|(bib, _)| bib.bibkey.clone())
+        .collect();
+    let mut keys = Vec::new();
+
+    for (bib, _) in main.iter().chain(further.iter()) {
+        for key in extract_cite_keys(&bib.title_latex) {
+            if known.insert(key.clone()) {
+                keys.push(key);
+            }
+        }
+        if let Some(ref note) = bib.note_latex {
+            for key in extract_cite_keys(note) {
+                if known.insert(key.clone()) {
+                    keys.push(key);
+                }
+            }
+        }
+    }
+    keys
 }
 
 // =============================================================================
@@ -459,15 +523,7 @@ async fn fetch_and_build_contexts(
         })
         .collect();
 
-    // Sort by author family name -> year -> bibkey
-    items_with_ctx.sort_by(|(a, ctx_a), (b, ctx_b)| {
-        let key_a = author_sort_key(&ctx_a.authors);
-        let key_b = author_sort_key(&ctx_b.authors);
-        key_a
-            .cmp(&key_b)
-            .then_with(|| a.date_year.cmp(&b.date_year))
-            .then_with(|| a.bibkey.cmp(&b.bibkey))
-    });
+    sort_by_author_year_bibkey(&mut items_with_ctx);
 
     Ok(items_with_ctx)
 }

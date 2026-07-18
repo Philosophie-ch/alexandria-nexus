@@ -23,7 +23,9 @@ pub struct RenderRequest {
     pub ids: Option<Vec<i64>>,
     /// Select bibitems by bibkey.
     pub bibkeys: Option<Vec<String>>,
-    /// When true, include a further-references section rendered from transitive deps.
+    /// When true, fetch transitive deps (junction-table further refs) into `further_refs_html`.
+    /// Inline citations (`\cite` in titles/notes) are always resolved and may independently
+    /// populate `further_refs_html` regardless of this flag.
     #[serde(default)]
     pub include_further_refs: bool,
 }
