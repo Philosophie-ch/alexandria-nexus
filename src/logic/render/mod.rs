@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 use crate::domain::junctions::BibitemAuthorsRow;
 use crate::domain::{Author, AuthorRole, BibItem, EntryType};
-use crate::logic::latex_citations::{CitationData, substitute_citations_html};
+use crate::logic::latex_citations::{CitationData, cleanup_latex_text, substitute_citations_html};
 
 // =============================================================================
 // AuthorName — lightweight name struct for the renderer
@@ -348,12 +348,14 @@ pub fn resolve_citations_in_fields(
 ) {
     for (bib, ctx) in items.iter_mut() {
         if bib.title_latex.contains("\\cite") {
-            ctx.resolved_title = Some(substitute_citations_html(&bib.title_latex, citation_map));
+            let raw = substitute_citations_html(&bib.title_latex, citation_map);
+            ctx.resolved_title = Some(cleanup_latex_text(&raw));
         }
         if let Some(ref note) = bib.note_latex
             && note.contains("\\cite")
         {
-            ctx.resolved_note = Some(substitute_citations_html(note, citation_map));
+            let raw = substitute_citations_html(note, citation_map);
+            ctx.resolved_note = Some(cleanup_latex_text(&raw));
         }
     }
 }
@@ -1939,6 +1941,88 @@ mod tests {
         assert!(
             !html.contains("&lt;span"),
             "no escaped angle brackets: {html}"
+        );
+    }
+
+    #[test]
+    fn test_resolve_citations_strips_latex_artifacts_from_note() {
+        let mut item = make_bibitem(EntryType::Book, "cramer:2004", "Walden", Some(2004));
+        item.note_latex =
+            Some(r"Edited by Jeffrey S.~Cramer; first edition: \citet{thoreau:1854}".to_string());
+        item.note_unicode =
+            Some("Edited by Jeffrey S. Cramer; first edition: Thoreau (1854)".to_string());
+
+        let ctx = RenderContext {
+            authors: vec![make_author("Jeffrey S.", "Cramer")],
+            ..Default::default()
+        };
+
+        let mut items = vec![(item, ctx)];
+        let mut map = HashMap::new();
+        map.insert(
+            "thoreau:1854".to_string(),
+            CitationData {
+                author: Some("Thoreau".to_string()),
+                year: Some(1854),
+                year_suffix: None,
+            },
+        );
+        resolve_citations_in_fields(&mut items, &map);
+
+        let resolved = items[0].1.resolved_note.as_deref().unwrap();
+        assert!(
+            !resolved.contains('~'),
+            "tilde must not survive in resolved note: {resolved}"
+        );
+        assert!(
+            resolved.contains("Jeffrey S.\u{00a0}Cramer"),
+            "tilde should become NBSP: {resolved}"
+        );
+        assert!(
+            resolved.contains("<span data-bibkey=\"thoreau:1854\">"),
+            "citation must be HTML-wrapped: {resolved}"
+        );
+    }
+
+    #[test]
+    fn test_resolve_citations_strips_latex_artifacts_from_title() {
+        let mut item = make_bibitem(EntryType::Article, "x:2000", "dummy", Some(2000));
+        item.title_latex = r"Response to \citet{smith:1999} --- a~reply".to_string();
+        item.title_unicode = Some("Response to Smith (1999) \u{2014} a reply".to_string());
+
+        let ctx = RenderContext {
+            authors: vec![make_author("A.", "Author")],
+            ..Default::default()
+        };
+
+        let mut items = vec![(item, ctx)];
+        let mut map = HashMap::new();
+        map.insert(
+            "smith:1999".to_string(),
+            CitationData {
+                author: Some("Smith".to_string()),
+                year: Some(1999),
+                year_suffix: None,
+            },
+        );
+        resolve_citations_in_fields(&mut items, &map);
+
+        let resolved = items[0].1.resolved_title.as_deref().unwrap();
+        assert!(
+            !resolved.contains('~'),
+            "tilde must not survive in resolved title: {resolved}"
+        );
+        assert!(
+            !resolved.contains("---"),
+            "triple dash must not survive in resolved title: {resolved}"
+        );
+        assert!(
+            resolved.contains("\u{2014}"),
+            "triple dash should become em-dash: {resolved}"
+        );
+        assert!(
+            resolved.contains("<span data-bibkey=\"smith:1999\">"),
+            "citation must be HTML-wrapped: {resolved}"
         );
     }
 }
