@@ -97,8 +97,8 @@ fn scan_and_substitute(
             result.push_str(&cmd_start[..cmd_len]);
         } else {
             let postnote = match opt_args.as_slice() {
-                [single] if !single.trim().is_empty() => Some(normalize_postnote(single.trim())),
-                [_, post] if !post.trim().is_empty() => Some(normalize_postnote(post.trim())),
+                [single] if !single.trim().is_empty() => Some(cleanup_latex_text(single.trim())),
+                [_, post] if !post.trim().is_empty() => Some(cleanup_latex_text(post.trim())),
                 _ => None,
             };
             let substituted =
@@ -230,7 +230,11 @@ fn fmt_author_comma_year(d: &CitationData, postnote: Option<&str>) -> String {
     }
 }
 
-fn normalize_postnote(s: &str) -> String {
+/// Clean common LaTeX text artifacts into their Unicode equivalents.
+///
+/// Handles the subset of LaTeX escapes that appear in running text:
+/// `---` → em-dash, `--` → en-dash, `~` → non-breaking space.
+pub fn cleanup_latex_text(s: &str) -> String {
     s.replace("---", "\u{2014}")
         .replace("--", "\u{2013}")
         .replace('~', "\u{00a0}")
@@ -953,9 +957,9 @@ mod tests {
     }
 
     #[test]
-    fn normalize_postnote_converts_dashes() {
-        assert_eq!(super::normalize_postnote("32--51"), "32\u{2013}51");
-        assert_eq!(super::normalize_postnote("p.~5"), "p.\u{00a0}5");
-        assert_eq!(super::normalize_postnote("a---b"), "a\u{2014}b");
+    fn cleanup_latex_text_converts_artifacts() {
+        assert_eq!(super::cleanup_latex_text("32--51"), "32\u{2013}51");
+        assert_eq!(super::cleanup_latex_text("p.~5"), "p.\u{00a0}5");
+        assert_eq!(super::cleanup_latex_text("a---b"), "a\u{2014}b");
     }
 }
