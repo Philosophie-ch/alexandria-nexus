@@ -106,6 +106,9 @@ jobs:
                 --name alexandria-db \
                 --network private \
                 --restart unless-stopped \
+                --log-driver json-file \
+                --log-opt max-size=50m \
+                --log-opt max-file=5 \
                 -p 127.0.0.1:5433:5432 \
                 -v alexandria_data:/var/lib/postgresql/18/docker \
                 -e POSTGRES_USER="${ALEXANDRIA_DB_USER}" \
@@ -135,6 +138,9 @@ jobs:
               --name alexandria \
               --network private \
               --restart unless-stopped \
+              --log-driver json-file \
+              --log-opt max-size=50m \
+              --log-opt max-file=5 \
               -p 127.0.0.1:8080:8080 \
               -e DATABASE_URL="postgres://${ALEXANDRIA_DB_USER}:${ALEXANDRIA_DB_PASSWORD}@alexandria-db:5432/${ALEXANDRIA_DB_NAME}" \
               -e HOST=0.0.0.0 \
