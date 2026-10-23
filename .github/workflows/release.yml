@@ -91,7 +91,12 @@ jobs:
               exit 1
             fi
 
-            # Log in to ghcr.io to pull private images
+            # Log in to ghcr.io in a throwaway Docker config so the short-lived
+            # token never lands in ~/.docker/config.json. The directory is removed
+            # on any exit, success or failure.
+            DOCKER_CONFIG="$(mktemp -d)"
+            export DOCKER_CONFIG
+            trap 'rm -rf "${DOCKER_CONFIG}"' EXIT
             echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
 
             # Ensure the private network exists
